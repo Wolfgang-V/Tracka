@@ -579,6 +579,7 @@ const t = isNight
       btn: 'bg-[#7ECFB4] text-[#1B1826]',
       surface: 'bg-[#262133]',
       chip: 'bg-[#7ECFB4]/15 text-[#7ECFB4]',
+      danger: 'text-rose-300',
     }
   : {
       page: 'bg-[#EDF1EC] text-[#1B1826]',
@@ -592,6 +593,7 @@ const t = isNight
       btn: 'bg-[#1F6B58] text-white',
       surface: 'bg-white',
       chip: 'bg-[#1F6B58]/10 text-[#1F6B58]',
+      danger: 'text-rose-600',
     }
 
 const completedDates = new Set(
@@ -699,198 +701,200 @@ const toggleOption = (value, current, setter) => {
   }
 }
 
-if (screen === 'auth') {    return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-6 py-10">
-        <div className="w-full max-w-md">
+if (screen === 'auth') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
-          <button
-            onClick={() => setScreen('welcome')}
-            className="mb-8 text-sm font-medium text-blue-600"
-          >
-            ← Back
-          </button>
+        <button
+          onClick={() => setScreen('welcome')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Back
+        </button>
 
-          <div className="mb-10">
-            <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-xl font-bold text-white">
-              T
-            </div>
+        <div className="mt-5">
+          <h1 className="font-display text-[40px] font-light leading-[1.05] tracking-tight">
+            Create your account
+          </h1>
 
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-              Create your Tracka account
-            </h1>
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Start building a skincare routine you can actually stick to.
+          </p>
+        </div>
 
-            <p className="mt-3 text-slate-500">
-              Start building a skincare routine you can actually stick to.
-            </p>
+        <div className="mt-8 flex flex-col gap-5">
+
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Email address
+            </label>
+
+            <input
+              type="email"
+              placeholder="you@example.com"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
           </div>
 
-        <div className="space-y-5">
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Password
+            </label>
 
-  <div>
-    <label className="mb-2 block text-sm font-medium text-slate-700">
-      Email address
-    </label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Create a password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 pr-12 text-[15px] outline-none`}
+              />
 
-    <input
-      type="email"
-      placeholder="you@example.com"
-      value={loginEmail}
-      onChange={(e) => setLoginEmail(e.target.value)}
-      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 outline-none focus:border-blue-500"
-    />
-  </div>
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className={`absolute right-4 top-1/2 -translate-y-1/2 ${t.faint}`}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.8}
+                    stroke="currentColor"
+                    className="h-5 w-5"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12s-3.75 6.75-9.75 6.75S2.25 12 2.25 12Z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                    />
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.8}
+                    stroke="currentColor"
+                    className="h-5 w-5"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3 3l18 18"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3.98 8.223A10.477 10.477 0 0 0 2.25 12c1.5 2.7 4.5 6.75 9.75 6.75a9.8 9.8 0 0 0 4.023-.84"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M6.228 6.228A10.45 10.45 0 0 1 12 5.25c5.25 0 8.25 4.05 9.75 6.75a11.05 11.05 0 0 1-2.25 3.15"
+                    />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </div>
 
-  <div>
-    <label className="mb-2 block text-sm font-medium text-slate-700">
-      Password
-    </label>
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              What should we call you?
+            </label>
 
-    <div className="relative">
-      <input
-        type={showPassword ? 'text' : 'password'}
-        placeholder="Create a password"
-        value={loginPassword}
-        onChange={(e) => setLoginPassword(e.target.value)}
-        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 pr-12 outline-none focus:border-blue-500"
-      />
+            <input
+              type="text"
+              placeholder="e.g. Deeyah"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
 
-      <button
-        type="button"
-        onClick={() => setShowPassword(!showPassword)}
-        className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-        aria-label={showPassword ? 'Hide password' : 'Show password'}
-      >
-        {showPassword ? (
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.8}
-            stroke="currentColor"
-            className="h-5 w-5"
+          <button
+            onClick={async () => {
+              const email = loginEmail
+              const password = loginPassword
+
+              if (!username || !email || !password) {
+                alert('Please enter your email, password and name.')
+                return
+              }
+
+              const { data, error } = await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                  data: {
+                    username,
+                  },
+                  emailRedirectTo: `${window.location.origin}/?confirmed=true`,
+                },
+              })
+
+              if (error) {
+                alert(error.message)
+                return
+              }
+
+              if (!data.user) {
+                alert('Account could not be created.')
+                return
+              }
+
+              setProducts([])
+              setUser(data.user)
+              setDisplayName(username)
+
+              if (data.session) {
+                setScreen('skinProfile')
+                return
+              }
+
+              alert(
+                'Account created! Please check your email to confirm your account, then log in to continue your setup.'
+              )
+
+              setScreen('login')
+            }}
+            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12s-3.75 6.75-9.75 6.75S2.25 12 2.25 12Z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-            />
-          </svg>
-        ) : (
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.8}
-            stroke="currentColor"
-            className="h-5 w-5"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M3 3l18 18"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M3.98 8.223A10.477 10.477 0 0 0 2.25 12c1.5 2.7 4.5 6.75 9.75 6.75a9.8 9.8 0 0 0 4.023-.84"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M6.228 6.228A10.45 10.45 0 0 1 12 5.25c5.25 0 8.25 4.05 9.75 6.75a11.05 11.05 0 0 1-2.25 3.15"
-            />
-          </svg>
-        )}
-      </button>
-    </div>
-  </div>
-
-  <div>
-    <label className="mb-2 block text-sm font-medium text-slate-700">
-      What should we call you?
-    </label>
-
-    <input
-      type="text"
-      placeholder="e.g. Deeyah"
-      value={username}
-      onChange={(e) => setUsername(e.target.value)}
-      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 outline-none focus:border-blue-500"
-    />
-  </div>
-
- <button
-  onClick={async () => {
-    const email = loginEmail
-    const password = loginPassword
-
-    if (!username || !email || !password) {
-      alert('Please enter your email, password and name.')
-      return
-    }
-
-    const { data, error } = await supabase.auth.signUp({
-  email,
-  password,
-  options: {
-    data: {
-      username,
-    },
-    emailRedirectTo: `${window.location.origin}/?confirmed=true`,
-  },
-})
-
-    if (error) {
-      alert(error.message)
-      return
-    }
-
-    if (!data.user) {
-      alert('Account could not be created.')
-      return
-    }
-
-    setProducts([])
-    setUser(data.user)
-    setDisplayName(username)
-
-    if (data.session) {
-      setScreen('skinProfile')
-      return
-    }
-
-  alert(
-  'Account created! Please check your email to confirm your account, then log in to continue your setup.'
-)
-
-setScreen('login')
-  }}
-  className="w-full rounded-2xl bg-blue-600 px-6 py-4 font-semibold text-white transition hover:bg-blue-700"
->
-  Create Account
-</button>
-
-</div>
-
-          <p className="mt-6 text-center text-sm text-slate-500">
-            Already have an account?{' '}
-            <button
-  onClick={() => setScreen('login')}
-  className="font-semibold text-blue-600"
->
-  Log in
-</button>
-          </p>
+            Create account
+          </button>
 
         </div>
-      </main>
-    )
-  }
+
+        <p className={`mt-6 text-center text-[15px] ${t.muted}`}>
+          Already have an account?{' '}
+          <button
+            onClick={() => setScreen('login')}
+            className={`font-semibold ${t.mark}`}
+          >
+            Log in
+          </button>
+        </p>
+
+      </div>
+    </main>
+  )
+}
 
 const loadReminderSettings = async () => {
   const {
@@ -990,45 +994,40 @@ const saveReminderSettings = async () => {
 }
   if (screen === 'skinProfile') {
     return (
-      <main className="min-h-screen bg-slate-50 px-6 py-10">
-        <div className="mx-auto w-full max-w-2xl">
+      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
-
-          <div className="mb-8">
-            <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-xl font-bold text-white">
-              T
-            </div>
-
-            <p className="mb-2 text-sm font-semibold text-blue-600">
-              STEP 1 OF 3
+          <div className="mt-5">
+            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+              Step 1 of 3
             </p>
 
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
+            <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
               Tell us about your skin
             </h1>
 
-            <p className="mt-3 text-slate-500">
+            <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
               This helps Tracka organize your skincare journey around you.
             </p>
           </div>
 
-          <div className="space-y-8">
+          <div className="mt-8 flex flex-col gap-8">
 
             <section>
-              <h2 className="mb-3 text-lg font-semibold text-slate-900">
+              <h2 className="mb-3 text-[17px] font-semibold">
                 What is your skin type?
               </h2>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2.5">
                 {['Normal', 'Dry', 'Oily', 'Combination'].map((type) => (
                   <button
                     key={type}
                     onClick={() => setSkinType(type)}
-                    className={
+                    className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
                       skinType === type
-                        ? 'rounded-2xl border border-blue-600 bg-blue-50 px-4 py-4 text-left font-medium text-blue-700 transition'
-                        : 'rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left font-medium text-slate-700 transition hover:border-blue-300'
-                    }
+                        ? `${t.chip} border-transparent`
+                        : `${t.hair} ${t.muted}`
+                    }`}
                   >
                     {type}
                   </button>
@@ -1037,15 +1036,15 @@ const saveReminderSettings = async () => {
             </section>
 
             <section>
-              <h2 className="mb-3 text-lg font-semibold text-slate-900">
+              <h2 className="mb-1 text-[17px] font-semibold">
                 What are your main skin concerns?
               </h2>
 
-              <p className="mb-4 text-sm text-slate-500">
+              <p className={`mb-3 text-[13px] ${t.faint}`}>
                 Select all that apply.
               </p>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {[
                   'Acne',
                   'Hyperpigmentation',
@@ -1058,10 +1057,10 @@ const saveReminderSettings = async () => {
                     onClick={() =>
                       toggleOption(concern, concerns, setConcerns)
                     }
-                    className={`rounded-2xl border px-4 py-4 text-left font-medium transition ${
+                    className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
                       concerns.includes(concern)
-                        ? 'border-blue-600 bg-blue-50 text-blue-700'
-                        : 'border-slate-200 bg-white text-slate-700 hover:border-blue-300'
+                        ? `${t.chip} border-transparent`
+                        : `${t.hair} ${t.muted}`
                     }`}
                   >
                     {concern}
@@ -1071,15 +1070,15 @@ const saveReminderSettings = async () => {
             </section>
 
             <section>
-              <h2 className="mb-3 text-lg font-semibold text-slate-900">
+              <h2 className="mb-1 text-[17px] font-semibold">
                 What are your skincare goals?
               </h2>
 
-              <p className="mb-4 text-sm text-slate-500">
+              <p className={`mb-3 text-[13px] ${t.faint}`}>
                 Select all that apply.
               </p>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {[
                   'Hydration',
                   'Clearer skin',
@@ -1091,11 +1090,11 @@ const saveReminderSettings = async () => {
                     onClick={() =>
                       toggleOption(goal, goals, setGoals)
                     }
-                    className={
+                    className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
                       goals.includes(goal)
-                        ? 'rounded-2xl border border-blue-600 bg-blue-50 px-4 py-4 text-left font-medium text-blue-700 transition'
-                        : 'rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left font-medium text-slate-700 transition hover:border-blue-300'
-                    }
+                        ? `${t.chip} border-transparent`
+                        : `${t.hair} ${t.muted}`
+                    }`}
                   >
                     {goal}
                   </button>
@@ -1104,11 +1103,11 @@ const saveReminderSettings = async () => {
             </section>
 
             <section>
-              <h2 className="mb-3 text-lg font-semibold text-slate-900">
+              <h2 className="mb-3 text-[17px] font-semibold">
                 How sensitive is your skin?
               </h2>
 
-              <div className="space-y-3">
+              <div className="flex flex-col gap-2.5">
                 {[
                   'Not sensitive',
                   'Sometimes sensitive',
@@ -1117,11 +1116,11 @@ const saveReminderSettings = async () => {
                   <button
                     key={option}
                     onClick={() => setSensitivity(option)}
-                    className={
+                    className={`w-full rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
                       sensitivity === option
-                        ? 'w-full rounded-2xl border border-blue-600 bg-blue-50 px-4 py-4 text-left font-medium text-blue-700 transition'
-                        : 'w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left font-medium text-slate-700 transition hover:border-blue-300'
-                    }
+                        ? `${t.chip} border-transparent`
+                        : `${t.hair} ${t.muted}`
+                    }`}
                   >
                     {option}
                   </button>
@@ -1158,7 +1157,7 @@ const saveReminderSettings = async () => {
                 alert('Skin profile saved!')
                 setScreen('products')
               }}
-              className="w-full rounded-2xl bg-blue-600 px-6 py-4 font-semibold text-white shadow-sm transition hover:bg-blue-700"
+              className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
             >
               Continue
             </button>
@@ -1171,50 +1170,50 @@ const saveReminderSettings = async () => {
 
   if (screen === 'products') {
     return (
-      <main className="min-h-screen bg-slate-50 px-6 py-10">
-        <div className="mx-auto w-full max-w-2xl">
+      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
-          <div className="mb-8">
-            <p className="mb-2 text-sm font-semibold text-blue-600">
-              STEP 2 OF 3
+          <div className="mt-5">
+            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+              Step 2 of 3
             </p>
 
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-              Add your skincare products
+            <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
+              Add your products
             </h1>
 
-            <p className="mt-3 text-slate-500">
+            <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
               Add the products you already own so Tracka can organize them for you.
             </p>
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
 
-            <h2 className="text-lg font-semibold text-slate-900">
+            <h2 className="text-[17px] font-semibold">
               Your products
             </h2>
 
             {products.length === 0 ? (
-              <p className="mt-2 text-sm text-slate-500">
+              <p className={`mt-2 text-[15px] ${t.muted}`}>
                 You haven't added any products yet.
               </p>
             ) : (
-              <div className="mt-6 space-y-3">
+              <div className={`mt-5 flex flex-col divide-y ${t.hair}`}>
                 {products.map((item) => (
                   <div
                     key={item.id}
-                    className="flex items-center justify-between rounded-2xl border border-slate-200 p-4"
+                    className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0"
                   >
                     <div>
-                      <p className="text-sm font-medium text-slate-500">
+                      <p className={`text-[13px] font-medium ${t.faint}`}>
                         {item.products.brand}
                       </p>
 
-                      <p className="mt-1 text-lg font-semibold text-slate-900">
+                      <p className="mt-0.5 text-[15px] font-semibold">
                         {item.products.name}
                       </p>
 
-                      <p className="mt-1 text-sm capitalize text-slate-400">
+                      <p className={`mt-0.5 text-[13px] capitalize ${t.muted}`}>
                         {item.products.category}
                       </p>
                     </div>
@@ -1243,7 +1242,7 @@ const saveReminderSettings = async () => {
                           )
                         )
                       }}
-                      className="text-sm font-medium text-red-500"
+                      className={`shrink-0 text-[13px] font-semibold ${t.danger}`}
                     >
                       Remove
                     </button>
@@ -1254,33 +1253,27 @@ const saveReminderSettings = async () => {
 
             <button
               onClick={() => setScreen('addProduct')}
-              className="mt-6 w-full rounded-2xl bg-blue-600 px-6 py-4 font-semibold text-white transition hover:bg-blue-700"
+              className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
             >
               + Add a product
             </button>
-<button
-  onClick={() => setScreen('routinePlanner')}
-  className="mt-3 w-full rounded-2xl border border-blue-200 bg-white px-6 py-4 font-semibold text-blue-600 transition hover:bg-blue-50"
->
-  Save products
-</button>
 
-           <div className="mt-6 flex gap-3">
-  <button
-    onClick={() => setScreen('routinePlanner')}
-    className="flex-1 rounded-2xl border border-blue-200 bg-white px-6 py-4 font-semibold text-blue-600 transition hover:bg-blue-50"
-  >
-    My Routine
-  </button>
+            <div className="mt-3 flex gap-3">
+              <button
+                onClick={() => setScreen('routinePlanner')}
+                className={`flex-1 rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
+              >
+                My routine
+              </button>
 
-  <button
-    onClick={() => setScreen('today')}
-    className="flex-1 rounded-2xl border border-slate-200 bg-white px-6 py-4 font-semibold text-slate-700 transition hover:bg-slate-50"
-  >
-    Back to Today
-  </button>
-</div>
-           
+              <button
+                onClick={() => setScreen('today')}
+                className={`flex-1 rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
+              >
+                Back to today
+              </button>
+            </div>
+
           </div>
         </div>
       </main>
@@ -1289,30 +1282,35 @@ const saveReminderSettings = async () => {
 
   if (screen === 'addProduct') {
     return (
-      <main className="min-h-screen bg-slate-50 px-6 py-10">
-        <div className="mx-auto w-full max-w-2xl">
+      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
           <button
             onClick={() => setScreen('products')}
-            className="mb-8 text-sm font-medium text-blue-600"
+            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
           >
-            ← Back to products
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+            Products
           </button>
 
-          <div className="mb-8">
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
+          <div className="mt-5">
+            <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
               Add a product
             </h1>
 
-            <p className="mt-3 text-slate-500">
+            <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
               Add a skincare product you already own.
             </p>
           </div>
 
-          <div className="space-y-5">
+          <div className="mt-8 flex flex-col gap-5">
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
                 Brand
               </label>
 
@@ -1321,12 +1319,12 @@ const saveReminderSettings = async () => {
                 placeholder="e.g. CeraVe"
                 value={productBrand}
                 onChange={(e) => setProductBrand(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 outline-none focus:border-blue-500"
+                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
                 Product name
               </label>
 
@@ -1335,19 +1333,19 @@ const saveReminderSettings = async () => {
                 placeholder="e.g. Hydrating Cleanser"
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 outline-none focus:border-blue-500"
+                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
                 Category
               </label>
 
               <select
                 value={productCategory}
                 onChange={(e) => setProductCategory(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 outline-none focus:border-blue-500"
+                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               >
                 <option value="">Select a category</option>
                 <option value="cleanser">Cleanser</option>
@@ -1439,7 +1437,7 @@ const saveReminderSettings = async () => {
                 setProductCategory('')
                 setScreen('products')
               }}
-              className="w-full rounded-2xl bg-blue-600 px-6 py-4 font-semibold text-white transition hover:bg-blue-700"
+              className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
             >
               Save product
             </button>
@@ -1450,36 +1448,37 @@ const saveReminderSettings = async () => {
     )
   }
   
- if (screen === 'login') {
+if (screen === 'login') {
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center px-6 py-10">
-      <div className="w-full max-w-md">
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
         <button
           onClick={() => setScreen('auth')}
-          className="mb-8 text-sm font-medium text-blue-600"
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
         >
-          ← Back
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Back
         </button>
 
-        <div className="mb-10">
-          <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-xl font-bold text-white">
-            T
-          </div>
-
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
+        <div className="mt-5">
+          <h1 className="font-display text-[40px] font-light leading-[1.05] tracking-tight">
             Welcome back
           </h1>
 
-          <p className="mt-3 text-slate-500">
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
             Log in to continue your skincare journey.
           </p>
         </div>
 
-        <div className="space-y-5">
+        <div className="mt-8 flex flex-col gap-5">
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
               Email address
             </label>
 
@@ -1488,12 +1487,12 @@ const saveReminderSettings = async () => {
               placeholder="you@example.com"
               value={loginEmail}
               onChange={(e) => setLoginEmail(e.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 outline-none focus:border-blue-500"
+              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
             />
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
               Password
             </label>
 
@@ -1503,13 +1502,13 @@ const saveReminderSettings = async () => {
                 placeholder="Your password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 pr-12 outline-none focus:border-blue-500"
+                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 pr-12 text-[15px] outline-none`}
               />
 
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                className={`absolute right-4 top-1/2 -translate-y-1/2 ${t.faint}`}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
               >
                 {showPassword ? (
@@ -1580,38 +1579,38 @@ const saveReminderSettings = async () => {
                 return
               }
 
-             setDisplayName('')
+              setDisplayName('')
 
-setUser(data.user)
+              setUser(data.user)
 
-const { data: profile, error: profileError } =
+              const { data: profile, error: profileError } =
                 await supabase
                   .from('profiles')
                   .select('username')
                   .eq('id', data.user.id)
                   .single()
 
-             if (profileError) {
-  console.error(profileError)
-  alert('Profile could not be loaded: ' + profileError.message)
-} else {
-  setDisplayName(profile.username)
-}
+              if (profileError) {
+                console.error(profileError)
+                alert('Profile could not be loaded: ' + profileError.message)
+              } else {
+                setDisplayName(profile.username)
+              }
 
               setScreen('today')
             }}
-            className="w-full rounded-2xl bg-blue-600 px-6 py-4 font-semibold text-white transition hover:bg-blue-700"
+            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
           >
-            Log In
+            Log in
           </button>
 
         </div>
 
-        <p className="mt-6 text-center text-sm text-slate-500">
+        <p className={`mt-6 text-center text-[15px] ${t.muted}`}>
           Don't have an account?{' '}
           <button
             onClick={() => setScreen('auth')}
-            className="font-semibold text-blue-600"
+            className={`font-semibold ${t.mark}`}
           >
             Create account
           </button>
@@ -1624,64 +1623,68 @@ const { data: profile, error: profileError } =
 
 if (screen === 'reminders') {
   return (
-    <main className="min-h-screen bg-slate-50 px-6 py-10">
-      <div className="mx-auto w-full max-w-2xl">
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
         <button
           onClick={() => setScreen('today')}
-          className="mb-8 text-sm font-medium text-blue-600"
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
         >
-          ← Back to Today
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Today
         </button>
 
-        <div className="mb-8">
-          <p className="text-sm font-semibold text-blue-600">
-            REMINDERS
+        <div className="mt-5">
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            Reminders
           </p>
 
-          <h1 className="mt-2 text-3xl font-display font-normal tracking-tight text-slate-900">
+          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
             Stay on track
           </h1>
 
-          <p className="mt-3 text-slate-500">
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
             Choose when Tracka should remind you about your skincare routine.
           </p>
         </div>
 
-        <div className="space-y-4">
+        <div className="mt-8 flex flex-col gap-4">
 
           {/* MORNING REMINDER */}
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className={`rounded-3xl ${t.surface} p-5`}>
             <div className="flex items-center justify-between gap-4">
 
               <div>
-                <p className="text-xs font-semibold uppercase text-blue-600">
+                <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.mark}`}>
                   Morning
                 </p>
 
-                <h2 className="mt-1 text-lg font-semibold text-slate-900">
+                <h2 className="mt-1 text-[17px] font-semibold">
                   Morning routine
                 </h2>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  Get a reminder when it’s time for your morning routine.
+                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                  Get a reminder when it's time for your morning routine.
                 </p>
               </div>
 
               <button
+                type="button"
                 onClick={() =>
                   setMorningReminderEnabled(
                     !morningReminderEnabled
                   )
                 }
-                className={`relative h-7 w-12 rounded-full transition ${
-                  morningReminderEnabled
-                    ? 'bg-blue-600'
-                    : 'bg-slate-300'
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                  morningReminderEnabled ? t.btn : t.rail
                 }`}
               >
                 <span
-                  className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${
+                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
                     morningReminderEnabled
                       ? 'left-6'
                       : 'left-1'
@@ -1693,7 +1696,7 @@ if (screen === 'reminders') {
 
             {morningReminderEnabled && (
               <div className="mt-5">
-                <label className="text-sm font-medium text-slate-700">
+                <label className={`text-[13px] font-semibold ${t.faint}`}>
                   Reminder time
                 </label>
 
@@ -1703,44 +1706,43 @@ if (screen === 'reminders') {
                   onChange={(e) =>
                     setMorningReminderTime(e.target.value)
                   }
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-blue-400"
+                  className={`mt-2 w-full rounded-2xl border ${t.hair} px-4 py-3 text-[15px] outline-none`}
                 />
               </div>
             )}
           </div>
 
           {/* NIGHT REMINDER */}
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className={`rounded-3xl ${t.surface} p-5`}>
             <div className="flex items-center justify-between gap-4">
 
               <div>
-                <p className="text-xs font-semibold uppercase text-blue-600">
+                <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.mark}`}>
                   Night
                 </p>
 
-                <h2 className="mt-1 text-lg font-semibold text-slate-900">
+                <h2 className="mt-1 text-[17px] font-semibold">
                   Night routine
                 </h2>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  Get a reminder when it’s time for your night routine.
+                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                  Get a reminder when it's time for your night routine.
                 </p>
               </div>
 
               <button
+                type="button"
                 onClick={() =>
                   setNightReminderEnabled(
                     !nightReminderEnabled
                   )
                 }
-                className={`relative h-7 w-12 rounded-full transition ${
-                  nightReminderEnabled
-                    ? 'bg-blue-600'
-                    : 'bg-slate-300'
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                  nightReminderEnabled ? t.btn : t.rail
                 }`}
               >
                 <span
-                  className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${
+                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
                     nightReminderEnabled
                       ? 'left-6'
                       : 'left-1'
@@ -1752,7 +1754,7 @@ if (screen === 'reminders') {
 
             {nightReminderEnabled && (
               <div className="mt-5">
-                <label className="text-sm font-medium text-slate-700">
+                <label className={`text-[13px] font-semibold ${t.faint}`}>
                   Reminder time
                 </label>
 
@@ -1762,18 +1764,17 @@ if (screen === 'reminders') {
                   onChange={(e) =>
                     setNightReminderTime(e.target.value)
                   }
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none focus:border-blue-400"
+                  className={`mt-2 w-full rounded-2xl border ${t.hair} px-4 py-3 text-[15px] outline-none`}
                 />
               </div>
             )}
           </div>
 
         </div>
-      
-        
+
         <button
           onClick={saveReminderSettings}
-          className="mt-6 w-full rounded-2xl bg-blue-600 px-6 py-4 font-semibold text-white transition hover:bg-blue-700"
+          className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
         >
           Save reminder settings
         </button>
@@ -2006,149 +2007,154 @@ if (screen === 'today') {
 
 if (screen === 'routinePlanner') {
   return (
-    <main className="min-h-screen bg-slate-50 px-6 py-10">
-      <div className="mx-auto w-full max-w-2xl">
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
-        <div className="mb-8 flex items-center justify-between">
-  <button
-    onClick={() => setScreen('today')}
-    className="text-sm font-medium text-blue-600"
-  >
-    ← Back to Today
-  </button>
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => setScreen('today')}
+            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+            Today
+          </button>
 
-  <button
-  onClick={async () => {
-    await loadRoutineHistory()
-    setScreen('routineHistory')
-  }}
-  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-blue-200"
->
-  Routine History
-</button>
-</div>
+          <button
+            onClick={async () => {
+              await loadRoutineHistory()
+              setScreen('routineHistory')
+            }}
+            className={`rounded-2xl border px-4 py-2.5 text-[13px] font-semibold ${t.hair} ${t.muted}`}
+          >
+            History
+          </button>
+        </div>
 
-        <div className="mb-8">
-          <p className="text-sm font-semibold text-blue-600">
-            MY ROUTINE
+        <div className="mt-5">
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            My routine
           </p>
 
-          <h1 className="mt-2 text-3xl font-display font-normal tracking-tight text-slate-900">
+          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
             Build your routine
           </h1>
 
-          <p className="mt-3 text-slate-500">
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
             Tell Tracka when you want to use each product, and it will organize your morning and night routines.
           </p>
         </div>
 
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
 
-          <h2 className="text-xl font-semibold text-slate-900">
+          <h2 className="text-[17px] font-semibold">
             Your products
           </h2>
 
-          <p className="mt-2 text-sm text-slate-500">
+          <p className={`mt-1 text-[13px] ${t.muted}`}>
             Choose when you use each product.
           </p>
 
-          <div className="mt-6 space-y-4">
+          <div className="mt-5 flex flex-col gap-3">
 
             {products.length === 0 ? (
-              <div className="rounded-2xl bg-slate-50 p-5 text-center">
-                <p className="text-sm text-slate-500">
+              <div className={`rounded-2xl border ${t.hair} p-5 text-center`}>
+                <p className={`text-[15px] ${t.muted}`}>
                   You haven't added any products yet.
                 </p>
 
                 <button
                   onClick={() => setScreen('addProduct')}
-                  className="mt-4 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white"
+                  className={`mt-4 rounded-xl px-5 py-3 text-[13px] font-semibold ${t.btn}`}
                 >
                   + Add a product
                 </button>
-  
+
               </div>
             ) : (
               products.map((item) => (
                 <div
-                                  key={item.id}
-                  className="rounded-2xl border border-slate-100 bg-slate-50 p-4"
+                  key={item.id}
+                  className={`rounded-2xl border ${t.hair} p-4`}
                 >
-                  <p className="text-xs font-semibold uppercase text-slate-400">
+                  <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>
                     {item.products?.brand}
                   </p>
 
-                  <p className="mt-1 font-medium text-slate-900">
+                  <p className="mt-1 text-[15px] font-medium">
                     {item.products?.name}
                   </p>
 
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p className={`mt-1 text-[12px] ${t.muted}`}>
                     {item.products?.category}
                   </p>
 
-                   <div className="mt-4">
-  <label className="text-xs font-semibold text-slate-500">
-    When do you want to use this?
-  </label>
+                  <div className="mt-4">
+                    <label className={`text-[12px] font-semibold ${t.faint}`}>
+                      When do you want to use this?
+                    </label>
 
-  <select
-    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-blue-400"
-    value={productTimes[item.id] || ''}
-    onChange={(e) =>
-      setProductTimes({
-        ...productTimes,
-        [item.id]: e.target.value,
-      })
-    }
-  >
-   <option value="" disabled>
-  Choose time
-</option>
+                    <select
+                      className={`mt-2 w-full rounded-xl ${t.surface} border ${t.hair} px-4 py-3 text-[14px] outline-none`}
+                      value={productTimes[item.id] || ''}
+                      onChange={(e) =>
+                        setProductTimes({
+                          ...productTimes,
+                          [item.id]: e.target.value,
+                        })
+                      }
+                    >
+                      <option value="" disabled>
+                        Choose time
+                      </option>
 
-<option value="AM">
-  Morning (AM)
-</option>
+                      <option value="AM">
+                        Morning (AM)
+                      </option>
 
-<option value="PM">
-  Night (PM)
-</option>
+                      <option value="PM">
+                        Night (PM)
+                      </option>
 
-<option value="BOTH">
-  Morning & Night (AM & PM)
-</option>
-  </select>
-</div>
+                      <option value="BOTH">
+                        Morning & Night (AM & PM)
+                      </option>
+                    </select>
+                  </div>
 
-<div className="mt-4">
-  <label className="text-xs font-semibold text-slate-500">
-    How often?
-  </label>
+                  <div className="mt-4">
+                    <label className={`text-[12px] font-semibold ${t.faint}`}>
+                      How often?
+                    </label>
 
-  <select
-    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-blue-400"
-    value={productFrequencies[item.id] || 'daily'}
-    onChange={(e) =>
-      setProductFrequencies({
-        ...productFrequencies,
-        [item.id]: e.target.value,
-      })
-    }
-  >
-    <option value="daily">Every day</option>
-    <option value="alternate">Every other day</option>
-    <option value="every3">Every 3 days</option>
-    <option value="twice_week">Twice a week</option>
-    <option value="once_week">Once a week</option>
-  </select>
-</div>
-                                  </div>
+                    <select
+                      className={`mt-2 w-full rounded-xl ${t.surface} border ${t.hair} px-4 py-3 text-[14px] outline-none`}
+                      value={productFrequencies[item.id] || 'daily'}
+                      onChange={(e) =>
+                        setProductFrequencies({
+                          ...productFrequencies,
+                          [item.id]: e.target.value,
+                        })
+                      }
+                    >
+                      <option value="daily">Every day</option>
+                      <option value="alternate">Every other day</option>
+                      <option value="every3">Every 3 days</option>
+                      <option value="twice_week">Twice a week</option>
+                      <option value="once_week">Once a week</option>
+                    </select>
+                  </div>
+                </div>
               ))
             )}
 
           </div>
         </div>
-       
-   <button
+
+        <button
   onClick={async () => {
     if (products.length === 0) {
       alert('Please add at least one product.')
@@ -2240,20 +2246,17 @@ for (const time of routineTimes) {
 setScreen('today')
 loadRoutines()
   }}
-  className="mt-6 w-full rounded-2xl bg-blue-600 px-6 py-4 font-semibold text-white transition hover:bg-blue-700"
+  className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
 >
   Create my routine
 </button>
 
-<button
-  onClick={() => setScreen('products')}
-  className="mt-4 w-full rounded-2xl border border-slate-200 bg-white px-6 py-4 font-semibold text-slate-700 transition hover:border-blue-200"
->
-  ← Back to My Products
-</button>
-
-<div className="mt-6 rounded-3xl border border-blue-100 bg-blue-50 p-6">
-                  </div>
+        <button
+          onClick={() => setScreen('products')}
+          className={`mt-3 w-full rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
+        >
+          Back to my products
+        </button>
 
       </div>
     </main>
@@ -2261,69 +2264,74 @@ loadRoutines()
 }
 if (screen === 'routineHistory') {
   return (
-    <main className="min-h-screen bg-slate-50 px-6 py-10">
-      <div className="mx-auto w-full max-w-2xl">
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
         <button
           onClick={() => setScreen('routinePlanner')}
-          className="mb-8 text-sm font-medium text-blue-600"
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
         >
-          ← Back to My Routine
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          My routine
         </button>
 
-        <div className="mb-8">
-          <p className="text-sm font-semibold text-blue-600">
-            ROUTINE HISTORY
+        <div className="mt-5">
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            Routine history
           </p>
 
-          <h1 className="mt-2 text-3xl font-display font-normal tracking-tight text-slate-900">
+          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
             Your previous routines
           </h1>
 
-          <p className="mt-3 text-slate-500">
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
             Look back at the routines you have used before.
           </p>
         </div>
 
         {routineHistory.length === 0 ? (
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-            <p className="font-medium text-slate-700">
+          <div className={`mt-8 rounded-3xl ${t.surface} p-6 text-center`}>
+            <p className="text-[15px] font-medium">
               No previous routines yet.
             </p>
 
-            <p className="mt-2 text-sm text-slate-500">
+            <p className={`mt-2 text-[13px] ${t.muted}`}>
               Your old routines will appear here when you create a new routine.
             </p>
           </div>
         ) : (
-          <div className="space-y-5">
-           {routineHistory.map((routine) => (
-  <div
-    key={routine.routine_code}
-    className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
-  >
-    <p className="text-xs font-semibold uppercase text-slate-400">
-      Previous routine
-    </p>
+          <div className="mt-8 flex flex-col gap-4">
+            {routineHistory.map((routine) => (
+              <div
+                key={routine.routine_code}
+                className={`rounded-3xl ${t.surface} p-5`}
+              >
+                <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>
+                  Previous routine
+                </p>
 
-    <button
-  onClick={() => {
-    setSelectedRoutine(routine)
-    setScreen('routineDetails')
-  }}
-  className="mt-1 text-left text-xl font-semibold text-blue-600 hover:text-blue-700"
->
-  {routine.routine_code || 'No routine code'}
-</button>
+                <button
+                  onClick={() => {
+                    setSelectedRoutine(routine)
+                    setScreen('routineDetails')
+                  }}
+                  className={`mt-1 text-left text-[19px] font-semibold ${t.mark}`}
+                >
+                  {routine.routine_code || 'No routine code'}
+                </button>
 
-    <p className="mt-1 text-sm text-slate-500">
-      {new Date(routine.created_at).toLocaleString('default', {
-        month: 'long',
-        year: 'numeric',
-      })}
-    </p>
-  </div>
-))}
+                <p className={`mt-1 text-[13px] ${t.muted}`}>
+                  {new Date(routine.created_at).toLocaleString('default', {
+                    month: 'long',
+                    year: 'numeric',
+                  })}
+                </p>
+              </div>
+            ))}
           </div>
         )}
 
@@ -2333,71 +2341,78 @@ if (screen === 'routineHistory') {
 }
 if (screen === 'routineDetails') {
   return (
-    <main className="min-h-screen bg-slate-50 px-6 py-10">
-      <div className="mx-auto w-full max-w-2xl">
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
         <button
           onClick={() => setScreen('routineHistory')}
-          className="mb-8 text-sm font-medium text-blue-600"
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
         >
-          ← Back to Routine History
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          History
         </button>
 
-        <div className="mb-8">
-          <p className="text-sm font-semibold text-blue-600">
-            ROUTINE DETAILS
+        <div className="mt-5">
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            Routine details
           </p>
 
-          <h1 className="mt-2 text-3xl font-display font-normal tracking-tight text-slate-900">
+          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
             {selectedRoutine?.routine_code}
           </h1>
 
-          <p className="mt-3 text-slate-500">
+          <p className={`mt-3 text-[15px] ${t.muted}`}>
             Previous routine
           </p>
         </div>
 
-       {selectedRoutine?.routines
-  ?.sort((a, b) => {
-    if (a.time_of_day === 'AM') return -1
-    if (b.time_of_day === 'AM') return 1
-    return 0
-  })
-  .map((routine) => (
-          <div
-            key={routine.id}
-            className="mb-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
-          >
-            <h2 className="text-xl font-semibold text-slate-900">
-              {routine.time_of_day === 'AM'
-                ? 'Morning routine'
-                : 'Night routine'}
-            </h2>
+        <div className="mt-8 flex flex-col gap-5">
+          {selectedRoutine?.routines
+            ?.sort((a, b) => {
+              if (a.time_of_day === 'AM') return -1
+              if (b.time_of_day === 'AM') return 1
+              return 0
+            })
+            .map((routine) => (
+              <div
+                key={routine.id}
+                className={`rounded-3xl ${t.surface} p-5`}
+              >
+                <h2 className="text-[17px] font-semibold">
+                  {routine.time_of_day === 'AM'
+                    ? 'Morning routine'
+                    : 'Night routine'}
+                </h2>
 
-            <div className="mt-5 space-y-3">
-              {routine.steps.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  No steps recorded.
-                </p>
-              ) : (
-                routine.steps.map((step, index) => (
-                  <div
-                    key={step.id}
-                    className="rounded-2xl bg-slate-50 p-4"
-                  >
-                    <p className="text-xs font-semibold text-slate-400">
-                      STEP {index + 1}
+                <div className={`mt-4 flex flex-col divide-y ${t.hair}`}>
+                  {routine.steps.length === 0 ? (
+                    <p className={`text-[15px] ${t.muted}`}>
+                      No steps recorded.
                     </p>
+                  ) : (
+                    routine.steps.map((step, index) => (
+                      <div
+                        key={step.id}
+                        className="py-3 first:pt-0 last:pb-0"
+                      >
+                        <p className={`text-[11px] font-semibold ${t.faint}`}>
+                          STEP {index + 1}
+                        </p>
 
-                    <p className="mt-1 font-medium text-slate-800">
-                      {step.step_name}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        ))}
+                        <p className="mt-0.5 text-[15px] font-medium">
+                          {step.step_name}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ))}
+        </div>
 
       </div>
     </main>
@@ -2405,28 +2420,24 @@ if (screen === 'routineDetails') {
 }
 if (screen === 'completed') {
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center px-6 py-10">
-      <div className="w-full max-w-md text-center">
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-7 text-center">
 
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 text-3xl">
+        <span className={`flex h-14 w-14 items-center justify-center rounded-full text-2xl ${t.chip}`}>
           ✓
-        </div>
+        </span>
 
-        <p className="text-sm font-semibold text-green-600">
-          ROUTINE COMPLETE
-        </p>
-
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
-          You’ve completed your routine for today!
+        <h1 className="mt-6 font-display text-[44px] font-light leading-[1.02] tracking-tight">
+          {isNight ? 'Routine complete' : 'All done for the morning'}
         </h1>
 
-        <p className="mt-4 text-slate-500">
-          Great job taking care of your skin. See you tomorrow 👋
+        <p className={`mt-3 max-w-[280px] text-[15px] leading-relaxed ${t.muted}`}>
+          Great job taking care of your skin. See you {isNight ? 'in the morning' : 'tonight'} 👋
         </p>
 
         <button
           onClick={() => setScreen('progress')}
-          className="mt-8 w-full rounded-2xl bg-blue-600 px-6 py-4 font-semibold text-white transition hover:bg-blue-700"
+          className={`mt-8 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
         >
           View my streak
         </button>
@@ -2556,33 +2567,32 @@ if (screen === 'progress') {
   )
 }
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
-      <div className="w-full max-w-md text-center">
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-7 text-center">
 
         <div className="mb-10">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600 text-2xl font-bold text-white">
-            T
-          </div>
-
-          <h1 className="text-5xl font-semibold tracking-tight text-slate-900">
+          <p className={`text-[15px] font-semibold tracking-wide ${t.mark}`}>
             Tracka
+          </p>
+
+          <h1 className="mt-2 font-display text-[54px] font-light leading-[0.95] tracking-tight">
+            Your skincare,
+            <br />
+            on schedule.
           </h1>
 
-          <p className="mt-4 text-lg leading-7 text-slate-500">
-            Your daily skincare routine tracker.
+          <p className={`mt-4 max-w-[300px] text-[15px] leading-relaxed ${t.muted}`}>
+            Build your routine, stay consistent, and track your progress —
+            morning and night.
           </p>
         </div>
 
         <button
           onClick={() => setScreen('auth')}
-          className="w-full rounded-2xl bg-blue-600 px-6 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-blue-700"
+          className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
         >
-          Get Started
+          Get started
         </button>
-
-        <p className="mt-6 text-sm text-slate-400">
-          Build your routine. Stay consistent. Track your progress.
-        </p>
 
       </div>
     </main>
