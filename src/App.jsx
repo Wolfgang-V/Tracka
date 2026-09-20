@@ -24,7 +24,7 @@ const registerServiceWorker = async () => {
 }
 
 const subscribeToPushNotifications = async () => {
-  if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+  if (!('serviceWorker' in navigator)) {
     return { ok: false, reason: 'unsupported' }
   }
 
@@ -34,8 +34,14 @@ const subscribeToPushNotifications = async () => {
 
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
 
+  // iOS hides the Notification API entirely outside the installed app,
+  // so this has to come before any check for it.
   if (isIOS && !standalone) {
     return { ok: false, reason: 'needs_install' }
+  }
+
+  if (!('Notification' in window)) {
+    return { ok: false, reason: 'unsupported' }
   }
 
   const permission = await Notification.requestPermission()
@@ -102,6 +108,8 @@ function App() {
   const [resetStatus, setResetStatus] = useState(null)
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
+  const [settingsUsername, setSettingsUsername] = useState('')
+  const [settingsStatus, setSettingsStatus] = useState(null)
   const [morningReminderEnabled, setMorningReminderEnabled] = useState(true)
   const [morningReminderTime, setMorningReminderTime] = useState('07:00')
   const [nightReminderEnabled, setNightReminderEnabled] = useState(true)
@@ -203,6 +211,9 @@ setRoutineHistory(groupedRoutines)
   const [menuOpen, setMenuOpen] = useState(false)
   const nightSectionRef = useRef(null)
   const [pushStatus, setPushStatus] = useState(null)
+  // TEMP monetization preview — remove this state + its two triggers + the
+  // modal block in the 'today' screen once testing is done.
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false)
   const [progressCompletions, setProgressCompletions] = useState([])
   const [selectedProgressDate, setSelectedProgressDate] = useState(null)
   const [skinLogs, setSkinLogs] = useState([])
@@ -220,6 +231,7 @@ setRoutineHistory(groupedRoutines)
 }
 
   setUser(user)
+  setShowUpgradeModal(true) // TEMP monetization preview
 
   const { data: profile, error } = await supabase
     .from('profiles')
@@ -331,6 +343,10 @@ loadProgressCompletions()
 } = supabase.auth.onAuthStateChange((event, session) => {
  if (event === 'PASSWORD_RECOVERY') {
    setScreen('resetPassword')
+ }
+
+ if (event === 'SIGNED_IN') {
+   setShowUpgradeModal(true) // TEMP monetization preview
  }
 
  if (session?.user) {
@@ -1172,6 +1188,18 @@ const saveReminderSettings = async () => {
       <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
         <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
+          <button
+            onClick={() => setScreen('today')}
+            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+            Back
+          </button>
+
           <div className="mt-5">
             <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
               Step 1 of 3
@@ -1347,6 +1375,18 @@ const saveReminderSettings = async () => {
     return (
       <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
         <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+          <button
+            onClick={() => setScreen('today')}
+            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+            Back
+          </button>
 
           <div className="mt-5">
             <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
@@ -2040,6 +2080,171 @@ if (screen === 'resetPassword') {
   )
 }
 
+if (screen === 'settings') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('today')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Today
+        </button>
+
+        <div className="mt-5">
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            Settings
+          </p>
+
+          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Account settings
+          </h1>
+
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Update your profile or change your password.
+          </p>
+        </div>
+
+        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+          <h2 className="text-[15px] font-semibold">Profile</h2>
+
+          {user?.email && (
+            <p className={`mt-1 text-[13px] ${t.faint}`}>{user.email}</p>
+          )}
+
+          <div className="mt-4">
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Username
+            </label>
+
+            <input
+              type="text"
+              placeholder="e.g. Deeyah"
+              value={settingsUsername}
+              onChange={(e) => setSettingsUsername(e.target.value)}
+              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
+
+          <button
+            onClick={async () => {
+              if (!settingsUsername.trim()) {
+                alert('Please enter a username.')
+                return
+              }
+
+              const {
+                data: { user: currentUser },
+              } = await supabase.auth.getUser()
+
+              if (!currentUser) {
+                alert('Please log in again.')
+                return
+              }
+
+              const { error } = await supabase
+                .from('profiles')
+                .upsert(
+                  { id: currentUser.id, username: settingsUsername.trim() },
+                  { onConflict: 'id' }
+                )
+
+              if (error) {
+                console.error('PROFILE UPDATE ERROR:', error)
+                setSettingsStatus('Could not save your profile. Try again.')
+                return
+              }
+
+              setDisplayName(settingsUsername.trim())
+              setSettingsStatus('Profile updated.')
+            }}
+            className={`mt-5 w-full rounded-2xl py-[16px] text-base font-bold ${t.btn}`}
+          >
+            Save profile
+          </button>
+        </div>
+
+        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+          <h2 className="text-[15px] font-semibold">Password</h2>
+
+          <div className="mt-4 flex flex-col gap-4">
+            <div>
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+                New password
+              </label>
+
+              <input
+                type="password"
+                placeholder="At least 6 characters"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+              />
+            </div>
+
+            <div>
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+                Confirm new password
+              </label>
+
+              <input
+                type="password"
+                placeholder="Re-enter your password"
+                value={confirmNewPassword}
+                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={async () => {
+              if (!newPassword || newPassword.length < 6) {
+                alert('Please enter a password with at least 6 characters.')
+                return
+              }
+
+              if (newPassword !== confirmNewPassword) {
+                alert('Passwords do not match.')
+                return
+              }
+
+              const { error } = await supabase.auth.updateUser({
+                password: newPassword,
+              })
+
+              if (error) {
+                setSettingsStatus(error.message)
+                return
+              }
+
+              setNewPassword('')
+              setConfirmNewPassword('')
+              setSettingsStatus('Password updated.')
+            }}
+            className={`mt-5 w-full rounded-2xl py-[16px] text-base font-bold ${t.btn}`}
+          >
+            Update password
+          </button>
+        </div>
+
+        {settingsStatus && (
+          <p className={`mt-4 text-center text-[14px] leading-relaxed ${t.muted}`}>
+            {settingsStatus}
+          </p>
+        )}
+
+      </div>
+    </main>
+  )
+}
+
 if (screen === 'reminders') {
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -2263,76 +2468,141 @@ if (screen === 'today') {
     ['Skin trends', 'skinTrends'],
     ['My skin profile', 'skinProfile'],
     ['Reminders', 'reminders'],
+    ['Settings', 'settings'],
   ]
 
   const renderSteps = (steps, palette) => (
-    <div className="relative">
-      <div className={`absolute left-[17px] top-5 bottom-6 w-px ${palette.rail}`} />
+    <div className="flex flex-col gap-3">
+      {steps.map((step, index) => {
+        const done = completedSteps.includes(step.id)
 
-      <div className="relative flex flex-col gap-5">
-        {steps.map((step, index) => {
-          const done = completedSteps.includes(step.id)
-
-          return (
-            <button
-              key={step.id}
-              onClick={() => toggleStepCompletion(step.id)}
-              className="flex items-start gap-4 text-left"
+        return (
+          <button
+            key={step.id}
+            onClick={() => toggleStepCompletion(step.id)}
+            className={`flex w-full items-center gap-4 rounded-2xl p-4 text-left transition ${
+              done ? palette.chip : `border ${palette.hair}`
+            }`}
+          >
+            <span
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${
+                done ? palette.nodeDone : palette.node
+              }`}
             >
-              <span
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${
-                  done ? palette.nodeDone : palette.node
-                }`}
-              >
-                {done ? (
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2.4"
-                    strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 12.5l5.2 5.2L20 7" />
-                  </svg>
-                ) : (
-                  index + 1
-                )}
-              </span>
+              {done ? (
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.4"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 12.5l5.2 5.2L20 7" />
+                </svg>
+              ) : (
+                index + 1
+              )}
+            </span>
 
-              <span className="pt-1">
-                <span
-                  className={`block text-[17px] font-semibold ${
-                    done ? `${palette.faint} line-through` : ''
-                  }`}
-                >
-                  {step.name}
-                </span>
-
-                <span className={`mt-0.5 block text-[13px] ${done ? palette.faint : palette.muted}`}>
+            <span className="min-w-0 flex-1">
+              {step.brand && (
+                <span className={`block truncate text-[12px] font-medium ${palette.faint}`}>
                   {step.brand}
                 </span>
+              )}
 
-                {!done && (step.active !== 'none' || step.expired) && (
-                  <span className="mt-2 flex flex-wrap gap-1.5">
-                    {step.active && step.active !== 'none' && (
-                      <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${palette.chip}`}>
-                        {step.active === 'retinoid' ? 'Retinol night' : 'Active tonight'}
-                      </span>
-                    )}
-
-                    {step.expired && (
-                      <span className={`inline-block rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-semibold ${palette.danger}`}>
-                        Past use-by date
-                      </span>
-                    )}
-                  </span>
-                )}
+              <span
+                className={`mt-0.5 block text-[16px] font-semibold ${
+                  done ? 'line-through' : ''
+                }`}
+              >
+                {step.name}
               </span>
-            </button>
-          )
-        })}
-      </div>
+
+              {step.category && (
+                <span className={`mt-0.5 block text-[12px] capitalize ${palette.muted}`}>
+                  {step.category}
+                </span>
+              )}
+
+              {!done && (step.active !== 'none' || step.expired) && (
+                <span className="mt-2 flex flex-wrap gap-1.5">
+                  {step.active && step.active !== 'none' && (
+                    <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${palette.chip}`}>
+                      {step.active === 'retinoid' ? 'Retinol night' : 'Active tonight'}
+                    </span>
+                  )}
+
+                  {step.expired && (
+                    <span className={`inline-block rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-semibold ${palette.danger}`}>
+                      Past use-by date
+                    </span>
+                  )}
+                </span>
+              )}
+            </span>
+          </button>
+        )
+      })}
     </div>
   )
 
   return (
     <main className="min-h-screen">
+
+      {/* TEMP monetization preview — remove this block, the showUpgradeModal
+          state, and its two setShowUpgradeModal(true) triggers after testing. */}
+      {showUpgradeModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 px-6 pb-6 sm:items-center"
+          onClick={() => setShowUpgradeModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={`w-full max-w-md rounded-3xl ${dayPalette.surface} p-6 shadow-2xl`}
+          >
+            <div className="flex items-start justify-between">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                </svg>
+              </span>
+
+              <button
+                onClick={() => setShowUpgradeModal(false)}
+                aria-label="Close"
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-lg ${dayPalette.faint}`}
+              >
+                ×
+              </button>
+            </div>
+
+            <h2 className="mt-4 font-display text-[26px] font-light leading-[1.1] tracking-tight">
+              Testing mode is almost up
+            </h2>
+
+            <p className={`mt-2 text-[14px] leading-relaxed ${dayPalette.muted}`}>
+              Upgrade to full tier to keep your app running.
+            </p>
+
+            <button
+              onClick={() => {
+                setShowUpgradeModal(false)
+                alert('Payments are not live yet — this is a preview of the upgrade flow.')
+              }}
+              className={`mt-6 w-full rounded-2xl py-[16px] text-base font-bold ${dayPalette.btn}`}
+            >
+              Upgrade to full tier
+            </button>
+
+            <button
+              onClick={() => setShowUpgradeModal(false)}
+              className={`mt-3 w-full py-2 text-[13px] font-semibold ${dayPalette.faint}`}
+            >
+              Remind me later
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className={`${dayPalette.page} transition-colors duration-500`}>
       <div className="mx-auto flex w-full max-w-md flex-col px-6 pt-7">
 
@@ -2361,6 +2631,10 @@ if (screen === 'today') {
                   onClick={async () => {
                     setMenuOpen(false)
                     if (target === 'skinProfile') await loadSkinProfile()
+                    if (target === 'settings') {
+                      setSettingsUsername(displayName)
+                      setSettingsStatus(null)
+                    }
                     setScreen(target)
                   }}
                   className={`block w-full px-5 py-3.5 text-left text-[15px] ${dayPalette.muted}`}
@@ -2449,7 +2723,7 @@ if (screen === 'today') {
                 onClick={finishRoutine}
                 className={`w-full rounded-2xl py-[18px] text-base font-bold ${dayPalette.btn}`}
               >
-                Done for this morning
+                Complete morning routine
               </button>
             </div>
           )}
@@ -2525,7 +2799,7 @@ if (screen === 'today') {
                 onClick={finishRoutine}
                 className={`w-full rounded-2xl py-[18px] text-base font-bold ${nightPalette.btn}`}
               >
-                Done for tonight
+                Complete night routine
               </button>
             </div>
           )}
