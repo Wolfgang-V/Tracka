@@ -99,6 +99,9 @@ function App() {
   const [goals, setGoals] = useState([])
   const [sensitivity, setSensitivity] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [resetStatus, setResetStatus] = useState(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [morningReminderEnabled, setMorningReminderEnabled] = useState(true)
   const [morningReminderTime, setMorningReminderTime] = useState('07:00')
   const [nightReminderEnabled, setNightReminderEnabled] = useState(true)
@@ -325,7 +328,11 @@ loadProgressCompletions()
 
     const {
   data: { subscription },
-} = supabase.auth.onAuthStateChange((_event, session) => {
+} = supabase.auth.onAuthStateChange((event, session) => {
+ if (event === 'PASSWORD_RECOVERY') {
+   setScreen('resetPassword')
+ }
+
  if (session?.user) {
   setUser(session.user)
   setProducts([])
@@ -1788,6 +1795,16 @@ if (screen === 'login') {
                 )}
               </button>
             </div>
+
+            <button
+              onClick={() => {
+                setResetStatus(null)
+                setScreen('forgotPassword')
+              }}
+              className={`mt-2 block w-full text-right text-[13px] font-semibold ${t.mark}`}
+            >
+              Forgot password?
+            </button>
           </div>
 
           <button
@@ -1844,6 +1861,179 @@ if (screen === 'login') {
             Create account
           </button>
         </p>
+
+      </div>
+    </main>
+  )
+}
+
+if (screen === 'forgotPassword') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('login')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Back
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[40px] font-light leading-[1.05] tracking-tight">
+            Reset your password
+          </h1>
+
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Enter your email and we'll send you a link to reset your password.
+          </p>
+        </div>
+
+        <div className="mt-8 flex flex-col gap-5">
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Email address
+            </label>
+
+            <input
+              type="email"
+              placeholder="you@example.com"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
+
+          <button
+            onClick={async () => {
+              if (!loginEmail) {
+                alert('Please enter your email address.')
+                return
+              }
+
+              const { error } = await supabase.auth.resetPasswordForEmail(loginEmail, {
+                redirectTo: `${window.location.origin}/?recovery=true`,
+              })
+
+              if (error) {
+                setResetStatus(error.message)
+                return
+              }
+
+              setResetStatus("Check your email for a link to reset your password.")
+            }}
+            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+          >
+            Send reset link
+          </button>
+
+          {resetStatus && (
+            <p className={`text-center text-[14px] leading-relaxed ${t.muted}`}>
+              {resetStatus}
+            </p>
+          )}
+        </div>
+
+      </div>
+    </main>
+  )
+}
+
+if (screen === 'resetPassword') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <div className="mt-5">
+          <h1 className="font-display text-[40px] font-light leading-[1.05] tracking-tight">
+            Choose a new password
+          </h1>
+
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Enter a new password for your account.
+          </p>
+        </div>
+
+        <div className="mt-8 flex flex-col gap-5">
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              New password
+            </label>
+
+            <input
+              type="password"
+              placeholder="At least 6 characters"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
+
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Confirm new password
+            </label>
+
+            <input
+              type="password"
+              placeholder="Re-enter your password"
+              value={confirmNewPassword}
+              onChange={(e) => setConfirmNewPassword(e.target.value)}
+              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
+
+          <button
+            onClick={async () => {
+              if (!newPassword || newPassword.length < 6) {
+                alert('Please enter a password with at least 6 characters.')
+                return
+              }
+
+              if (newPassword !== confirmNewPassword) {
+                alert('Passwords do not match.')
+                return
+              }
+
+              const { data, error } = await supabase.auth.updateUser({
+                password: newPassword,
+              })
+
+              if (error) {
+                alert(error.message)
+                return
+              }
+
+              setNewPassword('')
+              setConfirmNewPassword('')
+              setUser(data.user)
+
+              const { data: profile, error: profileError } = await supabase
+                .from('profiles')
+                .select('username')
+                .eq('id', data.user.id)
+                .maybeSingle()
+
+              setDisplayName(
+                profileError || !profile?.username
+                  ? data.user.email?.split('@')[0] || 'there'
+                  : profile.username
+              )
+
+              window.history.replaceState({}, '', window.location.pathname)
+              alert('Your password has been updated.')
+              setScreen('today')
+            }}
+            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+          >
+            Update password
+          </button>
+        </div>
 
       </div>
     </main>
@@ -2090,7 +2280,7 @@ if (screen === 'today') {
               className="flex items-start gap-4 text-left"
             >
               <span
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${
                   done ? palette.nodeDone : palette.node
                 }`}
               >
@@ -2912,7 +3102,7 @@ if (screen === 'progress') {
                           ? `${t.chip} font-bold`
                           : future
                             ? t.faint
-                            : `${t.muted} ${t.surfaceMuted ?? ''}`
+                            : `bg-slate-500/15 ${t.faint}`
                   }`}
                 >
                   {day}
@@ -2929,6 +3119,10 @@ if (screen === 'progress') {
             <span className="flex items-center gap-2">
               <span className={`h-3 w-3 rounded ${t.chip}`} />
               <span className={`text-xs ${t.muted}`}>Part done</span>
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded bg-slate-500/15" />
+              <span className={`text-xs ${t.muted}`}>Missed</span>
             </span>
           </div>
 
