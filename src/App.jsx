@@ -1,84 +1,86 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from './lib/supabase'
 import { detectActive } from './lib/core/actives'
 import { planNight, localDateString, addDays, daysBetween } from './lib/core/planNight'
 const VAPID_PUBLIC_KEY =
-  'BMqIqZ2Tjjx317CUOV8mCcyKNmI4ct29pUnAp0KCySyk_WF9RGbI5-JRR_DijZ6NANExRH3J652H_ZHl1vnJvRg'
+  'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(base64)
+  return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)))
+}
+
 const registerServiceWorker = async () => {
-  if (!('serviceWorker' in navigator)) {
+  if (!('serviceWorker' in navigator)) return null
+
+  try {
+    return await navigator.serviceWorker.register('/sw.js')
+  } catch (error) {
+    console.error('SERVICE WORKER ERROR:', error)
     return null
   }
+}
+
 const subscribeToPushNotifications = async () => {
-  if (!('Notification' in window)) {
-    alert('Push notifications are not supported on this device.')
-    return
+  if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+    return { ok: false, reason: 'unsupported' }
+  }
+
+  const standalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+
+  if (isIOS && !standalone) {
+    return { ok: false, reason: 'needs_install' }
   }
 
   const permission = await Notification.requestPermission()
-
   if (permission !== 'granted') {
-    alert('Please allow notifications for Tracka.')
-    return
+    return { ok: false, reason: permission }
   }
 
   const registration = await registerServiceWorker()
-
-  if (!registration) {
-    alert('Tracka could not set up notifications.')
-    return
-  }
+  if (!registration) return { ok: false, reason: 'no_sw' }
 
   try {
-    let subscription = await registration.pushManager.getSubscription()
+    await navigator.serviceWorker.ready
 
-    if (!subscription) {
-      subscription = await registration.pushManager.subscribe({
+    const existing = await registration.pushManager.getSubscription()
+    const subscription =
+      existing ??
+      (await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: VAPID_PUBLIC_KEY,
-      })
-    }
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      }))
 
     const {
       data: { user: currentUser },
     } = await supabase.auth.getUser()
 
-    if (!currentUser) {
-      alert('Please log in again.')
-      return
-    }
+    if (!currentUser) return { ok: false, reason: 'logged_out' }
 
-    const { error } = await supabase
-      .from('push_subscriptions')
-      .upsert(
-        {
-          user_id: currentUser.id,
-          subscription: subscription.toJSON(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: 'user_id',
-        }
-      )
+    const { error } = await supabase.from('push_subscriptions').upsert(
+      {
+        user_id: currentUser.id,
+        subscription: subscription.toJSON(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' }
+    )
 
     if (error) {
       console.error('PUSH SUBSCRIPTION ERROR:', error)
-      alert('Could not save notification settings.')
-      return
+      return { ok: false, reason: 'save_failed' }
     }
 
-    alert('Notifications enabled!')
+    return { ok: true }
   } catch (error) {
     console.error('PUSH SETUP ERROR:', error)
-    alert('Could not enable notifications.')
-  }
-}
-
-  try {
-    const registration = await navigator.serviceWorker.register('/sw.js')
-    return registration
-  } catch (error) {
-    console.error('SERVICE WORKER ERROR:', error)
-    return null
+    return { ok: false, reason: 'failed' }
   }
 }
 
@@ -104,6 +106,8 @@ function App() {
   const [productBrand, setProductBrand] = useState('')
   const [productName, setProductName] = useState('')
   const [productCategory, setProductCategory] = useState('')
+  const [productOpenedDate, setProductOpenedDate] = useState('')
+  const [productPaoMonths, setProductPaoMonths] = useState(0)
   const [products, setProducts] = useState([])
 
   const [amSelectedProducts, setAmSelectedProducts] = useState([])
@@ -194,8 +198,12 @@ setRoutineHistory(groupedRoutines)
   const [stepHistory, setStepHistory] = useState([])
   const [viewMode, setViewMode] = useState(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const nightSectionRef = useRef(null)
+  const [pushStatus, setPushStatus] = useState(null)
   const [progressCompletions, setProgressCompletions] = useState([])
   const [selectedProgressDate, setSelectedProgressDate] = useState(null)
+  const [skinLogs, setSkinLogs] = useState([])
+  const [selectedTrendDate, setSelectedTrendDate] = useState(null)
 
   useEffect(() => {
    const checkUser = async () => {
@@ -247,6 +255,8 @@ setRoutineHistory(groupedRoutines)
         .select(`
           id,
           product_id,
+          opened_date,
+          pao_months,
           products (
             id,
             brand,
@@ -357,6 +367,63 @@ loadProgressCompletions()
   setStepHistory(data || [])
 }
 
+const loadSkinLogs = async () => {
+  const {
+    data: { user: currentUser },
+  } = await supabase.auth.getUser()
+
+  if (!currentUser) return
+
+  const { data, error } = await supabase
+    .from('skin_logs')
+    .select('local_date, breakouts, dryness, oiliness, redness')
+    .eq('user_id', currentUser.id)
+    .gte('local_date', addDays(localDateString(), -30))
+
+  if (error) {
+    console.error('SKIN LOG HISTORY ERROR:', error)
+    return
+  }
+
+  setSkinLogs(data || [])
+}
+
+const updateSkinMetric = async (metric, delta) => {
+  const today = localDateString()
+
+  const current = skinLogs.find((log) => log.local_date === today) || {
+    local_date: today,
+    breakouts: 0,
+    dryness: 0,
+    oiliness: 0,
+    redness: 0,
+  }
+
+  const nextValue = Math.max(0, Math.min(20, current[metric] + delta))
+  const updated = { ...current, [metric]: nextValue }
+
+  setSkinLogs((logs) =>
+    logs.some((log) => log.local_date === today)
+      ? logs.map((log) => (log.local_date === today ? updated : log))
+      : [...logs, updated]
+  )
+
+  const { error } = await supabase.from('skin_logs').upsert(
+    {
+      user_id: user.id,
+      local_date: today,
+      breakouts: updated.breakouts,
+      dryness: updated.dryness,
+      oiliness: updated.oiliness,
+      redness: updated.redness,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id,local_date' }
+  )
+
+  if (error) console.error('SKIN LOG SAVE ERROR:', error)
+}
+
 const finishRoutine = async () => {
   const today = localDateString()
 
@@ -457,6 +524,8 @@ if (stepsError) {
       .from('user_products')
       .select(`
         id,
+        opened_date,
+        pao_months,
         products (
           brand,
           name,
@@ -559,6 +628,8 @@ const nightPlan = planNight({
     category: step.user_products?.products?.category,
     frequency: step.frequency,
     step_order: step.step_order,
+    opened_date: step.user_products?.opened_date ?? null,
+    pao_months: step.user_products?.pao_months ?? null,
   })),
   history: stepHistory.filter((entry) => entry.local_date < todayString),
 })
@@ -566,35 +637,41 @@ const nightPlan = planNight({
 const hour = new Date().getHours()
 const isNight = viewMode ? viewMode === 'night' : hour >= 17 || hour < 5
 
-const t = isNight
-  ? {
-      page: 'bg-[#1B1826] text-[#F4F1F8]',
-      mark: 'text-[#7ECFB4]',
-      muted: 'text-[#A79FB8]',
-      faint: 'text-[#6F6980]',
-      rail: 'bg-[#F4F1F8]/15',
-      node: 'bg-[#262133] border border-[#F4F1F8]/20 text-[#A79FB8]',
-      nodeDone: 'bg-[#7ECFB4] text-[#1B1826]',
-      hair: 'border-[#F4F1F8]/10',
-      btn: 'bg-[#7ECFB4] text-[#1B1826]',
-      surface: 'bg-[#262133]',
-      chip: 'bg-[#7ECFB4]/15 text-[#7ECFB4]',
-      danger: 'text-rose-300',
-    }
-  : {
-      page: 'bg-[#EDF1EC] text-[#1B1826]',
-      mark: 'text-[#1F6B58]',
-      muted: 'text-[#55506A]',
-      faint: 'text-[#6E6880]',
-      rail: 'bg-[#1B1826]/15',
-      node: 'bg-white border border-[#1B1826]/15 text-[#55506A]',
-      nodeDone: 'bg-[#1F6B58] text-white',
-      hair: 'border-[#1B1826]/10',
-      btn: 'bg-[#1F6B58] text-white',
-      surface: 'bg-white',
-      chip: 'bg-[#1F6B58]/10 text-[#1F6B58]',
-      danger: 'text-rose-600',
-    }
+const nightPalette = {
+  bgHex: '#0B1E33',
+  page: 'bg-[#0B1E33] text-[#EDF2FA]',
+  text: 'text-[#EDF2FA]',
+  mark: 'text-[#8FB8E8]',
+  muted: 'text-[#9AAFC9]',
+  faint: 'text-[#5F7593]',
+  rail: 'bg-[#EDF2FA]/15',
+  node: 'bg-[#142943] border border-[#EDF2FA]/15 text-[#9AAFC9]',
+  nodeDone: 'bg-[#8FB8E8] text-[#0B1E33]',
+  hair: 'border-[#EDF2FA]/10',
+  btn: 'bg-[#8FB8E8] text-[#0B1E33]',
+  surface: 'bg-[#142943]',
+  chip: 'bg-[#8FB8E8]/15 text-[#8FB8E8]',
+  danger: 'text-rose-300',
+}
+
+const dayPalette = {
+  bgHex: '#F5F8FC',
+  page: 'bg-[#F5F8FC] text-[#101B2D]',
+  text: 'text-[#101B2D]',
+  mark: 'text-[#1E4E8C]',
+  muted: 'text-[#51637E]',
+  faint: 'text-[#7488A3]',
+  rail: 'bg-[#101B2D]/12',
+  node: 'bg-white border border-[#101B2D]/12 text-[#51637E]',
+  nodeDone: 'bg-[#1E4E8C] text-white',
+  hair: 'border-[#101B2D]/10',
+  btn: 'bg-[#1E4E8C] text-white',
+  surface: 'bg-white',
+  chip: 'bg-[#1E4E8C]/10 text-[#1E4E8C]',
+  danger: 'text-rose-600',
+}
+
+const t = isNight ? nightPalette : dayPalette
 
 const completedDates = new Set(
   progressCompletions
@@ -618,6 +695,73 @@ for (const date of [...completedDates].sort()) {
   run = previousDate && daysBetween(previousDate, date) === 1 ? run + 1 : 1
   longestStreak = Math.max(longestStreak, run)
   previousDate = date
+}
+
+const todaySkinLog = skinLogs.find((log) => log.local_date === todayString) || {
+  breakouts: 0,
+  dryness: 0,
+  oiliness: 0,
+  redness: 0,
+}
+
+// Flags a product as worth a second look when the average daily breakout
+// count in the ~10 days after its opened_date is meaningfully higher than
+// the ~10 days before — never phrased as a diagnosis, just a nudge to watch.
+const productsToWatch = products
+  .filter((item) => {
+    if (!item.opened_date) return false
+    const daysSinceOpened = daysBetween(item.opened_date, todayString)
+    return daysSinceOpened >= 7 && daysSinceOpened <= 30
+  })
+  .map((item) => {
+    const before = skinLogs.filter(
+      (log) =>
+        log.local_date < item.opened_date &&
+        log.local_date >= addDays(item.opened_date, -10)
+    )
+    const after = skinLogs.filter(
+      (log) =>
+        log.local_date >= item.opened_date &&
+        log.local_date <= addDays(item.opened_date, 10)
+    )
+
+    if (before.length < 3 || after.length < 3) return null
+
+    const avg = (logs) => logs.reduce((sum, log) => sum + log.breakouts, 0) / logs.length
+    const beforeAvg = avg(before)
+    const afterAvg = avg(after)
+
+    if (afterAvg - beforeAvg < 2) return null
+
+    return {
+      id: item.id,
+      name: item.products?.name || 'A product',
+      openedDate: item.opened_date,
+      beforeAvg,
+      afterAvg,
+    }
+  })
+  .filter(Boolean)
+  .sort((a, b) => (b.afterAvg - b.beforeAvg) - (a.afterAvg - a.beforeAvg))
+
+const getPaoStatus = (item) => {
+  if (!item.opened_date || !item.pao_months) return null
+
+  const expires = new Date(item.opened_date + 'T00:00:00')
+  expires.setMonth(expires.getMonth() + item.pao_months)
+
+  const daysLeft = Math.round(
+    (expires - new Date(todayString + 'T00:00:00')) / 86400000
+  )
+
+  if (daysLeft < 0) return { label: 'Expired', expired: true }
+  if (daysLeft === 0) return { label: 'Expires today', expired: true }
+  if (daysLeft <= 30) return { label: `${daysLeft}d left`, expired: false }
+
+  return {
+    label: `Use by ${expires.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}`,
+    expired: false,
+  }
 }
 
 const getDefaultProductTime = (product) => {
@@ -688,8 +832,31 @@ useEffect(() => {
   if (screen === 'today') {
     loadRoutines()
     loadStepHistory()
+    loadSkinLogs()
   }
 
+  if (screen === 'skinTrends') {
+    loadSkinLogs()
+  }
+
+}, [screen])
+
+// The Today screen shows morning and night routines on one continuous
+// page; scrolling the night section into view switches the app's theme
+// to dark, the same 'viewMode' a manual toggle used to set.
+useEffect(() => {
+  if (screen !== 'today') return
+
+  const node = nightSectionRef.current
+  if (!node) return
+
+  const observer = new IntersectionObserver(
+    ([entry]) => setViewMode(entry.isIntersecting ? 'night' : 'morning'),
+    { threshold: 0.15 }
+  )
+
+  observer.observe(node)
+  return () => observer.disconnect()
 }, [screen])
 
 
@@ -943,6 +1110,7 @@ const saveReminderSettings = async () => {
         morning_time: morningReminderTime,
         night_enabled: nightReminderEnabled,
         night_time: nightReminderTime,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         updated_at: new Date().toISOString(),
       },
       {
@@ -1198,56 +1366,65 @@ const saveReminderSettings = async () => {
                 You haven't added any products yet.
               </p>
             ) : (
-              <div className={`mt-5 flex flex-col divide-y ${t.hair}`}>
-                {products.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0"
-                  >
-                    <div>
-                      <p className={`text-[13px] font-medium ${t.faint}`}>
-                        {item.products.brand}
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                {products.map((item) => {
+                  const status = getPaoStatus(item)
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`relative rounded-2xl border ${t.hair} p-4`}
+                    >
+                      <button
+                        onClick={async () => {
+                          const confirmed = window.confirm(
+                            `Remove ${item.products.name} from your products?`
+                          )
+
+                          if (!confirmed) return
+
+                          const { error } = await supabase
+                            .from('user_products')
+                            .update({ is_active: false })
+                            .eq('id', item.id)
+
+                          if (error) {
+                            alert(error.message)
+                            return
+                          }
+
+                          setProducts((current) =>
+                            current.filter(
+                              (product) => product.id !== item.id
+                            )
+                          )
+                        }}
+                        aria-label={`Remove ${item.products.name}`}
+                        className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full text-base leading-none ${t.faint}`}
+                      >
+                        ×
+                      </button>
+
+                      <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>
+                        {item.products.category}
                       </p>
 
-                      <p className="mt-0.5 text-[15px] font-semibold">
+                      <p className="mt-2 pr-4 text-[14px] font-semibold leading-snug">
                         {item.products.name}
                       </p>
 
-                      <p className={`mt-0.5 text-[13px] capitalize ${t.muted}`}>
-                        {item.products.category}
+                      <p className={`mt-0.5 text-[12px] ${t.muted}`}>
+                        {item.products.brand}
                       </p>
+
+                      {status && (
+                        <p className={`mt-2 text-[11px] font-semibold ${status.expired ? t.danger : t.faint}`}>
+                          {status.label}
+                        </p>
+                      )}
                     </div>
-
-                    <button
-                      onClick={async () => {
-                        const confirmed = window.confirm(
-                          `Remove ${item.products.name} from your products?`
-                        )
-
-                        if (!confirmed) return
-
-                        const { error } = await supabase
-                          .from('user_products')
-                          .update({ is_active: false })
-                          .eq('id', item.id)
-
-                        if (error) {
-                          alert(error.message)
-                          return
-                        }
-
-                        setProducts((current) =>
-                          current.filter(
-                            (product) => product.id !== item.id
-                          )
-                        )
-                      }}
-                      className={`shrink-0 text-[13px] font-semibold ${t.danger}`}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
@@ -1360,6 +1537,52 @@ const saveReminderSettings = async () => {
               </select>
             </div>
 
+            <div>
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+                Opened date
+              </label>
+
+              <input
+                type="date"
+                value={productOpenedDate}
+                onChange={(e) => setProductOpenedDate(e.target.value)}
+                max={localDateString()}
+                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+              />
+            </div>
+
+            <div>
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+                Use within (after opening)
+              </label>
+
+              <div className="mt-2 flex flex-wrap gap-2">
+                {[
+                  ['None', 0],
+                  ['3 months', 3],
+                  ['6 months', 6],
+                  ['9 months', 9],
+                  ['12 months', 12],
+                  ['18 months', 18],
+                  ['24 months', 24],
+                  ['36 months', 36],
+                ].map(([label, months]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setProductPaoMonths(months)}
+                    className={`rounded-full border px-4 py-2 text-[13px] font-semibold transition ${
+                      productPaoMonths === months
+                        ? `${t.chip} border-transparent`
+                        : `${t.hair} ${t.muted}`
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <button
               onClick={async () => {
                 if (!productBrand || !productName || !productCategory) {
@@ -1401,6 +1624,8 @@ const saveReminderSettings = async () => {
                       user_id: currentUser.id,
                       product_id: product.id,
                       is_active: true,
+                      opened_date: productOpenedDate || null,
+                      pao_months: productPaoMonths || null,
                     })
 
                 if (userProductError) {
@@ -1416,6 +1641,8 @@ const saveReminderSettings = async () => {
                   .select(`
                     id,
                     product_id,
+                    opened_date,
+                    pao_months,
                     products (
                       id,
                       brand,
@@ -1435,6 +1662,8 @@ const saveReminderSettings = async () => {
                 setProductBrand('')
                 setProductName('')
                 setProductCategory('')
+                setProductOpenedDate('')
+                setProductPaoMonths(0)
                 setScreen('products')
               }}
               className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
@@ -1772,6 +2001,42 @@ if (screen === 'reminders') {
 
         </div>
 
+        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+          <h2 className="text-[17px] font-semibold">
+            Notifications on this device
+          </h2>
+
+          <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>
+            Reminders arrive on whichever device you turn this on. On iPhone, add
+            Tracka to your home screen first and open it from there.
+          </p>
+
+          <button
+            onClick={async () => {
+              const result = await subscribeToPushNotifications()
+
+              setPushStatus(
+                result.ok
+                  ? "You're set. Reminders will arrive on this device."
+                  : result.reason === 'needs_install'
+                    ? 'Add Tracka to your home screen first, then open it from there.'
+                    : result.reason === 'denied'
+                      ? 'Notifications are blocked. Turn them on in your browser settings for this site.'
+                      : result.reason === 'unsupported'
+                        ? "This browser can't do notifications. Try Chrome or Safari."
+                        : "That didn't work. Try again in a moment."
+              )
+            }}
+            className={`mt-5 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+          >
+            Turn on notifications
+          </button>
+
+          {pushStatus && (
+            <p className={`mt-4 text-[13px] ${t.muted}`}>{pushStatus}</p>
+          )}
+        </div>
+
         <button
           onClick={saveReminderSettings}
           className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
@@ -1784,38 +2049,105 @@ if (screen === 'reminders') {
   )
 }
 if (screen === 'today') {
-  const activeSteps = isNight
-    ? nightPlan.steps
-    : todayAmSteps.map((step) => ({
-        id: step.id,
-        name: step.user_products?.products?.name || step.step_name,
-        brand: step.user_products?.products?.brand,
-        category: step.user_products?.products?.category,
-        active: 'none',
-      }))
+  const amSteps = todayAmSteps.map((step) => ({
+    id: step.id,
+    name: step.user_products?.products?.name || step.step_name,
+    brand: step.user_products?.products?.brand,
+    category: step.user_products?.products?.category,
+    active: 'none',
+  }))
 
-  const notes = isNight ? nightPlan.notes : []
-  const hasRoutine = isNight ? todayPmRoutine : todayAmRoutine
-  const doneCount = activeSteps.filter((s) => completedSteps.includes(s.id)).length
+  const pmSteps = nightPlan.steps
+  const pmNotes = nightPlan.notes
+
+  const amDone = amSteps.filter((s) => completedSteps.includes(s.id)).length
+  const pmDone = pmSteps.filter((s) => completedSteps.includes(s.id)).length
+
   const isRestNight =
-    isNight &&
-    activeSteps.length > 0 &&
-    activeSteps.every((s) => !s.active || s.active === 'none')
+    pmSteps.length > 0 && pmSteps.every((s) => !s.active || s.active === 'none')
 
   const menuItems = [
     ['My products', 'products'],
     ['My routine', 'routinePlanner'],
     ['My progress', 'progress'],
+    ['Skin trends', 'skinTrends'],
     ['My skin profile', 'skinProfile'],
     ['Reminders', 'reminders'],
   ]
 
+  const renderSteps = (steps, palette) => (
+    <div className="relative">
+      <div className={`absolute left-[17px] top-5 bottom-6 w-px ${palette.rail}`} />
+
+      <div className="relative flex flex-col gap-5">
+        {steps.map((step, index) => {
+          const done = completedSteps.includes(step.id)
+
+          return (
+            <button
+              key={step.id}
+              onClick={() => toggleStepCompletion(step.id)}
+              className="flex items-start gap-4 text-left"
+            >
+              <span
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
+                  done ? palette.nodeDone : palette.node
+                }`}
+              >
+                {done ? (
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.4"
+                    strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 12.5l5.2 5.2L20 7" />
+                  </svg>
+                ) : (
+                  index + 1
+                )}
+              </span>
+
+              <span className="pt-1">
+                <span
+                  className={`block text-[17px] font-semibold ${
+                    done ? `${palette.faint} line-through` : ''
+                  }`}
+                >
+                  {step.name}
+                </span>
+
+                <span className={`mt-0.5 block text-[13px] ${done ? palette.faint : palette.muted}`}>
+                  {step.brand}
+                </span>
+
+                {!done && (step.active !== 'none' || step.expired) && (
+                  <span className="mt-2 flex flex-wrap gap-1.5">
+                    {step.active && step.active !== 'none' && (
+                      <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${palette.chip}`}>
+                        {step.active === 'retinoid' ? 'Retinol night' : 'Active tonight'}
+                      </span>
+                    )}
+
+                    {step.expired && (
+                      <span className={`inline-block rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-semibold ${palette.danger}`}>
+                        Past use-by date
+                      </span>
+                    )}
+                  </span>
+                )}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+    <main className="min-h-screen">
+      <div className={`${dayPalette.page} transition-colors duration-500`}>
+      <div className="mx-auto flex w-full max-w-md flex-col px-6 pt-7">
 
         <div className="relative flex items-center justify-between">
-          <span className={`text-[15px] font-semibold tracking-wide ${t.mark}`}>
+          <span className={`text-[15px] font-semibold tracking-wide ${dayPalette.mark}`}>
             Tracka
           </span>
 
@@ -1823,7 +2155,7 @@ if (screen === 'today') {
             type="button"
             aria-label="Open menu"
             onClick={() => setMenuOpen(!menuOpen)}
-            className={`-mr-2 flex h-11 w-11 items-center justify-center ${t.muted}`}
+            className={`-mr-2 flex h-11 w-11 items-center justify-center ${dayPalette.muted}`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -1832,7 +2164,7 @@ if (screen === 'today') {
           </button>
 
           {menuOpen && (
-            <div className={`absolute right-0 top-12 z-10 w-52 overflow-hidden rounded-2xl ${t.surface} shadow-xl`}>
+            <div className={`absolute right-0 top-12 z-10 w-52 overflow-hidden rounded-2xl ${dayPalette.surface} shadow-xl`}>
               {menuItems.map(([label, target]) => (
                 <button
                   key={target}
@@ -1841,7 +2173,7 @@ if (screen === 'today') {
                     if (target === 'skinProfile') await loadSkinProfile()
                     setScreen(target)
                   }}
-                  className={`block w-full px-5 py-3.5 text-left text-[15px] ${t.muted}`}
+                  className={`block w-full px-5 py-3.5 text-left text-[15px] ${dayPalette.muted}`}
                 >
                   {label}
                 </button>
@@ -1862,7 +2194,7 @@ if (screen === 'today') {
                   setMenuOpen(false)
                   setScreen('welcome')
                 }}
-                className={`block w-full border-t px-5 py-3.5 text-left text-[15px] ${t.hair} ${t.faint}`}
+                className={`block w-full border-t px-5 py-3.5 text-left text-[15px] ${dayPalette.hair} ${dayPalette.faint}`}
               >
                 Log out
               </button>
@@ -1871,134 +2203,187 @@ if (screen === 'today') {
         </div>
 
         <div className="mt-7">
-          <p className={`text-[15px] ${t.muted}`}>
-            {isNight ? 'Good evening' : 'Good morning'}, {displayName}
+          <p className={`text-[15px] ${dayPalette.muted}`}>
+            Hello, {displayName}
           </p>
 
-          <h1 className="mt-1.5 font-display text-[58px] font-light leading-[0.95] tracking-tight">
-            {isRestNight ? 'Rest night' : isNight ? 'Tonight' : 'Morning'}
+          <h1 className="mt-1.5 font-display text-[50px] font-light leading-[0.95] tracking-tight">
+            Today
           </h1>
 
-          {isRestNight ? (
-            <p className={`mt-3.5 max-w-[300px] text-[15px] leading-relaxed ${t.muted}`}>
+          <p className={`mt-2.5 text-sm ${dayPalette.muted}`}>
+            {new Date().toLocaleDateString('en-GB', {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+            })}
+          </p>
+        </div>
+
+        <div className="mt-10">
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${dayPalette.mark}`}>
+            Morning
+          </p>
+
+          <h2 className="mt-1 font-display text-[28px] font-light leading-[1.05] tracking-tight">
+            Morning routine
+          </h2>
+
+          <div className="mt-6">
+            {routinesLoading ? (
+              <p className={`text-sm ${dayPalette.muted}`}>Getting your routine…</p>
+            ) : !todayAmRoutine ? (
+              <div>
+                <p className={`text-[15px] leading-relaxed ${dayPalette.muted}`}>
+                  You haven't set up a morning routine yet.
+                </p>
+                <button
+                  onClick={() => setScreen('routinePlanner')}
+                  className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${dayPalette.btn}`}
+                >
+                  Build my routine
+                </button>
+              </div>
+            ) : (
+              renderSteps(amSteps, dayPalette)
+            )}
+          </div>
+
+          {todayAmRoutine && !routinesLoading && (
+            <div className="mt-7 flex flex-col gap-3.5">
+              <p className={`text-[13px] ${dayPalette.faint}`}>
+                {amDone} of {amSteps.length} done
+              </p>
+
+              <button
+                onClick={finishRoutine}
+                className={`w-full rounded-2xl py-[18px] text-base font-bold ${dayPalette.btn}`}
+              >
+                Done for this morning
+              </button>
+            </div>
+          )}
+        </div>
+
+      </div>
+      </div>
+
+      <div
+        aria-hidden="true"
+        style={{
+          height: 110,
+          backgroundImage: `linear-gradient(to bottom, ${dayPalette.bgHex}, ${nightPalette.bgHex})`,
+        }}
+      />
+
+      <div ref={nightSectionRef} className={`${nightPalette.page} transition-colors duration-500`}>
+      <div className="mx-auto flex w-full max-w-md flex-col px-6 pb-10">
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${nightPalette.mark}`}>
+            Night
+          </p>
+
+          <h2 className="mt-1 font-display text-[28px] font-light leading-[1.05] tracking-tight">
+            {isRestNight ? 'Rest night' : 'Tonight'}
+          </h2>
+
+          {isRestNight && (
+            <p className={`mt-2 max-w-[300px] text-[14px] leading-relaxed ${nightPalette.muted}`}>
               Nothing strong tonight. Your skin repairs itself between actives,
               so this counts as part of the routine.
             </p>
-          ) : (
-            <p className={`mt-2.5 text-sm ${t.muted}`}>
-              {new Date().toLocaleDateString('en-GB', {
-                weekday: 'long',
-                day: 'numeric',
-                month: 'long',
-              })}
-            </p>
           )}
-        </div>
 
-        <div className="relative mt-9 flex-grow">
-          {routinesLoading ? (
-            <p className={`text-sm ${t.muted}`}>Getting your routine…</p>
-          ) : !hasRoutine ? (
-            <div>
-              <p className={`text-[15px] leading-relaxed ${t.muted}`}>
-                You haven't set up {isNight ? 'a night' : 'a morning'} routine yet.
+          <div className="mt-6">
+            {routinesLoading ? (
+              <p className={`text-sm ${nightPalette.muted}`}>Getting your routine…</p>
+            ) : !todayPmRoutine ? (
+              <div>
+                <p className={`text-[15px] leading-relaxed ${nightPalette.muted}`}>
+                  You haven't set up a night routine yet.
+                </p>
+                <button
+                  onClick={() => setScreen('routinePlanner')}
+                  className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${nightPalette.btn}`}
+                >
+                  Build my routine
+                </button>
+              </div>
+            ) : (
+              <>
+                {renderSteps(pmSteps, nightPalette)}
+
+                {pmNotes.length > 0 && (
+                  <div className={`mt-7 flex flex-col gap-3 border-t pt-5 ${nightPalette.hair}`}>
+                    {pmNotes.map((note, i) => (
+                      <p key={i} className={`text-sm leading-relaxed ${nightPalette.muted}`}>
+                        {note}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {todayPmRoutine && !routinesLoading && (
+            <div className="mt-7 flex flex-col gap-3.5">
+              <p className={`text-[13px] ${nightPalette.faint}`}>
+                {pmDone} of {pmSteps.length} done
               </p>
+
               <button
-                onClick={() => setScreen('routinePlanner')}
-                className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${t.btn}`}
+                onClick={finishRoutine}
+                className={`w-full rounded-2xl py-[18px] text-base font-bold ${nightPalette.btn}`}
               >
-                Build my routine
+                Done for tonight
               </button>
             </div>
-          ) : (
-            <>
-              <div className={`absolute left-[17px] top-5 bottom-6 w-px ${t.rail}`} />
-
-              <div className="relative flex flex-col gap-5">
-                {activeSteps.map((step, index) => {
-                  const done = completedSteps.includes(step.id)
-
-                  return (
-                    <button
-                      key={step.id}
-                      onClick={() => toggleStepCompletion(step.id)}
-                      className="flex items-start gap-4 text-left"
-                    >
-                      <span
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
-                          done ? t.nodeDone : t.node
-                        }`}
-                      >
-                        {done ? (
-                          <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" strokeWidth="2.4"
-                            strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M4 12.5l5.2 5.2L20 7" />
-                          </svg>
-                        ) : (
-                          index + 1
-                        )}
-                      </span>
-
-                      <span className="pt-1">
-                        <span
-                          className={`block text-[17px] font-semibold ${
-                            done ? `${t.faint} line-through` : ''
-                          }`}
-                        >
-                          {step.name}
-                        </span>
-
-                        <span className={`mt-0.5 block text-[13px] ${done ? t.faint : t.muted}`}>
-                          {step.brand}
-                        </span>
-
-                        {step.active && step.active !== 'none' && !done && (
-                          <span className={`mt-2 inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${t.chip}`}>
-                            {step.active === 'retinoid' ? 'Retinol night' : 'Active tonight'}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-
-              {notes.length > 0 && (
-                <div className={`mt-7 flex flex-col gap-3 border-t pt-5 ${t.hair}`}>
-                  {notes.map((note, i) => (
-                    <p key={i} className={`text-sm leading-relaxed ${t.muted}`}>
-                      {note}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </>
           )}
-        </div>
 
-        {hasRoutine && !routinesLoading && (
-          <div className="flex flex-col gap-3.5 pt-8">
-            <p className={`text-[13px] ${t.faint}`}>
-              {doneCount} of {activeSteps.length} done
-            </p>
+        {(todayAmRoutine || todayPmRoutine) && !routinesLoading && (
+          <div className={`mt-8 rounded-3xl ${nightPalette.surface} p-5`}>
+            <h2 className={`text-[15px] font-semibold ${nightPalette.text}`}>
+              How's your skin today?
+            </h2>
 
-            <button
-              onClick={finishRoutine}
-              className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
-            >
-              {isNight ? 'Done for tonight' : 'Done for this morning'}
-            </button>
+            <div className="mt-4 flex flex-col gap-3">
+              {[
+                ['breakouts', 'Breakouts'],
+                ['dryness', 'Dryness'],
+                ['oiliness', 'Oiliness'],
+                ['redness', 'Redness'],
+              ].map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between">
+                  <span className={`text-[14px] ${nightPalette.muted}`}>{label}</span>
 
-            <button
-              onClick={() => setViewMode(isNight ? 'morning' : 'night')}
-              className={`py-1 text-[13px] ${t.faint}`}
-            >
-              {isNight ? 'View this morning instead' : "View tonight instead"}
-            </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => updateSkinMetric(key, -1)}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full border text-lg leading-none ${nightPalette.hair} ${nightPalette.muted}`}
+                    >
+                      −
+                    </button>
+
+                    <span className={`w-5 text-center text-[15px] font-semibold tabular-nums ${nightPalette.text}`}>
+                      {todaySkinLog[key]}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => updateSkinMetric(key, 1)}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full text-lg leading-none ${nightPalette.btn}`}
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
+      </div>
       </div>
     </main>
   )
@@ -2561,6 +2946,276 @@ if (screen === 'progress') {
                 : ' — nothing recorded.'}
           </p>
         )}
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'skinTrends') {
+  const chartDays = Array.from({ length: 30 }, (_, i) => addDays(todayString, i - 29))
+  const chartPoints = chartDays.map((date) => {
+    const log = skinLogs.find((entry) => entry.local_date === date)
+    return { date, value: log ? log.breakouts : null }
+  })
+
+  const loggedValues = chartPoints.map((p) => p.value).filter((v) => v !== null)
+  const hasEnoughData = loggedValues.length >= 3
+
+  const chartW = 328
+  const chartH = 120
+  const columnW = chartW / (chartPoints.length - 1)
+  const maxValue = Math.max(4, ...loggedValues)
+  const xFor = (i) => (i / (chartPoints.length - 1)) * chartW
+  const yFor = (v) => chartH - (v / maxValue) * chartH
+
+  const segments = []
+  let current = []
+  chartPoints.forEach((p, i) => {
+    if (p.value === null) {
+      if (current.length) segments.push(current)
+      current = []
+      return
+    }
+    current.push([xFor(i), yFor(p.value)])
+  })
+  if (current.length) segments.push(current)
+
+  const introducedMarks = products
+    .filter(
+      (item) =>
+        item.opened_date &&
+        item.opened_date >= chartDays[0] &&
+        item.opened_date <= todayString
+    )
+    .map((item) => ({ x: xFor(chartDays.indexOf(item.opened_date)) }))
+
+  const lastLogged = [...chartPoints].reverse().find((p) => p.value !== null)
+
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const firstWeekday = new Date(year, month, 1).getDay()
+  const leadingBlanks = firstWeekday === 0 ? 6 : firstWeekday - 1
+
+  const severityOf = (log) =>
+    !log ? null : log.breakouts + log.dryness + log.oiliness + log.redness
+
+  const severityClass = (severity) => {
+    if (severity === null) return `border ${t.hair} ${t.faint}`
+    if (severity === 0) return `${t.chip} border-transparent`
+    if (severity <= 4) return `${t.chip} border-transparent`
+    return `border-transparent bg-rose-500/15 ${t.danger}`
+  }
+
+  const selectedLog = selectedTrendDate
+    ? skinLogs.find((entry) => entry.local_date === selectedTrendDate)
+    : null
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('today')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Today
+        </button>
+
+        <div className="mt-5">
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            Skin trends
+          </p>
+
+          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            How your skin's been
+          </h1>
+
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Breakouts over the last 30 days, and which new products landed nearby.
+          </p>
+        </div>
+
+        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+          <h2 className="text-[15px] font-semibold">Breakout trend</h2>
+
+          {!hasEnoughData ? (
+            <p className={`mt-3 text-[13px] leading-relaxed ${t.muted}`}>
+              Log your skin on a few more days on the Today screen to see a trend here.
+            </p>
+          ) : (
+            <>
+              <svg viewBox={`0 0 ${chartW} ${chartH}`} className="mt-4 w-full" style={{ height: 130 }}>
+                <g className={t.hair}>
+                  <line x1="0" y1={yFor(maxValue)} x2={chartW} y2={yFor(maxValue)} stroke="currentColor" strokeWidth="1" />
+                  <line x1="0" y1={yFor(maxValue / 2)} x2={chartW} y2={yFor(maxValue / 2)} stroke="currentColor" strokeWidth="1" />
+                  <line x1="0" y1={chartH} x2={chartW} y2={chartH} stroke="currentColor" strokeWidth="1" />
+                </g>
+
+                <g className={t.faint}>
+                  <text x="2" y={yFor(maxValue) - 3} fontSize="10" fontWeight="600">{maxValue}</text>
+                  <text x="2" y={yFor(maxValue / 2) - 3} fontSize="10" fontWeight="600">{Math.round(maxValue / 2)}</text>
+
+                  {introducedMarks.map((mark, i) => (
+                    <line
+                      key={i}
+                      x1={mark.x} y1={chartH - 10} x2={mark.x} y2={chartH}
+                      stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                    />
+                  ))}
+                </g>
+
+                <g className={t.mark}>
+                  {segments.map((seg, i) => (
+                    <path
+                      key={i}
+                      d={'M' + seg.map(([x, y]) => `${x},${y}`).join(' L')}
+                      fill="none" stroke="currentColor" strokeWidth="2"
+                      strokeLinecap="round" strokeLinejoin="round"
+                    />
+                  ))}
+
+                  {lastLogged && (
+                    <circle
+                      cx={xFor(chartPoints.indexOf(lastLogged))}
+                      cy={yFor(lastLogged.value)}
+                      r="4" fill="currentColor"
+                    />
+                  )}
+
+                  {selectedLog && (
+                    <circle
+                      cx={xFor(chartDays.indexOf(selectedTrendDate))}
+                      cy={yFor(selectedLog.breakouts)}
+                      r="4" fill="currentColor" opacity="0.5"
+                    />
+                  )}
+                </g>
+
+                {chartDays.map((date, i) => (
+                  <rect
+                    key={date}
+                    x={xFor(i) - columnW / 2} y="0" width={columnW} height={chartH}
+                    fill="transparent"
+                    onClick={() => setSelectedTrendDate(date)}
+                  />
+                ))}
+              </svg>
+
+              <div className={`mt-1 flex justify-between text-[11px] ${t.faint}`}>
+                <span>
+                  {new Date(chartDays[0] + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                </span>
+                <span>
+                  {new Date(todayString + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {selectedTrendDate && (
+          <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+            <p className="text-[14px] font-semibold">
+              {new Date(selectedTrendDate + 'T00:00:00').toLocaleDateString('en-GB', {
+                weekday: 'long', day: 'numeric', month: 'long',
+              })}
+            </p>
+
+            {selectedLog ? (
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                <span className={`text-[13px] ${t.muted}`}>Breakouts {selectedLog.breakouts}</span>
+                <span className={`text-[13px] ${t.muted}`}>Dryness {selectedLog.dryness}</span>
+                <span className={`text-[13px] ${t.muted}`}>Oiliness {selectedLog.oiliness}</span>
+                <span className={`text-[13px] ${t.muted}`}>Redness {selectedLog.redness}</span>
+              </div>
+            ) : (
+              <p className={`mt-1 text-[13px] ${t.muted}`}>Nothing logged this day.</p>
+            )}
+          </div>
+        )}
+
+        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+          <h2 className="text-[15px] font-semibold">Products to watch</h2>
+
+          <p className={`mt-1 text-[12px] leading-relaxed ${t.faint}`}>
+            Candidates to observe, not a diagnosis.
+          </p>
+
+          {productsToWatch.length === 0 ? (
+            <p className={`mt-3 text-[13px] ${t.muted}`}>
+              Nothing flagged right now.
+            </p>
+          ) : (
+            <div className={`mt-3 flex flex-col divide-y ${t.hair}`}>
+              {productsToWatch.map((item) => (
+                <div key={item.id} className="py-3 first:pt-0 last:pb-0">
+                  <p className="text-[14px] font-medium">{item.name}</p>
+                  <p className={`mt-0.5 text-[12px] leading-relaxed ${t.muted}`}>
+                    Introduced{' '}
+                    {new Date(item.openedDate + 'T00:00:00').toLocaleDateString('en-GB', {
+                      day: 'numeric', month: 'short',
+                    })}{' '}
+                    — breakouts went from {item.beforeAvg.toFixed(1)} to {item.afterAvg.toFixed(1)} a day on average.
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+          <div className="flex items-baseline justify-between">
+            <span className="font-display text-[22px]">
+              {now.toLocaleDateString('en-GB', { month: 'long' })}
+            </span>
+            <span className={`text-[13px] ${t.faint}`}>skin condition</span>
+          </div>
+
+          <div className="mt-5 grid grid-cols-7 gap-[7px] text-center">
+            {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((letter, i) => (
+              <span key={i} className={`pb-1 text-[11px] font-semibold ${t.faint}`}>
+                {letter}
+              </span>
+            ))}
+
+            {Array.from({ length: leadingBlanks }, (_, i) => <span key={`b${i}`} />)}
+
+            {Array.from({ length: daysInMonth }, (_, i) => {
+              const day = i + 1
+              const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+              const log = skinLogs.find((entry) => entry.local_date === key)
+              const severity = severityOf(log)
+
+              return (
+                <button
+                  key={day}
+                  onClick={() => setSelectedTrendDate(key)}
+                  className={`flex h-[34px] items-center justify-center rounded-[10px] text-[13px] font-semibold ${severityClass(severity)}`}
+                >
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className={`mt-5 flex gap-4 border-t pt-4 ${t.hair}`}>
+            <span className="flex items-center gap-2">
+              <span className={`h-3 w-3 rounded ${t.chip}`} />
+              <span className={`text-xs ${t.muted}`}>Mild</span>
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded bg-rose-500/15" />
+              <span className={`text-xs ${t.muted}`}>Flared up</span>
+            </span>
+          </div>
+        </div>
 
       </div>
     </main>

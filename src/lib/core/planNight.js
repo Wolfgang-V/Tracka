@@ -48,6 +48,12 @@ export function addDays(dateString, amount) {
   return dt.toISOString().slice(0, 10)
 }
 
+export function addMonths(dateString, amount) {
+  const [y, m, d] = dateString.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1 + amount, d))
+  return dt.toISOString().slice(0, 10)
+}
+
 export function daysBetween(from, to) {
   const ms = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)
   return Math.round(ms / 86400000)
@@ -70,7 +76,7 @@ export function localDateString(date = new Date(), cutoffHour = 4) {
 
 /**
  * @param today    'YYYY-MM-DD'
- * @param steps    [{ id, name, brand, category, frequency, step_order, active? }]
+ * @param steps    [{ id, name, brand, category, frequency, step_order, active?, opened_date?, pao_months? }]
  * @param history  [{ routine_step_id, local_date }]  past completions
  */
 export function planNight({ today, steps = [], history = [] }) {
@@ -101,6 +107,12 @@ export function planNight({ today, steps = [], history = [] }) {
     const last = lastUsed.get(step.id) ?? null
     const nightsSince = last ? daysBetween(last, today) : Infinity
 
+    const expiresOn =
+      step.opened_date && step.pao_months
+        ? addMonths(step.opened_date, step.pao_months)
+        : null
+    const expired = expiresOn ? today >= expiresOn : false
+
     return {
       ...step,
       active,
@@ -109,6 +121,8 @@ export function planNight({ today, steps = [], history = [] }) {
       nightsSince,
       overdue: nightsSince - freq.nights,
       _intervalNights: freq.nights,
+      expiresOn,
+      expired,
     }
   })
 
@@ -171,6 +185,12 @@ export function planNight({ today, steps = [], history = [] }) {
       slotRank(a.category) - slotRank(b.category) ||
       (a.step_order ?? 0) - (b.step_order ?? 0)
   )
+
+  for (const step of plan) {
+    if (step.expired) {
+      notes.push(`${step.name} is past its use-by date — consider replacing it.`)
+    }
+  }
 
   const hasActiveTonight = chosen.some((s) => s.active !== ACTIVES.NONE)
   const ownsAnyActive = enriched.some((s) => s.active !== ACTIVES.NONE)
