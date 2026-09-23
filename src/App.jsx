@@ -98,6 +98,15 @@ function App() {
   const [screen, setScreen] = useState('welcome')
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
+  // Defaults to light for everyone; dark mode is opt-in and remembered
+  // per device, not switched automatically by time of day.
+  const [themeMode, setThemeMode] = useState(() => {
+    try {
+      return localStorage.getItem('tracka-theme') === 'dark' ? 'dark' : 'light'
+    } catch {
+      return 'light'
+    }
+  })
 
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
@@ -225,6 +234,7 @@ setRoutineHistory(groupedRoutines)
   const [todayPmSteps, setTodayPmSteps] = useState([])
   const [completedSteps, setCompletedSteps] = useState([])
   const [stepHistory, setStepHistory] = useState([])
+  const [menuOpen, setMenuOpen] = useState(false)
   const [pushStatus, setPushStatus] = useState(null)
   const [progressCompletions, setProgressCompletions] = useState([])
   const [selectedProgressDate, setSelectedProgressDate] = useState(null)
@@ -395,16 +405,12 @@ loadProgressCompletions()
   }, [])
    
   const loadStepHistory = async () => {
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
-
-  if (!currentUser) return
+  if (!user) return
 
   const { data, error } = await supabase
     .from('routine_step_completions')
     .select('routine_step_id, local_date')
-    .eq('user_id', currentUser.id)
+    .eq('user_id', user.id)
     .gte('local_date', addDays(localDateString(), -21))
 
   if (error) {
@@ -481,16 +487,12 @@ const loadDayDetails = async (date) => {
 }
 
 const loadSkinLogs = async () => {
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
-
-  if (!currentUser) return
+  if (!user) return
 
   const { data, error } = await supabase
     .from('skin_logs')
     .select('local_date, breakouts, dryness, oiliness, redness')
-    .eq('user_id', currentUser.id)
+    .eq('user_id', user.id)
     .gte('local_date', addDays(localDateString(), -30))
 
   if (error) {
@@ -662,16 +664,15 @@ const finishRoutine = async () => {
   const loadRoutines = async () => {
   setRoutinesLoading(true)
 
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
-
-  if (!currentUser) return
+  if (!user) {
+    setRoutinesLoading(false)
+    return
+  }
 
   const { data: routines, error: routinesError } = await supabase
     .from('routines')
     .select('*')
-    .eq('user_id', currentUser.id)
+    .eq('user_id', user.id)
     .eq('is_active', true)
 
   if (routinesError) {
@@ -846,8 +847,7 @@ const nightPlan = planNight({
   history: stepHistory.filter((entry) => entry.local_date < todayString),
 })
 
-const hour = new Date().getHours()
-const isNight = hour >= 17 || hour < 5
+const isNight = themeMode === 'dark'
 
 const nightPalette = {
   bgHex: '#0B1E33',
@@ -1941,7 +1941,7 @@ const saveReminderSettings = async () => {
               })()}
 
               <p className={`mt-1.5 text-[12px] ${t.faint}`}>
-                Not listed? Just keep typing — it'll be added as you type it.
+                Not listed? Type the brand name.
               </p>
             </div>
 
@@ -2805,6 +2805,38 @@ if (screen === 'settings') {
           </button>
         </div>
 
+        <div className={`mt-4 flex items-center justify-between rounded-3xl ${t.surface} p-5`}>
+          <div className="pr-4">
+            <p className="text-[15px] font-semibold">Dark mode</p>
+            <p className={`mt-0.5 text-[13px] ${t.muted}`}>
+              Tracka+ stays light by default. Turn this on if you prefer dark.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            aria-label="Toggle dark mode"
+            onClick={() => {
+              const next = themeMode === 'dark' ? 'light' : 'dark'
+              setThemeMode(next)
+              try {
+                localStorage.setItem('tracka-theme', next)
+              } catch {
+                // localStorage unavailable (private mode, etc.) — theme just won't persist
+              }
+            }}
+            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+              themeMode === 'dark' ? t.btn : t.rail
+            }`}
+          >
+            <span
+              className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
+                themeMode === 'dark' ? 'left-6' : 'left-1'
+              }`}
+            />
+          </button>
+        </div>
+
         <button
           onClick={async () => {
             const confirmed = window.confirm('Log out of Tracka+?')
@@ -2899,7 +2931,11 @@ if (screen === 'settingsUsername') {
 
               if (error) {
                 console.error('PROFILE UPDATE ERROR:', error)
-                setSettingsStatus('Could not save your username: ' + error.message)
+                setSettingsStatus(
+                  error.code === '23505'
+                    ? 'That username is already taken. Try another one.'
+                    : 'Could not save your username: ' + error.message
+                )
                 return
               }
 
@@ -3287,19 +3323,11 @@ if (screen === 'today') {
                 </span>
               )}
 
-              {!done && (step.active !== 'none' || step.expired) && (
+              {!done && step.expired && (
                 <span className="mt-2 flex flex-wrap gap-1.5">
-                  {step.active && step.active !== 'none' && (
-                    <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${palette.chip}`}>
-                      {step.active === 'retinoid' ? 'Retinol night' : 'Active tonight'}
-                    </span>
-                  )}
-
-                  {step.expired && (
-                    <span className={`inline-block rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-semibold ${palette.danger}`}>
-                      Past use-by date
-                    </span>
-                  )}
+                  <span className={`inline-block rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-semibold ${palette.danger}`}>
+                    Past use-by date
+                  </span>
                 </span>
               )}
             </span>
@@ -3315,9 +3343,44 @@ if (screen === 'today') {
       <div className={`${dayPalette.page} transition-colors duration-500`}>
       <div className="mx-auto flex w-full max-w-md flex-col px-6 pt-7">
 
-        <span className={`text-[15px] font-semibold tracking-wide ${dayPalette.mark}`}>
-          Tracka+
-        </span>
+        <div className="relative flex items-center justify-between">
+          <span className={`text-[15px] font-semibold tracking-wide ${dayPalette.mark}`}>
+            Tracka+
+          </span>
+
+          <button
+            type="button"
+            aria-label="Open menu"
+            onClick={() => setMenuOpen(!menuOpen)}
+            className={`-mr-2 flex h-11 w-11 items-center justify-center ${dayPalette.muted}`}
+          >
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+
+          {menuOpen && (
+            <div className={`absolute right-0 top-12 z-10 w-52 overflow-hidden rounded-2xl ${dayPalette.surface} shadow-xl`}>
+              {[
+                ['My progress', 'progress'],
+                ['Skin insights', 'skinTrends'],
+                ['Progress photos', 'progressPhotos'],
+              ].map(([label, target]) => (
+                <button
+                  key={target}
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setScreen(target)
+                  }}
+                  className={`block w-full px-5 py-3.5 text-left text-[15px] ${dayPalette.muted}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="mt-4">
           <p className={`text-[15px] ${dayPalette.muted}`}>
@@ -3418,23 +3481,6 @@ if (screen === 'today') {
           <h2 className="mt-1 font-display text-[28px] font-light leading-[1.05] tracking-tight">
             PM Routine
           </h2>
-
-          {nightPlan.nightType !== 'plain' && (
-            <span className={`mt-2 inline-block rounded-full px-3 py-1 text-xs font-semibold ${nightPalette.chip}`}>
-              {nightPlan.nightType === 'retinol'
-                ? 'Retinol night'
-                : nightPlan.nightType === 'exfoliation'
-                  ? 'Exfoliation night'
-                  : 'Recovery night'}
-            </span>
-          )}
-
-          {nightPlan.nightType === 'recovery' && (
-            <p className={`mt-2 max-w-[300px] text-[14px] leading-relaxed ${nightPalette.muted}`}>
-              Nothing strong tonight. Your skin repairs itself between actives,
-              so this counts as part of the routine.
-            </p>
-          )}
 
           <div className="mt-6">
             {routinesLoading ? (

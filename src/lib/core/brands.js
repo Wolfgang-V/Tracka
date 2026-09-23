@@ -52,7 +52,7 @@ export const BRANDS = [
   'La Roche Posay',
   "L'Oreal",
   'Mai Skin',
-  'Medic 5.5',
+  'Medix 5.5',
   'Medicube',
   'Mesoestetic',
   'Missha',
