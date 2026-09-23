@@ -110,6 +110,7 @@ function App() {
 
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState(null)
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
 
@@ -256,59 +257,14 @@ setRoutineHistory(groupedRoutines)
   const [viewingPhoto, setViewingPhoto] = useState(null)
 
   useEffect(() => {
-   const checkUser = async () => {
-  try {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
-  console.log('No logged-in user found')
-  return
-}
-
-  setUser(user)
-  if (!window.location.search.includes('recovery=true')) {
-    setScreen('today')
-  }
-
-  const { data: profile, error } = await supabase
-    .from('profiles')
-    .select('username')
-    .eq('id', user.id)
-    .maybeSingle()
-
-  if (error) {
-    console.error('Profile error:', error)
-    return
-  }
-
- if (profile?.username) {
-  setDisplayName(profile.username)
-} else {
-  setDisplayName(user.email?.split('@')[0] || 'there')
-}
-
-  await loadRestrictions(user.id)
-} finally {
-  setAuthReady(true)
-}
-}
-
-       if (window.location.search.includes('confirmed=true')) {
-      setScreen('login')
-      window.history.replaceState({}, '', window.location.pathname)
-      setAuthReady(true)
-    } else {
-      checkUser()
-    }
-
-   const loadProducts = async () => {
-      const {
-        data: { user: currentUser },
-      } = await supabase.auth.getUser()
-
-      if (!currentUser) return
+    // These three only need a user id, not a fresh session lookup — each
+    // used to call supabase.auth.getUser() itself, which is a network
+    // round trip to revalidate the JWT. Four of those firing at once on
+    // every mount (plus a fifth from checkUser) is what was slowing the
+    // home screen down; now the caller resolves the session once and
+    // hands the id in.
+    const loadProducts = async (userId) => {
+      if (!userId) return
 
       const { data, error } = await supabase
         .from('user_products')
@@ -325,7 +281,7 @@ setRoutineHistory(groupedRoutines)
             ingredients
           )
         `)
-        .eq('user_id', currentUser.id)
+        .eq('user_id', userId)
         .eq('is_active', true)
 
       if (error) {
@@ -336,75 +292,118 @@ setRoutineHistory(groupedRoutines)
       setProducts(data || [])
     }
 
-    loadProducts()
-    const loadCompletedSteps = async () => {
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
+    const loadCompletedSteps = async (userId) => {
+      if (!userId) return
 
-  if (!currentUser) return
+      const { data, error } = await supabase
+        .from('routine_step_completions')
+        .select('routine_step_id, completed_at')
+        .eq('user_id', userId)
+        .eq('local_date', localDateString())
 
-  const { data, error } = await supabase
-    .from('routine_step_completions')
-    .select('routine_step_id, completed_at')
-    .eq('user_id', currentUser.id)
-    .eq('local_date', localDateString())
+      if (error) {
+        console.error(error)
+        return
+      }
 
-  if (error) {
-    console.error(error)
-    return
-  }
+      setCompletedSteps(
+        (data || []).map((item) => item.routine_step_id)
+      )
+    }
 
-  setCompletedSteps(
-    (data || []).map((item) => item.routine_step_id)
-  )
-}
+    const loadProgressCompletions = async (userId) => {
+      if (!userId) return
 
-loadCompletedSteps()
+      const { data, error } = await supabase
+        .from('routine_completions')
+        .select('completed_date, completed_at')
+        .eq('user_id', userId)
+        .order('completed_date', { ascending: true })
 
-const loadProgressCompletions = async () => {
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
+      if (error) {
+        console.error(error)
+        return
+      }
 
-  if (!currentUser) return
+      setProgressCompletions(data || [])
+    }
 
-  const { data, error } = await supabase
-    .from('routine_completions')
-    .select('completed_date, completed_at')
-    .eq('user_id', currentUser.id)
-    .order('completed_date', { ascending: true })
+    const checkUser = async (user) => {
+      try {
+        setUser(user)
+        if (!window.location.search.includes('recovery=true')) {
+          setScreen('today')
+        }
 
-  if (error) {
-    console.error(error)
-    return
-  }
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('username')
+          .eq('id', user.id)
+          .maybeSingle()
 
-  setProgressCompletions(data || [])
-}
-loadProgressCompletions()
+        if (error) {
+          console.error('Profile error:', error)
+          return
+        }
+
+        if (profile?.username) {
+          setDisplayName(profile.username)
+        } else {
+          setDisplayName(user.email?.split('@')[0] || 'there')
+        }
+
+        await loadRestrictions(user.id)
+      } finally {
+        setAuthReady(true)
+      }
+    }
+
+    const init = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) {
+        console.log('No logged-in user found')
+        setAuthReady(true)
+        return
+      }
+
+      checkUser(user)
+      loadProducts(user.id)
+      loadCompletedSteps(user.id)
+      loadProgressCompletions(user.id)
+    }
+
+    if (window.location.search.includes('confirmed=true')) {
+      setScreen('login')
+      window.history.replaceState({}, '', window.location.pathname)
+      setAuthReady(true)
+    } else {
+      init()
+    }
 
     const {
-  data: { subscription },
-} = supabase.auth.onAuthStateChange((event, session) => {
- if (event === 'PASSWORD_RECOVERY') {
-   setScreen('resetPassword')
- }
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setScreen('resetPassword')
+      }
 
- if (session?.user) {
-  setUser(session.user)
-  setProducts([])
-  setTodayAmRoutine(null)
-  setTodayPmRoutine(null)
-  setTodayAmSteps([])
-  setTodayPmSteps([])
-  setCompletedSteps([])
-  setProgressCompletions([])
-  loadProducts()
-  loadCompletedSteps()
-  loadProgressCompletions()
-}
-})
+      if (session?.user) {
+        setUser(session.user)
+        setProducts([])
+        setTodayAmRoutine(null)
+        setTodayPmRoutine(null)
+        setTodayAmSteps([])
+        setTodayPmSteps([])
+        setCompletedSteps([])
+        setProgressCompletions([])
+        loadProducts(session.user.id)
+        loadCompletedSteps(session.user.id)
+        loadProgressCompletions(session.user.id)
+      }
+    })
 
     return () => {
       subscription.unsubscribe()
@@ -2490,7 +2489,10 @@ if (screen === 'login') {
               type="email"
               placeholder="you@example.com"
               value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
+              onChange={(e) => {
+                setLoginEmail(e.target.value)
+                setLoginError(null)
+              }}
               className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
             />
           </div>
@@ -2505,7 +2507,10 @@ if (screen === 'login') {
                 type={showPassword ? 'text' : 'password'}
                 placeholder="Your password"
                 value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
+                onChange={(e) => {
+                  setLoginPassword(e.target.value)
+                  setLoginError(null)
+                }}
                 className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 pr-12 text-[15px] outline-none`}
               />
 
@@ -2577,8 +2582,10 @@ if (screen === 'login') {
 
           <button
             onClick={async () => {
+              setLoginError(null)
+
               if (!loginEmail || !loginPassword) {
-                alert('Please enter your email and password.')
+                setLoginError('Please enter your email and password.')
                 return
               }
 
@@ -2589,7 +2596,11 @@ if (screen === 'login') {
                 })
 
               if (error) {
-                alert(error.message)
+                setLoginError(
+                  error.message === 'Invalid login credentials'
+                    ? "That email or password isn't right. Try again."
+                    : error.message
+                )
                 return
               }
 
@@ -2617,6 +2628,12 @@ if (screen === 'login') {
           >
             Log in
           </button>
+
+          {loginError && (
+            <div className="rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-3.5">
+              <p className={`text-[14px] leading-relaxed ${t.danger}`}>{loginError}</p>
+            </div>
+          )}
 
         </div>
 
@@ -2813,17 +2830,23 @@ if (screen === 'settings') {
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
 
-        <button
-          onClick={() => setScreen('today')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Today
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => setScreen('today')}
+            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+            Today
+          </button>
+
+          <span className={`text-[15px] font-semibold tracking-wide ${t.mark}`}>
+            Tracka+
+          </span>
+        </div>
 
         <div className="mt-5">
           <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
@@ -3427,11 +3450,7 @@ if (screen === 'today') {
       <div className={`${dayPalette.page} transition-colors duration-500`}>
       <div className="mx-auto flex w-full max-w-md flex-col px-6 pt-7">
 
-        <div className="relative flex items-center justify-between">
-          <span className={`text-[15px] font-semibold tracking-wide ${dayPalette.mark}`}>
-            Tracka+
-          </span>
-
+        <div className="relative flex items-center justify-end">
           <button
             type="button"
             aria-label="Open menu"
@@ -3447,6 +3466,7 @@ if (screen === 'today') {
           {menuOpen && (
             <div className={`absolute right-0 top-12 z-10 w-52 overflow-hidden rounded-2xl ${dayPalette.surface} shadow-xl`}>
               {[
+                ['My routine', 'routinePlanner'],
                 ['My progress', 'progress'],
                 ['Skin insights', 'skinTrends'],
                 ['Progress photos', 'progressPhotos'],
@@ -3466,7 +3486,7 @@ if (screen === 'today') {
           )}
         </div>
 
-        <div className="mt-4">
+        <div className="mt-1">
           <p className={`text-[15px] ${dayPalette.muted}`}>
             Hello, {displayName}
           </p>
