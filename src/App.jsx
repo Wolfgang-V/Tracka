@@ -237,6 +237,7 @@ setRoutineHistory(groupedRoutines)
   const [todayAmSteps, setTodayAmSteps] = useState([])
   const [todayPmSteps, setTodayPmSteps] = useState([])
   const [completedSteps, setCompletedSteps] = useState([])
+  const [lastCompletedSlot, setLastCompletedSlot] = useState(null)
   const [stepHistory, setStepHistory] = useState([])
   const [menuOpen, setMenuOpen] = useState(false)
   const [pushStatus, setPushStatus] = useState(null)
@@ -659,28 +660,34 @@ const updateSkinMetric = async (metric, delta) => {
   if (error) console.error('SKIN LOG SAVE ERROR:', error)
 }
 
-const finishRoutine = async () => {
-  const today = localDateString()
+// Only the night routine counts toward the streak and lights up the
+// calendar — the morning button just confirms and moves on, since a
+// skincare "day" isn't done until the night steps are actually done.
+const finishRoutine = async (slot) => {
+  if (slot === 'PM') {
+    const today = localDateString()
 
-  const { error } = await supabase
-    .from('routine_completions')
-    .upsert(
-      { user_id: user.id, completed_date: today },
-      { onConflict: 'user_id,completed_date' }
+    const { error } = await supabase
+      .from('routine_completions')
+      .upsert(
+        { user_id: user.id, completed_date: today },
+        { onConflict: 'user_id,completed_date' }
+      )
+
+    if (error) {
+      console.error('FINISH ROUTINE ERROR:', error)
+      alert('That didn\'t save. Check your connection and try again.')
+      return
+    }
+
+    setProgressCompletions((current) =>
+      current.some((item) => item.completed_date === today)
+        ? current
+        : [...current, { completed_date: today, completed_at: new Date().toISOString() }]
     )
-
-  if (error) {
-    console.error('FINISH ROUTINE ERROR:', error)
-    alert('That didn\'t save. Check your connection and try again.')
-    return
   }
 
-  setProgressCompletions((current) =>
-    current.some((item) => item.completed_date === today)
-      ? current
-      : [...current, { completed_date: today, completed_at: new Date().toISOString() }]
-  )
-
+  setLastCompletedSlot(slot)
   setScreen('completed')
 }
 
@@ -700,6 +707,7 @@ const finishRoutine = async () => {
 
   if (routinesError) {
     console.error('ROUTINES ERROR:', routinesError)
+    setRoutinesLoading(false)
     return
   }
 
@@ -3528,7 +3536,13 @@ if (screen === 'today') {
               </p>
 
               <button
-                onClick={finishRoutine}
+                onClick={() => {
+                  if (amDone < amSteps.length) {
+                    alert('You have not completed your morning routine — tick off each step first.')
+                    return
+                  }
+                  finishRoutine('AM')
+                }}
                 className={`w-full rounded-2xl py-[18px] text-base font-bold ${dayPalette.btn}`}
               >
                 Complete morning routine
@@ -3619,7 +3633,13 @@ if (screen === 'today') {
               </p>
 
               <button
-                onClick={finishRoutine}
+                onClick={() => {
+                  if (pmDone < pmSteps.length) {
+                    alert('You have not completed your night routine — tick off each step first.')
+                    return
+                  }
+                  finishRoutine('PM')
+                }}
                 className={`w-full rounded-2xl py-[18px] text-base font-bold ${nightPalette.btn}`}
               >
                 Complete night routine
@@ -4137,11 +4157,11 @@ if (screen === 'completed') {
         </span>
 
         <h1 className="mt-6 font-display text-[44px] font-light leading-[1.02] tracking-tight">
-          {isNight ? 'Routine complete' : 'All done for the morning'}
+          {lastCompletedSlot === 'PM' ? 'Routine complete' : 'All done for the morning'}
         </h1>
 
         <p className={`mt-3 max-w-[280px] text-[15px] leading-relaxed ${t.muted}`}>
-          Great job taking care of your skin. See you {isNight ? 'in the morning' : 'tonight'} 👋
+          Great job taking care of your skin. See you {lastCompletedSlot === 'PM' ? 'in the morning' : 'tonight'} 👋
         </p>
 
         <button
