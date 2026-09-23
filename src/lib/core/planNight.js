@@ -39,6 +39,14 @@ const CONFLICTS = {
   },
 }
 
+// Clinical restrictions, not scheduling preferences — these override
+// due-ness and conflict rules rather than competing with them.
+const RESTRICTED_IN_PREGNANCY = [ACTIVES.RETINOID]
+
+export const PREGNANCY_NOTE =
+  "Retinol is set aside while you're pregnant or breastfeeding — it's usually advised against. " +
+  "Your doctor or pharmacist can tell you what's right for you."
+
 // --- date helpers, all on 'YYYY-MM-DD' strings in the user's own timezone ---
 
 export function addDays(dateString, amount) {
@@ -75,11 +83,14 @@ export function localDateString(date = new Date(), cutoffHour = 4) {
 // --- the engine ---
 
 /**
- * @param today    'YYYY-MM-DD'
- * @param steps    [{ id, name, brand, category, frequency, step_order, active?, opened_date?, pao_months? }]
- * @param history  [{ routine_step_id, local_date }]  past completions
+ * @param today        'YYYY-MM-DD'
+ * @param steps        [{ id, name, brand, category, frequency, step_order, active?, opened_date?, pao_months? }]
+ * @param history      [{ routine_step_id, local_date }]  past completions
+ * @param restrictions { pregnancy?: boolean }  clinical restrictions, not
+ *   scheduling preferences — checked before due-ness so they apply even
+ *   on a night the step would have been skipped anyway.
  */
-export function planNight({ today, steps = [], history = [] }) {
+export function planNight({ today, steps = [], history = [], restrictions = {} }) {
   const byId = new Map(steps.map((s) => [s.id, s]))
 
   // most recent completion per step
@@ -142,8 +153,16 @@ export function planNight({ today, steps = [], history = [] }) {
   const chosen = []
   const skipped = []
   const notes = []
+  let restrictionApplied = false
 
   for (const step of candidates) {
+    if (restrictions.pregnancy && RESTRICTED_IN_PREGNANCY.includes(step.active)) {
+      skipped.push({ step, reason: 'restricted' })
+      if (!notes.includes(PREGNANCY_NOTE)) notes.push(PREGNANCY_NOTE)
+      restrictionApplied = true
+      continue
+    }
+
     if (step.overdue < 0) {
       const waitNights = -step.overdue
       skipped.push({ step, reason: 'not_due' })
@@ -195,7 +214,7 @@ export function planNight({ today, steps = [], history = [] }) {
   const hasActiveTonight = chosen.some((s) => s.active !== ACTIVES.NONE)
   const ownsAnyActive = enriched.some((s) => s.active !== ACTIVES.NONE)
 
-  if (!hasActiveTonight && ownsAnyActive) {
+  if (!hasActiveTonight && ownsAnyActive && !restrictionApplied) {
     notes.unshift(
       'Recovery night — nothing strong tonight. Cleanse, hydrate, protect your barrier.'
     )

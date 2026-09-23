@@ -14,6 +14,21 @@ create table if not exists skin_logs (
   unique (user_id, local_date)
 );
 
+-- The UI stepper stays within 0-10, but nothing stops a raw REST call from
+-- sending anything else — bound it at the schema so the chart data can't
+-- become meaningless.
+alter table skin_logs
+  drop constraint if exists skin_logs_breakouts_check,
+  drop constraint if exists skin_logs_dryness_check,
+  drop constraint if exists skin_logs_oiliness_check,
+  drop constraint if exists skin_logs_redness_check;
+
+alter table skin_logs
+  add constraint skin_logs_breakouts_check check (breakouts between 0 and 10),
+  add constraint skin_logs_dryness_check check (dryness between 0 and 10),
+  add constraint skin_logs_oiliness_check check (oiliness between 0 and 10),
+  add constraint skin_logs_redness_check check (redness between 0 and 10);
+
 alter table skin_logs enable row level security;
 
 drop policy if exists "Users manage their own skin log" on skin_logs;

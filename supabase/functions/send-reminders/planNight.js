@@ -72,8 +72,12 @@ export function localDateString(date = new Date(), cutoffHour = 4) {
  * @param today    'YYYY-MM-DD'
  * @param steps    [{ id, name, brand, category, frequency, step_order, active? }]
  * @param history  [{ routine_step_id, local_date }]  past completions
+ * @param pregnantOrBreastfeeding  when true, retinoid steps are held back
+ *   entirely rather than scheduled. Defaults false — the caller in this
+ *   function (index.ts) doesn't currently fetch skin_profiles to pass a
+ *   real value, so this only takes effect once that's wired up too.
  */
-export function planNight({ today, steps = [], history = [] }) {
+export function planNight({ today, steps = [], history = [], pregnantOrBreastfeeding = false }) {
   const byId = new Map(steps.map((s) => [s.id, s]))
 
   // most recent completion per step
@@ -128,8 +132,15 @@ export function planNight({ today, steps = [], history = [] }) {
   const chosen = []
   const skipped = []
   const notes = []
+  const pregnancyHeld = []
 
   for (const step of candidates) {
+    if (pregnantOrBreastfeeding && step.active === ACTIVES.RETINOID) {
+      skipped.push({ step, reason: 'pregnancy' })
+      pregnancyHeld.push(step)
+      continue
+    }
+
     if (step.overdue < 0) {
       const waitNights = -step.overdue
       skipped.push({ step, reason: 'not_due' })
@@ -189,5 +200,5 @@ export function planNight({ today, steps = [], history = [] }) {
         ? 'recovery'
         : 'plain'
 
-  return { date: today, steps: plan, notes, skipped, nightType }
+  return { date: today, steps: plan, notes, skipped, nightType, pregnancyHeld }
 }

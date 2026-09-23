@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from './lib/supabase'
 import { detectActive, slotRank } from './lib/core/actives'
-import { planNight, localDateString, addDays } from './lib/core/planNight'
+import { planNight, localDateString, addDays, PREGNANCY_NOTE } from './lib/core/planNight'
 import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
@@ -114,6 +114,10 @@ function App() {
   const [displayName, setDisplayName] = useState('')
 
   const [gender, setGender] = useState('')
+  // undefined = not yet answered (nothing shows selected); null is reserved
+  // for an explicit "Prefer not to say" so the two don't look identical.
+  const [pregnantOrBreastfeeding, setPregnantOrBreastfeeding] = useState(undefined)
+  const [restrictions, setRestrictions] = useState({})
   const [skinType, setSkinType] = useState('')
   const [concerns, setConcerns] = useState([])
   const [goals, setGoals] = useState([])
@@ -283,6 +287,8 @@ setRoutineHistory(groupedRoutines)
 } else {
   setDisplayName(user.email?.split('@')[0] || 'there')
 }
+
+  await loadRestrictions(user.id)
 } finally {
   setAuthReady(true)
 }
@@ -581,8 +587,25 @@ const uploadProgressPhoto = async (file, localDate) => {
 }
 
 const deleteProgressPhoto = async (photo) => {
-  await supabase.storage.from('progress-photos').remove([photo.path])
-  await supabase.from('progress_photos').delete().eq('id', photo.id)
+  const { error: storageError } = await supabase.storage.from('progress-photos').remove([photo.path])
+
+  if (storageError) {
+    console.error('PHOTO DELETE STORAGE ERROR:', storageError)
+    setPhotoError("Couldn't delete that photo. Try again.")
+    return
+  }
+
+  const { error: rowError } = await supabase.from('progress_photos').delete().eq('id', photo.id)
+
+  if (rowError) {
+    // The file is already gone from storage at this point — leaving the
+    // row behind just means loadProgressPhotos will show a broken image,
+    // not a leaked file. Surface it so it isn't silently lost either way.
+    console.error('PHOTO DELETE ROW ERROR:', rowError)
+    setPhotoError("Deleted the photo but couldn't remove its record. Try again.")
+    return
+  }
+
   setViewingPhoto(null)
   setComparePhotos((ids) => ids.filter((id) => id !== photo.id))
   await loadProgressPhotos()
@@ -845,6 +868,7 @@ const nightPlan = planNight({
     pao_months: step.user_products?.pao_months ?? null,
   })),
   history: stepHistory.filter((entry) => entry.local_date < todayString),
+  restrictions,
 })
 
 const isNight = themeMode === 'dark'
@@ -1444,6 +1468,22 @@ const saveReminderSettings = async () => {
   alert('Reminder settings saved.')
 }
 
+  // Loads just the fields planNight needs to enforce clinical restrictions.
+  // skin_profiles can have more than one row per user (onboarding inserts
+  // rather than updates), so this takes the most recent one instead of
+  // .single(), which throws the moment a user has a duplicate.
+  const loadRestrictions = async (userId) => {
+    const { data } = await supabase
+      .from('skin_profiles')
+      .select('pregnant_or_breastfeeding')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    setRestrictions({ pregnancy: data?.pregnant_or_breastfeeding === true })
+  }
+
   const loadSkinProfile = async () => {
   const {
     data: { user: currentUser },
@@ -1453,9 +1493,11 @@ const saveReminderSettings = async () => {
 
   const { data, error } = await supabase
     .from('skin_profiles')
-    .select('gender, skin_type, concerns, goals, sensitivity')
+    .select('gender, skin_type, concerns, goals, sensitivity, pregnant_or_breastfeeding')
     .eq('user_id', currentUser.id)
-    .single()
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
 
   if (error) {
     console.error(error)
@@ -1464,6 +1506,7 @@ const saveReminderSettings = async () => {
 
   if (data) {
     setGender(data.gender || '')
+    setPregnantOrBreastfeeding(data.pregnant_or_breastfeeding ?? null)
     setSkinType(data.skin_type || '')
     setConcerns(
       data.concerns
@@ -1544,6 +1587,35 @@ const saveReminderSettings = async () => {
                     }`}
                   >
                     {option}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <h2 className="mb-1 text-lg font-semibold">
+                Are you pregnant or breastfeeding?
+              </h2>
+
+              <p className={`mb-4 text-sm leading-relaxed ${t.muted}`}>
+                Some ingredients are usually avoided during pregnancy. We'll leave those
+                out of your routine. You can change this any time.
+              </p>
+
+              <div className="flex gap-3">
+                {[
+                  ['Yes', true],
+                  ['No', false],
+                  ['Rather not say', null],
+                ].map(([label, value]) => (
+                  <button
+                    key={label}
+                    onClick={() => setPregnantOrBreastfeeding(value)}
+                    className={`flex-1 rounded-2xl border px-4 py-3.5 text-[15px] font-medium ${
+                      pregnantOrBreastfeeding === value ? `${t.chip} border-transparent` : `${t.surface} ${t.hair}`
+                    }`}
+                  >
+                    {label}
                   </button>
                 ))}
               </div>
@@ -1681,14 +1753,18 @@ const saveReminderSettings = async () => {
 
                 const { error } = await supabase
                   .from('skin_profiles')
-                  .insert({
-                    user_id: currentUser.id,
-                    gender: gender,
-                    skin_type: skinType,
-                    concerns: concerns.join(', '),
-                    goals: goals.join(', '),
-                    sensitivity: sensitivity,
-                  })
+                  .upsert(
+                    {
+                      user_id: currentUser.id,
+                      gender: gender,
+                      pregnant_or_breastfeeding: pregnantOrBreastfeeding ?? null,
+                      skin_type: skinType,
+                      concerns: concerns.join(', '),
+                      goals: goals.join(', '),
+                      sensitivity: sensitivity,
+                    },
+                    { onConflict: 'user_id' }
+                  )
 
                 if (error) {
                   alert(error.message)
@@ -1817,33 +1893,33 @@ const saveReminderSettings = async () => {
 
             <button
               onClick={() => setScreen('addProduct')}
-              className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+              className={`mt-6 w-full rounded-2xl border py-[18px] text-base font-bold ${t.hair} ${t.muted}`}
             >
               + Add a product
             </button>
 
-            <div className="mt-3 flex gap-3">
-              <button
-                onClick={() => setScreen('routinePlanner')}
-                className={`flex-1 rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
-              >
-                My routine
-              </button>
+            <button
+              onClick={() => setScreen('routinePlanner')}
+              className={`mt-3 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+            >
+              Build my routine
+            </button>
 
+            <div className="mt-3 flex gap-3">
               <button
                 onClick={() => setScreen('today')}
                 className={`flex-1 rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
               >
                 Back to today
               </button>
-            </div>
 
-            <button
-              onClick={() => setScreen('ingredientChecker')}
-              className={`mt-3 w-full rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
-            >
-              Ingredient checker
-            </button>
+              <button
+                onClick={() => setScreen('ingredientChecker')}
+                className={`flex-1 rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
+              >
+                Ingredient checker
+              </button>
+            </div>
 
           </div>
         </div>
@@ -3482,6 +3558,22 @@ if (screen === 'today') {
             PM Routine
           </h2>
 
+          {(() => {
+            const held = nightPlan.skipped.filter((s) => s.reason === 'restricted')
+            if (held.length === 0) return null
+
+            return (
+              <div className={`mt-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4`}>
+                <p className="text-[13px] font-semibold text-amber-300">
+                  Held back: {held.map((s) => s.step.name).join(', ')}
+                </p>
+                <p className="mt-1 text-[13px] leading-relaxed text-amber-200/90">
+                  {PREGNANCY_NOTE}
+                </p>
+              </div>
+            )
+          })()}
+
           <div className="mt-6">
             {routinesLoading ? (
               <p className={`text-sm ${nightPalette.muted}`}>Getting your routine…</p>
@@ -3629,7 +3721,7 @@ if (screen === 'routinePlanner') {
 
         <div className="mt-5">
           <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            My routine
+            Step 3 of 3
           </p>
 
           <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
@@ -4627,7 +4719,13 @@ if (screen === 'progressPhotos') {
               {progressPhotos.map((photo) => (
                 <div key={photo.id}>
                   <div className={`relative aspect-square overflow-hidden rounded-xl ${t.chip}`}>
-                    <button onClick={() => setViewingPhoto(photo)} className="h-full w-full">
+                    <button
+                      onClick={() => {
+                        setPhotoError(null)
+                        setViewingPhoto(photo)
+                      }}
+                      className="h-full w-full"
+                    >
                       {photoUrls[photo.path] && (
                         <img src={photoUrls[photo.path]} alt="" className="h-full w-full object-cover" />
                       )}
@@ -4689,6 +4787,10 @@ if (screen === 'progressPhotos') {
             >
               Delete photo
             </button>
+
+            {photoError && (
+              <p className="mt-3 text-center text-[13px] text-rose-400">{photoError}</p>
+            )}
           </div>
         )}
 

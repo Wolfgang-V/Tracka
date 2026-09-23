@@ -11,6 +11,17 @@ create table if not exists progress_photos (
   created_at timestamptz not null default now()
 );
 
+-- The storage policies below trust the first folder segment of the path
+-- to be the owning user's id; nothing enforced that the table's own path
+-- column actually started with that same segment. This makes the table
+-- and the bucket agree by construction instead of by convention.
+alter table progress_photos
+  drop constraint if exists progress_photos_path_matches_user_check;
+
+alter table progress_photos
+  add constraint progress_photos_path_matches_user_check
+  check (path like user_id::text || '/%');
+
 alter table progress_photos enable row level security;
 
 drop policy if exists "Users manage their own progress photos" on progress_photos;
@@ -30,6 +41,7 @@ on conflict (id) do nothing;
 -- rather than any table join.
 drop policy if exists "Users read their own progress photo files" on storage.objects;
 drop policy if exists "Users upload their own progress photo files" on storage.objects;
+drop policy if exists "Users update their own progress photo files" on storage.objects;
 drop policy if exists "Users delete their own progress photo files" on storage.objects;
 
 create policy "Users read their own progress photo files"
@@ -40,6 +52,16 @@ create policy "Users read their own progress photo files"
 create policy "Users upload their own progress photo files"
   on storage.objects
   for insert
+  with check (bucket_id = 'progress-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- .upload(path, file, { upsert: true }) issues an UPDATE when the object
+-- already exists, not an INSERT — without this, re-uploading to the same
+-- path fails with a permissions error that has nothing to do with the
+-- real cause.
+create policy "Users update their own progress photo files"
+  on storage.objects
+  for update
+  using (bucket_id = 'progress-photos' and (storage.foldername(name))[1] = auth.uid()::text)
   with check (bucket_id = 'progress-photos' and (storage.foldername(name))[1] = auth.uid()::text);
 
 create policy "Users delete their own progress photo files"
