@@ -1,7 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from './lib/supabase'
-import { detectActive } from './lib/core/actives'
-import { planNight, localDateString, addDays, daysBetween } from './lib/core/planNight'
+import { detectActive, slotRank } from './lib/core/actives'
+import { planNight, localDateString, addDays } from './lib/core/planNight'
+import { BRANDS } from './lib/core/brands'
+import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
+import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
+import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
 
@@ -100,6 +104,7 @@ function App() {
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
 
+  const [gender, setGender] = useState('')
   const [skinType, setSkinType] = useState('')
   const [concerns, setConcerns] = useState([])
   const [goals, setGoals] = useState([])
@@ -109,6 +114,11 @@ function App() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [settingsUsername, setSettingsUsername] = useState('')
+  const [brandSuggestionsOpen, setBrandSuggestionsOpen] = useState(false)
+  const [liveBrandMatches, setLiveBrandMatches] = useState([])
+  const [productSuggestionsOpen, setProductSuggestionsOpen] = useState(false)
+  const [liveProductMatches, setLiveProductMatches] = useState([])
+  const [productSearchLoading, setProductSearchLoading] = useState(false)
   const [settingsStatus, setSettingsStatus] = useState(null)
   const [morningReminderEnabled, setMorningReminderEnabled] = useState(true)
   const [morningReminderTime, setMorningReminderTime] = useState('07:00')
@@ -117,6 +127,8 @@ function App() {
   const [productBrand, setProductBrand] = useState('')
   const [productName, setProductName] = useState('')
   const [productCategory, setProductCategory] = useState('')
+  const [productIngredients, setProductIngredients] = useState('')
+  const [ingredientQuery, setIngredientQuery] = useState('')
   const [productOpenedDate, setProductOpenedDate] = useState('')
   const [productPaoMonths, setProductPaoMonths] = useState(0)
   const [products, setProducts] = useState([])
@@ -165,7 +177,13 @@ function App() {
         id,
         routine_id,
         step_order,
-        step_name
+        step_name,
+        user_products (
+          products (
+            brand,
+            category
+          )
+        )
       `)
       .in('routine_id', routineIds)
       .order('step_order', { ascending: true })
@@ -207,20 +225,24 @@ setRoutineHistory(groupedRoutines)
   const [todayPmSteps, setTodayPmSteps] = useState([])
   const [completedSteps, setCompletedSteps] = useState([])
   const [stepHistory, setStepHistory] = useState([])
-  const [viewMode, setViewMode] = useState(null)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const nightSectionRef = useRef(null)
   const [pushStatus, setPushStatus] = useState(null)
-  // TEMP monetization preview — remove this state + its two triggers + the
-  // modal block in the 'today' screen once testing is done.
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false)
   const [progressCompletions, setProgressCompletions] = useState([])
   const [selectedProgressDate, setSelectedProgressDate] = useState(null)
+  const [dayDetailSteps, setDayDetailSteps] = useState(null)
+  const [dayDetailLoading, setDayDetailLoading] = useState(false)
   const [skinLogs, setSkinLogs] = useState([])
   const [selectedTrendDate, setSelectedTrendDate] = useState(null)
+  const [progressPhotos, setProgressPhotos] = useState([])
+  const [photoUrls, setPhotoUrls] = useState({})
+  const [photoUploading, setPhotoUploading] = useState(false)
+  const [photoError, setPhotoError] = useState(null)
+  const [pendingPhoto, setPendingPhoto] = useState(null)
+  const [comparePhotos, setComparePhotos] = useState([])
+  const [viewingPhoto, setViewingPhoto] = useState(null)
 
   useEffect(() => {
    const checkUser = async () => {
+  try {
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -231,7 +253,9 @@ setRoutineHistory(groupedRoutines)
 }
 
   setUser(user)
-  setShowUpgradeModal(true) // TEMP monetization preview
+  if (!window.location.search.includes('recovery=true')) {
+    setScreen('today')
+  }
 
   const { data: profile, error } = await supabase
     .from('profiles')
@@ -249,11 +273,15 @@ setRoutineHistory(groupedRoutines)
 } else {
   setDisplayName(user.email?.split('@')[0] || 'there')
 }
+} finally {
+  setAuthReady(true)
+}
 }
 
        if (window.location.search.includes('confirmed=true')) {
       setScreen('login')
       window.history.replaceState({}, '', window.location.pathname)
+      setAuthReady(true)
     } else {
       checkUser()
     }
@@ -276,7 +304,8 @@ setRoutineHistory(groupedRoutines)
             id,
             brand,
             name,
-            category
+            category,
+            ingredients
           )
         `)
         .eq('user_id', currentUser.id)
@@ -345,10 +374,6 @@ loadProgressCompletions()
    setScreen('resetPassword')
  }
 
- if (event === 'SIGNED_IN') {
-   setShowUpgradeModal(true) // TEMP monetization preview
- }
-
  if (session?.user) {
   setUser(session.user)
   setProducts([])
@@ -390,6 +415,71 @@ loadProgressCompletions()
   setStepHistory(data || [])
 }
 
+const loadDayDetails = async (date) => {
+  setDayDetailLoading(true)
+
+  const {
+    data: { user: currentUser },
+  } = await supabase.auth.getUser()
+
+  if (!currentUser) {
+    setDayDetailLoading(false)
+    return
+  }
+
+  const { data, error } = await supabase
+    .from('routine_step_completions')
+    .select(`
+      routine_step_id,
+      routine_steps (
+        id,
+        routine_id,
+        step_name,
+        user_products (
+          products ( name, brand, category )
+        )
+      )
+    `)
+    .eq('user_id', currentUser.id)
+    .eq('local_date', date)
+
+  if (error) {
+    console.error('DAY DETAILS ERROR:', error)
+    setDayDetailSteps([])
+    setDayDetailLoading(false)
+    return
+  }
+
+  const withStep = (data || []).filter((entry) => entry.routine_steps)
+  const routineIds = [...new Set(withStep.map((entry) => entry.routine_steps.routine_id))]
+
+  let timeOfDayById = {}
+
+  if (routineIds.length > 0) {
+    const { data: routines, error: routinesError } = await supabase
+      .from('routines')
+      .select('id, time_of_day')
+      .in('id', routineIds)
+
+    if (routinesError) {
+      console.error('DAY DETAILS ROUTINES ERROR:', routinesError)
+    } else {
+      timeOfDayById = Object.fromEntries((routines || []).map((r) => [r.id, r.time_of_day]))
+    }
+  }
+
+  const steps = withStep.map((entry) => ({
+    id: entry.routine_steps.id,
+    name: entry.routine_steps.user_products?.products?.name || entry.routine_steps.step_name,
+    brand: entry.routine_steps.user_products?.products?.brand,
+    category: entry.routine_steps.user_products?.products?.category,
+    timeOfDay: timeOfDayById[entry.routine_steps.routine_id] || null,
+  }))
+
+  setDayDetailSteps(steps)
+  setDayDetailLoading(false)
+}
+
 const loadSkinLogs = async () => {
   const {
     data: { user: currentUser },
@@ -409,6 +499,103 @@ const loadSkinLogs = async () => {
   }
 
   setSkinLogs(data || [])
+}
+
+const loadProgressPhotos = async () => {
+  const {
+    data: { user: currentUser },
+  } = await supabase.auth.getUser()
+
+  if (!currentUser) return
+
+  const { data, error } = await supabase
+    .from('progress_photos')
+    .select('id, path, local_date, note, created_at')
+    .eq('user_id', currentUser.id)
+    .order('local_date', { ascending: false })
+
+  if (error) {
+    console.error('PROGRESS PHOTOS ERROR:', error)
+    return
+  }
+
+  setProgressPhotos(data || [])
+
+  const signedEntries = await Promise.all(
+    (data || []).map(async (photo) => {
+      const { data: signed } = await supabase.storage
+        .from('progress-photos')
+        .createSignedUrl(photo.path, 3600)
+      return [photo.path, signed?.signedUrl]
+    })
+  )
+  setPhotoUrls(Object.fromEntries(signedEntries))
+}
+
+const uploadProgressPhoto = async (file, localDate) => {
+  if (!file) return
+
+  setPhotoError(null)
+  setPhotoUploading(true)
+
+  const {
+    data: { user: currentUser },
+  } = await supabase.auth.getUser()
+
+  if (!currentUser) {
+    setPhotoUploading(false)
+    return
+  }
+
+  const ext = file.name.split('.').pop() || 'jpg'
+  const path = `${currentUser.id}/${Date.now()}.${ext}`
+
+  const { error: uploadError } = await supabase.storage
+    .from('progress-photos')
+    .upload(path, file, { contentType: file.type })
+
+  if (uploadError) {
+    console.error('PHOTO UPLOAD ERROR:', uploadError)
+    setPhotoError("Couldn't upload that photo. Try again.")
+    setPhotoUploading(false)
+    return
+  }
+
+  const { error: insertError } = await supabase.from('progress_photos').insert({
+    user_id: currentUser.id,
+    path,
+    local_date: localDate || localDateString(),
+  })
+
+  if (insertError) {
+    console.error('PHOTO ROW ERROR:', insertError)
+    setPhotoError("Couldn't save that photo. Try again.")
+    setPhotoUploading(false)
+    return
+  }
+
+  setPhotoUploading(false)
+  await loadProgressPhotos()
+}
+
+const deleteProgressPhoto = async (photo) => {
+  await supabase.storage.from('progress-photos').remove([photo.path])
+  await supabase.from('progress_photos').delete().eq('id', photo.id)
+  setViewingPhoto(null)
+  setComparePhotos((ids) => ids.filter((id) => id !== photo.id))
+  await loadProgressPhotos()
+}
+
+const saveProgressPhotoNote = async (photo, note) => {
+  const { error } = await supabase.from('progress_photos').update({ note }).eq('id', photo.id)
+
+  if (error) {
+    console.error('PHOTO NOTE ERROR:', error)
+    return
+  }
+
+  setProgressPhotos((photos) => photos.map((p) => (p.id === photo.id ? { ...p, note } : p)))
+  setViewingPhoto((v) => (v ? { ...v, note } : v))
 }
 
 const updateSkinMetric = async (metric, delta) => {
@@ -552,7 +739,8 @@ if (stepsError) {
         products (
           brand,
           name,
-          category
+          category,
+          ingredients
         )
       `)
       .in('id', userProductIds)
@@ -649,6 +837,7 @@ const nightPlan = planNight({
     name: step.user_products?.products?.name || step.step_name,
     brand: step.user_products?.products?.brand,
     category: step.user_products?.products?.category,
+    ingredients: step.user_products?.products?.ingredients,
     frequency: step.frequency,
     step_order: step.step_order,
     opened_date: step.user_products?.opened_date ?? null,
@@ -658,7 +847,7 @@ const nightPlan = planNight({
 })
 
 const hour = new Date().getHours()
-const isNight = viewMode ? viewMode === 'night' : hour >= 17 || hour < 5
+const isNight = hour >= 17 || hour < 5
 
 const nightPalette = {
   bgHex: '#0B1E33',
@@ -681,20 +870,106 @@ const dayPalette = {
   bgHex: '#F5F8FC',
   page: 'bg-[#F5F8FC] text-[#101B2D]',
   text: 'text-[#101B2D]',
-  mark: 'text-[#1E4E8C]',
+  mark: 'text-[#2554EB]',
   muted: 'text-[#51637E]',
   faint: 'text-[#7488A3]',
   rail: 'bg-[#101B2D]/12',
   node: 'bg-white border border-[#101B2D]/12 text-[#51637E]',
-  nodeDone: 'bg-[#1E4E8C] text-white',
+  nodeDone: 'bg-[#2554EB] text-white',
   hair: 'border-[#101B2D]/10',
-  btn: 'bg-[#1E4E8C] text-white',
+  btn: 'bg-[#2554EB] text-white',
   surface: 'bg-white',
-  chip: 'bg-[#1E4E8C]/10 text-[#1E4E8C]',
+  chip: 'bg-[#2554EB]/10 text-[#2554EB]',
   danger: 'text-rose-600',
 }
 
 const t = isNight ? nightPalette : dayPalette
+
+const TAB_ITEMS = [
+  {
+    key: 'today',
+    label: 'Today',
+    screens: ['today'],
+    icon: (active) => (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
+        strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="4.2" />
+        <path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7" />
+      </svg>
+    ),
+  },
+  {
+    key: 'skinProfile',
+    label: 'Skin profile',
+    screens: ['skinProfile', 'progress', 'skinTrends', 'progressPhotos'],
+    icon: (active) => (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
+        strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="8.2" r="3.6" />
+        <path d="M4.5 20c0-4.1 3.4-7 7.5-7s7.5 2.9 7.5 7" />
+      </svg>
+    ),
+  },
+  {
+    key: 'products',
+    label: 'My products',
+    screens: ['products', 'addProduct', 'routinePlanner', 'ingredientChecker'],
+    icon: (active) => (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
+        strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6.5 8.5h11l-.9 11.5a1.5 1.5 0 0 1-1.5 1.4H8.9a1.5 1.5 0 0 1-1.5-1.4L6.5 8.5Z" />
+        <path d="M9 8.5V6a3 3 0 0 1 6 0v2.5" />
+      </svg>
+    ),
+  },
+  {
+    key: 'settings',
+    label: 'Settings',
+    screens: ['settings', 'settingsUsername', 'settingsPassword', 'reminders'],
+    icon: (active) => (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
+        strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="2.8" />
+        <path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M17.7 6.3l-1.5 1.5M7.8 16.2l-1.5 1.5M17.7 17.7l-1.5-1.5M7.8 7.8 6.3 6.3" />
+      </svg>
+    ),
+  },
+]
+
+const renderBottomTabs = (activeScreen, palette) => (
+  <div
+    className={`fixed inset-x-0 bottom-0 z-20 mx-auto flex w-full max-w-md items-stretch justify-between border-t px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 ${palette.surface} ${palette.hair}`}
+  >
+    {TAB_ITEMS.map((tab) => {
+      const active = tab.screens.includes(activeScreen)
+      return (
+        <button
+          key={tab.key}
+          onClick={async () => {
+            if (tab.key === 'skinProfile') await loadSkinProfile()
+            setScreen(tab.key)
+          }}
+          className="flex flex-1 flex-col items-center gap-1 py-1.5"
+        >
+          <span
+            className={`flex h-9 w-9 items-center justify-center rounded-full ${
+              active ? palette.chip : palette.faint
+            }`}
+          >
+            {tab.icon(active)}
+          </span>
+          <span className={`text-[11px] font-semibold ${active ? palette.mark : palette.faint}`}>
+            {tab.label}
+          </span>
+        </button>
+      )
+    })}
+  </div>
+)
 
 const completedDates = new Set(
   progressCompletions
@@ -710,62 +985,12 @@ while (completedDates.has(cursor)) {
   cursor = addDays(cursor, -1)
 }
 
-let longestStreak = 0
-let run = 0
-let previousDate = null
-
-for (const date of [...completedDates].sort()) {
-  run = previousDate && daysBetween(previousDate, date) === 1 ? run + 1 : 1
-  longestStreak = Math.max(longestStreak, run)
-  previousDate = date
-}
-
 const todaySkinLog = skinLogs.find((log) => log.local_date === todayString) || {
   breakouts: 0,
   dryness: 0,
   oiliness: 0,
   redness: 0,
 }
-
-// Flags a product as worth a second look when the average daily breakout
-// count in the ~10 days after its opened_date is meaningfully higher than
-// the ~10 days before — never phrased as a diagnosis, just a nudge to watch.
-const productsToWatch = products
-  .filter((item) => {
-    if (!item.opened_date) return false
-    const daysSinceOpened = daysBetween(item.opened_date, todayString)
-    return daysSinceOpened >= 7 && daysSinceOpened <= 30
-  })
-  .map((item) => {
-    const before = skinLogs.filter(
-      (log) =>
-        log.local_date < item.opened_date &&
-        log.local_date >= addDays(item.opened_date, -10)
-    )
-    const after = skinLogs.filter(
-      (log) =>
-        log.local_date >= item.opened_date &&
-        log.local_date <= addDays(item.opened_date, 10)
-    )
-
-    if (before.length < 3 || after.length < 3) return null
-
-    const avg = (logs) => logs.reduce((sum, log) => sum + log.breakouts, 0) / logs.length
-    const beforeAvg = avg(before)
-    const afterAvg = avg(after)
-
-    if (afterAvg - beforeAvg < 2) return null
-
-    return {
-      id: item.id,
-      name: item.products?.name || 'A product',
-      openedDate: item.opened_date,
-      beforeAvg,
-      afterAvg,
-    }
-  })
-  .filter(Boolean)
-  .sort((a, b) => (b.afterAvg - b.beforeAvg) - (a.afterAvg - a.beforeAvg))
 
 const getPaoStatus = (item) => {
   if (!item.opened_date || !item.pao_months) return null
@@ -785,6 +1010,24 @@ const getPaoStatus = (item) => {
     label: `Use by ${expires.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}`,
     expired: false,
   }
+}
+
+// Open Beauty Facts' category text is free-form ("moisturising cream",
+// "gel nettoyant") — map it onto the fixed category list the app uses.
+const guessCategory = (text) => {
+  const lower = (text || '').toLowerCase()
+
+  if (lower.includes('cleans') || lower.includes('wash') || lower.includes('nettoy')) return 'cleanser'
+  if (lower.includes('toner') || lower.includes('tonique')) return 'toner'
+  if (lower.includes('essence')) return 'essence'
+  if (lower.includes('serum') || lower.includes('sérum')) return 'serum'
+  if (lower.includes('sunscreen') || lower.includes('spf') || lower.includes('sun ')) return 'sunscreen'
+  if (lower.includes('exfoliant') || lower.includes('peel') || lower.includes('scrub')) return 'exfoliant'
+  if (lower.includes('mask') || lower.includes('masque')) return 'mask'
+  if (lower.includes('treatment') || lower.includes('spot') || lower.includes('acne')) return 'treatment'
+  if (lower.includes('moistur') || lower.includes('cream') || lower.includes('crème') || lower.includes('baume') || lower.includes('lotion')) return 'moisturizer'
+
+  return ''
 }
 
 const getDefaultProductTime = (product) => {
@@ -862,26 +1105,65 @@ useEffect(() => {
     loadSkinLogs()
   }
 
+  if (screen === 'progressPhotos') {
+    loadProgressPhotos()
+  }
+
 }, [screen])
 
-// The Today screen shows morning and night routines on one continuous
-// page; scrolling the night section into view switches the app's theme
-// to dark, the same 'viewMode' a manual toggle used to set.
+// Live brand search against Open Beauty Facts, debounced so it doesn't
+// fire on every keystroke. Merged with the local BRANDS list in the UI.
 useEffect(() => {
-  if (screen !== 'today') return
+  if (screen !== 'addProduct' || !productBrand.trim()) {
+    setLiveBrandMatches([])
+    return
+  }
 
-  const node = nightSectionRef.current
-  if (!node) return
+  const timer = setTimeout(() => {
+    searchBrands(productBrand)
+      .then(setLiveBrandMatches)
+      .catch(() => setLiveBrandMatches([]))
+  }, 300)
 
-  const observer = new IntersectionObserver(
-    ([entry]) => setViewMode(entry.isIntersecting ? 'night' : 'morning'),
-    { threshold: 0.15 }
-  )
+  return () => clearTimeout(timer)
+}, [screen, productBrand])
 
-  observer.observe(node)
-  return () => observer.disconnect()
-}, [screen])
+// Once a brand is chosen, live-search that brand's products so picking
+// one can fill in the name and category automatically. The Nigerian
+// product list is local and curated, so it shows instantly; Open Beauty
+// Facts results are appended once the debounced network search resolves.
+useEffect(() => {
+  if (screen !== 'addProduct' || !productBrand.trim()) {
+    setLiveProductMatches([])
+    return
+  }
 
+  const localMatches = searchNigerianProducts(productBrand, productName)
+  setLiveProductMatches(localMatches)
+
+  setProductSearchLoading(true)
+
+  const timer = setTimeout(() => {
+    searchProducts(productBrand, productName)
+      .then((remoteMatches) => {
+        const merged = [...localMatches]
+        for (const match of remoteMatches) {
+          const dupe = merged.some(
+            (m) => m.name.toLowerCase() === match.name.toLowerCase() && m.brand.toLowerCase() === match.brand.toLowerCase()
+          )
+          if (!dupe) merged.push(match)
+        }
+        setLiveProductMatches(merged)
+        setProductSearchLoading(false)
+      })
+      .catch(() => {
+        setLiveProductMatches(localMatches)
+        setProductSearchLoading(false)
+      })
+  }, 400)
+
+  return () => clearTimeout(timer)
+}, [screen, productBrand, productName])
 
 const toggleOption = (value, current, setter) => {
   if (current.includes(value)) {
@@ -889,6 +1171,18 @@ const toggleOption = (value, current, setter) => {
   } else {
     setter([...current, value])
   }
+}
+
+if (!authReady) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-white">
+      <img
+        src="/logo-wordmark.jpg"
+        alt="Tracka+"
+        className="w-full max-w-[200px] animate-pulse"
+      />
+    </main>
+  )
 }
 
 if (screen === 'auth') {
@@ -1159,7 +1453,7 @@ const saveReminderSettings = async () => {
 
   const { data, error } = await supabase
     .from('skin_profiles')
-    .select('skin_type, concerns, goals, sensitivity')
+    .select('gender, skin_type, concerns, goals, sensitivity')
     .eq('user_id', currentUser.id)
     .single()
 
@@ -1169,6 +1463,7 @@ const saveReminderSettings = async () => {
   }
 
   if (data) {
+    setGender(data.gender || '')
     setSkinType(data.skin_type || '')
     setConcerns(
       data.concerns
@@ -1186,7 +1481,7 @@ const saveReminderSettings = async () => {
   if (screen === 'skinProfile') {
     return (
       <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
 
           <button
             onClick={() => setScreen('today')}
@@ -1200,6 +1495,22 @@ const saveReminderSettings = async () => {
             Back
           </button>
 
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            {[
+              ['My progress', 'progress'],
+              ['Skin insights', 'skinTrends'],
+              ['Progress photos', 'progressPhotos'],
+            ].map(([label, target]) => (
+              <button
+                key={target}
+                onClick={() => setScreen(target)}
+                className={`rounded-2xl px-2 py-2.5 text-center text-[12px] font-semibold leading-tight ${t.chip}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           <div className="mt-5">
             <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
               Step 1 of 3
@@ -1210,11 +1521,33 @@ const saveReminderSettings = async () => {
             </h1>
 
             <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-              This helps Tracka organize your skincare journey around you.
+              This helps Tracka+ organize your skincare journey around you.
             </p>
           </div>
 
           <div className="mt-8 flex flex-col gap-8">
+
+            <section>
+              <h2 className="mb-3 text-[17px] font-semibold">
+                What is your gender?
+              </h2>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                {['Female', 'Male', 'Non-binary', 'Prefer not to say'].map((option) => (
+                  <button
+                    key={option}
+                    onClick={() => setGender(option)}
+                    className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
+                      gender === option
+                        ? `${t.chip} border-transparent`
+                        : `${t.hair} ${t.muted}`
+                    }`}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </section>
 
             <section>
               <h2 className="mb-3 text-[17px] font-semibold">
@@ -1250,10 +1583,14 @@ const saveReminderSettings = async () => {
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {[
                   'Acne',
-                  'Hyperpigmentation',
-                  'Dryness',
-                  'Sensitivity',
+                  'Dark circles',
+                  'Dullness',
+                  'Puffiness',
                   'Uneven texture',
+                  'Visible pores',
+                  'Dryness',
+                  'Hyperpigmentation',
+                  'Sensitivity',
                 ].map((concern) => (
                   <button
                     key={concern}
@@ -1346,6 +1683,7 @@ const saveReminderSettings = async () => {
                   .from('skin_profiles')
                   .insert({
                     user_id: currentUser.id,
+                    gender: gender,
                     skin_type: skinType,
                     concerns: concerns.join(', '),
                     goals: goals.join(', '),
@@ -1367,6 +1705,8 @@ const saveReminderSettings = async () => {
 
           </div>
         </div>
+
+        {renderBottomTabs('skinProfile', t)}
       </main>
     )
   }
@@ -1374,7 +1714,7 @@ const saveReminderSettings = async () => {
   if (screen === 'products') {
     return (
       <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
 
           <button
             onClick={() => setScreen('today')}
@@ -1398,7 +1738,7 @@ const saveReminderSettings = async () => {
             </h1>
 
             <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-              Add the products you already own so Tracka can organize them for you.
+              Add the products you already own so Tracka+ can organize them for you.
             </p>
           </div>
 
@@ -1498,8 +1838,17 @@ const saveReminderSettings = async () => {
               </button>
             </div>
 
+            <button
+              onClick={() => setScreen('ingredientChecker')}
+              className={`mt-3 w-full rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
+            >
+              Ingredient checker
+            </button>
+
           </div>
         </div>
+
+        {renderBottomTabs('products', t)}
       </main>
     )
   }
@@ -1533,21 +1882,70 @@ const saveReminderSettings = async () => {
 
           <div className="mt-8 flex flex-col gap-5">
 
-            <div>
+            <div className="relative">
               <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
                 Brand
               </label>
 
               <input
                 type="text"
-                placeholder="e.g. CeraVe"
+                placeholder="Search or type a brand"
                 value={productBrand}
-                onChange={(e) => setProductBrand(e.target.value)}
+                onChange={(e) => {
+                  setProductBrand(e.target.value)
+                  setBrandSuggestionsOpen(true)
+                }}
+                onFocus={() => setBrandSuggestionsOpen(true)}
+                onBlur={() => setTimeout(() => setBrandSuggestionsOpen(false), 150)}
                 className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
+
+              {brandSuggestionsOpen && productBrand.trim() && (() => {
+                const merged = searchNigerianBrands(productBrand)
+
+                for (const brand of BRANDS) {
+                  if (
+                    brand.toLowerCase().includes(productBrand.trim().toLowerCase()) &&
+                    !merged.some((m) => m.toLowerCase() === brand.toLowerCase())
+                  ) {
+                    merged.push(brand)
+                  }
+                }
+
+                for (const brand of liveBrandMatches) {
+                  if (!merged.some((m) => m.toLowerCase() === brand.toLowerCase())) {
+                    merged.push(brand)
+                  }
+                }
+                const matches = merged.slice(0, 8)
+
+                if (matches.length === 0) return null
+
+                return (
+                  <div className={`absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl border ${t.hair} ${t.surface} shadow-lg`}>
+                    {matches.map((brand) => (
+                      <button
+                        key={brand}
+                        type="button"
+                        onMouseDown={() => {
+                          setProductBrand(brand)
+                          setBrandSuggestionsOpen(false)
+                        }}
+                        className={`block w-full px-4 py-2.5 text-left text-[14px] ${t.muted}`}
+                      >
+                        {brand}
+                      </button>
+                    ))}
+                  </div>
+                )
+              })()}
+
+              <p className={`mt-1.5 text-[12px] ${t.faint}`}>
+                Not listed? Just keep typing — it'll be added as you type it.
+              </p>
             </div>
 
-            <div>
+            <div className="relative">
               <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
                 Product name
               </label>
@@ -1556,9 +1954,49 @@ const saveReminderSettings = async () => {
                 type="text"
                 placeholder="e.g. Hydrating Cleanser"
                 value={productName}
-                onChange={(e) => setProductName(e.target.value)}
+                onChange={(e) => {
+                  setProductName(e.target.value)
+                  setProductIngredients('')
+                  setProductSuggestionsOpen(true)
+                }}
+                onFocus={() => setProductSuggestionsOpen(true)}
+                onBlur={() => setTimeout(() => setProductSuggestionsOpen(false), 150)}
                 className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
+
+              {productSuggestionsOpen && productBrand.trim() && liveProductMatches.length > 0 && (
+                <div className={`absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border ${t.hair} ${t.surface} shadow-lg`}>
+                  {liveProductMatches.slice(0, 8).map((match) => (
+                    <button
+                      key={match.code}
+                      type="button"
+                      onMouseDown={() => {
+                        setProductName(match.name)
+                        const guessed = guessCategory(match.category)
+                        if (guessed) setProductCategory(guessed)
+                        setProductIngredients(match.ingredients || '')
+                        setProductSuggestionsOpen(false)
+                      }}
+                      className="block w-full px-4 py-2.5 text-left"
+                    >
+                      <span className="block text-[14px] font-medium">{match.name}</span>
+                      {match.category && (
+                        <span className={`block text-[12px] capitalize ${t.faint}`}>{match.category}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {productBrand.trim() && (
+                <p className={`mt-1.5 text-[12px] ${productIngredients ? t.mark : t.faint}`}>
+                  {productIngredients
+                    ? "Found this product's ingredients — we'll use them to catch clashes like retinol and acids in your routine."
+                    : productSearchLoading
+                      ? 'Searching Open Beauty Facts…'
+                      : "Not listed? Just keep typing — it'll be added as you type it."}
+                </p>
+              )}
             </div>
 
             <div>
@@ -1574,6 +2012,7 @@ const saveReminderSettings = async () => {
                 <option value="">Select a category</option>
                 <option value="cleanser">Cleanser</option>
                 <option value="toner">Toner</option>
+                <option value="essence">Essence</option>
                 <option value="serum">Serum</option>
                 <option value="treatment">Treatment</option>
                 <option value="moisturizer">Moisturizer</option>
@@ -1655,6 +2094,7 @@ const saveReminderSettings = async () => {
                     brand: productBrand,
                     name: productName,
                     category: productCategory,
+                    ingredients: productIngredients || null,
                   })
                   .select()
                   .single()
@@ -1694,7 +2134,8 @@ const saveReminderSettings = async () => {
                       id,
                       brand,
                       name,
-                      category
+                      category,
+                      ingredients
                     )
                   `)
                   .eq('user_id', currentUser.id)
@@ -1709,6 +2150,7 @@ const saveReminderSettings = async () => {
                 setProductBrand('')
                 setProductName('')
                 setProductCategory('')
+                setProductIngredients('')
                 setProductOpenedDate('')
                 setProductPaoMonths(0)
                 setScreen('products')
@@ -1723,7 +2165,209 @@ const saveReminderSettings = async () => {
       </main>
     )
   }
-  
+
+  if (screen === 'ingredientChecker') {
+    const details = findIngredientDetails(ingredientQuery)
+    const hasQuery = ingredientQuery.trim().length > 0
+    const noMatch = hasQuery && !details
+    const isGenericList = (s) => /^all\b/i.test(s.trim())
+
+    return (
+      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
+
+          <button
+            onClick={() => setScreen('products')}
+            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+            My products
+          </button>
+
+          <div className="mt-5">
+            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+              Ingredient checker
+            </p>
+
+            <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
+              Know what you're using
+            </h1>
+
+            <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+              Learn what's inside your skincare routine and how to use it.
+            </p>
+          </div>
+
+          <div className="mt-6">
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Search ingredients
+            </label>
+
+            <input
+              type="text"
+              value={ingredientQuery}
+              onChange={(e) => setIngredientQuery(e.target.value)}
+              placeholder="e.g. Retinol, Vitamin C, Salicylic Acid"
+              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
+
+          {details && (
+            <>
+              <div className={`mt-5 rounded-3xl ${t.surface} p-5`}>
+                <h2 className="text-[21px] font-semibold">{details.ingredient}</h2>
+
+                {details.class && (
+                  <span className={`mt-2 inline-block rounded-full px-3 py-1 text-[12px] font-semibold ${t.chip}`}>
+                    {details.class}
+                  </span>
+                )}
+
+                <div className={`mt-4 flex gap-6 border-t pt-4 ${t.hair}`}>
+                  {details.bestTime && (
+                    <div>
+                      <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Best used</p>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-[14px] font-semibold">
+                        {/PM/i.test(details.bestTime) && !/AM/i.test(details.bestTime) ? (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" strokeWidth="1.8"
+                            strokeLinecap="round" strokeLinejoin="round" className={t.mark}>
+                            <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" />
+                          </svg>
+                        ) : /AM/i.test(details.bestTime) && !/PM/i.test(details.bestTime) ? (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" strokeWidth="1.8"
+                            strokeLinecap="round" strokeLinejoin="round" className={t.mark}>
+                            <circle cx="12" cy="12" r="4.2" />
+                            <path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7" />
+                          </svg>
+                        ) : null}
+                        {details.bestTime}
+                      </p>
+                    </div>
+                  )}
+
+                  {details.typicalFrequency && (
+                    <div>
+                      <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Frequency</p>
+                      <p className="mt-0.5 text-[14px] font-semibold">{details.typicalFrequency}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {details.about && (
+                <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+                  <h3 className="text-[15px] font-semibold">About {details.ingredient}</h3>
+                  <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>{details.about}</p>
+                </div>
+              )}
+
+              {details.mainUses && (
+                <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+                  <h3 className="flex items-center gap-2 text-[15px] font-semibold">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className={t.mark}>
+                      <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />
+                    </svg>
+                    Main Uses
+                  </h3>
+                  <ul className="mt-3 flex flex-col gap-1.5">
+                    {details.mainUses.split(',').map((use) => use.trim()).filter(Boolean).map((use) => (
+                      <li key={use} className={`flex items-center gap-2 text-[14px] ${t.muted}`}>
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${t.chip}`} />
+                        <span className="capitalize">{use}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {(details.howToUse || details.precaution) && (
+                <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+                  <h3 className="text-[15px] font-semibold">How to use</h3>
+
+                  {details.howToUse && (
+                    <p className="mt-2 text-[14px] leading-relaxed">{details.howToUse}</p>
+                  )}
+
+                  {details.precaution && (
+                    <div className={`mt-3 flex items-start gap-2 rounded-2xl ${t.chip} p-3`}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="1.8"
+                        strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0">
+                        <path d="M12 3.5 21 19H3L12 3.5Z" />
+                        <path d="M12 9.5v4" />
+                        <path d="M12 16.5v.01" />
+                      </svg>
+                      <p className="text-[13px] leading-relaxed">{details.precaution}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(details.compatibleWith || details.useCautionWith) && (
+                <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+                  <h3 className="text-[15px] font-semibold">Compatibility</h3>
+
+                  {details.compatibleWith && (
+                    <div className="mt-3">
+                      <p className="flex items-center gap-1.5 text-[13px] font-semibold">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="2.2"
+                          strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
+                          <path d="M4 12.5l5.2 5.2L20 7" />
+                        </svg>
+                        Works well with
+                      </p>
+                      <p className={`mt-1 text-[14px] leading-relaxed ${t.muted}`}>
+                        {isGenericList(details.compatibleWith)
+                          ? "Plays well with the rest of your routine."
+                          : details.compatibleWith}
+                      </p>
+                    </div>
+                  )}
+
+                  {details.useCautionWith && (
+                    <div className={`${details.compatibleWith ? `mt-4 border-t pt-4 ${t.hair}` : 'mt-3'}`}>
+                      <p className="flex items-center gap-1.5 text-[13px] font-semibold">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="1.8"
+                          strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                          <path d="M12 3.5 21 19H3L12 3.5Z" />
+                          <path d="M12 9.5v4" />
+                          <path d="M12 16.5v.01" />
+                        </svg>
+                        Use caution with
+                      </p>
+                      <p className={`mt-1 text-[14px] leading-relaxed ${t.muted}`}>{details.useCautionWith}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {noMatch && (
+            <div className={`mt-5 rounded-3xl border ${t.hair} p-5`}>
+              <p className={`text-[14px] leading-relaxed ${t.muted}`}>
+                We don't have "{ingredientQuery.trim()}" in our database yet. We can't confirm how to use it
+                or what it mixes with — treat it carefully and check the product's own instructions.
+              </p>
+            </div>
+          )}
+
+
+        </div>
+
+        {renderBottomTabs('products', t)}
+      </main>
+    )
+  }
+
 if (screen === 'login') {
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -2083,7 +2727,7 @@ if (screen === 'resetPassword') {
 if (screen === 'settings') {
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
 
         <button
           onClick={() => setScreen('today')}
@@ -2107,30 +2751,128 @@ if (screen === 'settings') {
           </h1>
 
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Update your profile or change your password.
+            Manage your account.
           </p>
         </div>
 
-        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-          <h2 className="text-[15px] font-semibold">Profile</h2>
+        <div className={`mt-8 flex flex-col divide-y overflow-hidden rounded-3xl ${t.surface} ${t.hair}`}>
+          <button
+            onClick={() => {
+              setSettingsUsername(displayName)
+              setSettingsStatus(null)
+              setScreen('settingsUsername')
+            }}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            Update your username
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
+          <button
+            onClick={() => {
+              setNewPassword('')
+              setConfirmNewPassword('')
+              setSettingsStatus(null)
+              setScreen('settingsPassword')
+            }}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            Update your password
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
+          <button
+            onClick={async () => {
+              await loadReminderSettings()
+              setScreen('reminders')
+            }}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            Reminders
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+
+        <button
+          onClick={async () => {
+            const confirmed = window.confirm('Log out of Tracka+?')
+            if (!confirmed) return
+
+            await supabase.auth.signOut()
+            setUser(null)
+            setDisplayName('')
+            setProducts([])
+            setTodayAmRoutine(null)
+            setTodayPmRoutine(null)
+            setTodayAmSteps([])
+            setTodayPmSteps([])
+            setCompletedSteps([])
+            setProgressCompletions([])
+            setScreen('welcome')
+          }}
+          className={`mt-4 w-full rounded-2xl border px-5 py-4 text-left text-[15px] font-semibold ${t.hair} ${t.danger}`}
+        >
+          Log out
+        </button>
+
+      </div>
+
+      {renderBottomTabs('settings', t)}
+    </main>
+  )
+}
+
+if (screen === 'settingsUsername') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('settings')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Settings
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Update your username
+          </h1>
 
           {user?.email && (
-            <p className={`mt-1 text-[13px] ${t.faint}`}>{user.email}</p>
+            <p className={`mt-3 text-[15px] ${t.muted}`}>{user.email}</p>
           )}
+        </div>
 
-          <div className="mt-4">
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Username
-            </label>
+        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+          <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+            Username
+          </label>
 
-            <input
-              type="text"
-              placeholder="e.g. Deeyah"
-              value={settingsUsername}
-              onChange={(e) => setSettingsUsername(e.target.value)}
-              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-          </div>
+          <input
+            type="text"
+            placeholder="e.g. Deeyah"
+            value={settingsUsername}
+            onChange={(e) => setSettingsUsername(e.target.value)}
+            className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+          />
 
           <button
             onClick={async () => {
@@ -2157,23 +2899,55 @@ if (screen === 'settings') {
 
               if (error) {
                 console.error('PROFILE UPDATE ERROR:', error)
-                setSettingsStatus('Could not save your profile. Try again.')
+                setSettingsStatus('Could not save your username: ' + error.message)
                 return
               }
 
               setDisplayName(settingsUsername.trim())
-              setSettingsStatus('Profile updated.')
+              setSettingsStatus('Username updated.')
             }}
             className={`mt-5 w-full rounded-2xl py-[16px] text-base font-bold ${t.btn}`}
           >
-            Save profile
+            Save username
           </button>
+
+          {settingsStatus && (
+            <p className={`mt-4 text-center text-[14px] leading-relaxed ${t.muted}`}>
+              {settingsStatus}
+            </p>
+          )}
         </div>
 
-        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-          <h2 className="text-[15px] font-semibold">Password</h2>
+      </div>
+    </main>
+  )
+}
 
-          <div className="mt-4 flex flex-col gap-4">
+if (screen === 'settingsPassword') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('settings')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Settings
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Update your password
+          </h1>
+        </div>
+
+        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+          <div className="flex flex-col gap-4">
             <div>
               <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
                 New password
@@ -2232,13 +3006,13 @@ if (screen === 'settings') {
           >
             Update password
           </button>
-        </div>
 
-        {settingsStatus && (
-          <p className={`mt-4 text-center text-[14px] leading-relaxed ${t.muted}`}>
-            {settingsStatus}
-          </p>
-        )}
+          {settingsStatus && (
+            <p className={`mt-4 text-center text-[14px] leading-relaxed ${t.muted}`}>
+              {settingsStatus}
+            </p>
+          )}
+        </div>
 
       </div>
     </main>
@@ -2251,7 +3025,7 @@ if (screen === 'reminders') {
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
         <button
-          onClick={() => setScreen('today')}
+          onClick={() => setScreen('settings')}
           className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -2259,7 +3033,7 @@ if (screen === 'reminders') {
             strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 5l-7 7 7 7" />
           </svg>
-          Today
+          Settings
         </button>
 
         <div className="mt-5">
@@ -2272,7 +3046,7 @@ if (screen === 'reminders') {
           </h1>
 
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Choose when Tracka should remind you about your skincare routine.
+            Choose when Tracka+ should remind you about your skincare routine.
           </p>
         </div>
 
@@ -2403,7 +3177,7 @@ if (screen === 'reminders') {
 
           <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>
             Reminders arrive on whichever device you turn this on. On iPhone, add
-            Tracka to your home screen first and open it from there.
+            Tracka+ to your home screen first and open it from there.
           </p>
 
           <button
@@ -2414,7 +3188,7 @@ if (screen === 'reminders') {
                 result.ok
                   ? "You're set. Reminders will arrive on this device."
                   : result.reason === 'needs_install'
-                    ? 'Add Tracka to your home screen first, then open it from there.'
+                    ? 'Add Tracka+ to your home screen first, then open it from there.'
                     : result.reason === 'denied'
                       ? 'Notifications are blocked. Turn them on in your browser settings for this site.'
                       : result.reason === 'unsupported'
@@ -2444,32 +3218,24 @@ if (screen === 'reminders') {
   )
 }
 if (screen === 'today') {
-  const amSteps = todayAmSteps.map((step) => ({
-    id: step.id,
-    name: step.user_products?.products?.name || step.step_name,
-    brand: step.user_products?.products?.brand,
-    category: step.user_products?.products?.category,
-    active: 'none',
-  }))
+  const amSteps = todayAmSteps
+    .map((step) => ({
+      id: step.id,
+      name: step.user_products?.products?.name || step.step_name,
+      brand: step.user_products?.products?.brand,
+      category: step.user_products?.products?.category,
+      ingredients: step.user_products?.products?.ingredients,
+      active: 'none',
+    }))
+    .sort((a, b) => slotRank(a.category) - slotRank(b.category))
 
   const pmSteps = nightPlan.steps
-  const pmNotes = nightPlan.notes
 
   const amDone = amSteps.filter((s) => completedSteps.includes(s.id)).length
   const pmDone = pmSteps.filter((s) => completedSteps.includes(s.id)).length
 
-  const isRestNight =
-    pmSteps.length > 0 && pmSteps.every((s) => !s.active || s.active === 'none')
-
-  const menuItems = [
-    ['My products', 'products'],
-    ['My routine', 'routinePlanner'],
-    ['My progress', 'progress'],
-    ['Skin trends', 'skinTrends'],
-    ['My skin profile', 'skinProfile'],
-    ['Reminders', 'reminders'],
-    ['Settings', 'settings'],
-  ]
+  const amIngredientWarnings = checkRoutineConflicts(amSteps)
+  const pmIngredientWarnings = checkRoutineConflicts(pmSteps)
 
   const renderSteps = (steps, palette) => (
     <div className="flex flex-col gap-3">
@@ -2546,127 +3312,14 @@ if (screen === 'today') {
   return (
     <main className="min-h-screen">
 
-      {/* TEMP monetization preview — remove this block, the showUpgradeModal
-          state, and its two setShowUpgradeModal(true) triggers after testing. */}
-      {showUpgradeModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 px-6 pb-6 sm:items-center"
-          onClick={() => setShowUpgradeModal(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className={`w-full max-w-md rounded-3xl ${dayPalette.surface} p-6 shadow-2xl`}
-          >
-            <div className="flex items-start justify-between">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2"
-                  strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
-                </svg>
-              </span>
-
-              <button
-                onClick={() => setShowUpgradeModal(false)}
-                aria-label="Close"
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-lg ${dayPalette.faint}`}
-              >
-                ×
-              </button>
-            </div>
-
-            <h2 className="mt-4 font-display text-[26px] font-light leading-[1.1] tracking-tight">
-              Testing mode is almost up
-            </h2>
-
-            <p className={`mt-2 text-[14px] leading-relaxed ${dayPalette.muted}`}>
-              Upgrade to full tier to keep your app running.
-            </p>
-
-            <button
-              onClick={() => {
-                setShowUpgradeModal(false)
-                alert('Payments are not live yet — this is a preview of the upgrade flow.')
-              }}
-              className={`mt-6 w-full rounded-2xl py-[16px] text-base font-bold ${dayPalette.btn}`}
-            >
-              Upgrade to full tier
-            </button>
-
-            <button
-              onClick={() => setShowUpgradeModal(false)}
-              className={`mt-3 w-full py-2 text-[13px] font-semibold ${dayPalette.faint}`}
-            >
-              Remind me later
-            </button>
-          </div>
-        </div>
-      )}
-
       <div className={`${dayPalette.page} transition-colors duration-500`}>
       <div className="mx-auto flex w-full max-w-md flex-col px-6 pt-7">
 
-        <div className="relative flex items-center justify-between">
-          <span className={`text-[15px] font-semibold tracking-wide ${dayPalette.mark}`}>
-            Tracka
-          </span>
+        <span className={`text-[15px] font-semibold tracking-wide ${dayPalette.mark}`}>
+          Tracka+
+        </span>
 
-          <button
-            type="button"
-            aria-label="Open menu"
-            onClick={() => setMenuOpen(!menuOpen)}
-            className={`-mr-2 flex h-11 w-11 items-center justify-center ${dayPalette.muted}`}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-              <path d="M4 7h16M4 12h16M4 17h16" />
-            </svg>
-          </button>
-
-          {menuOpen && (
-            <div className={`absolute right-0 top-12 z-10 w-52 overflow-hidden rounded-2xl ${dayPalette.surface} shadow-xl`}>
-              {menuItems.map(([label, target]) => (
-                <button
-                  key={target}
-                  onClick={async () => {
-                    setMenuOpen(false)
-                    if (target === 'skinProfile') await loadSkinProfile()
-                    if (target === 'settings') {
-                      setSettingsUsername(displayName)
-                      setSettingsStatus(null)
-                    }
-                    setScreen(target)
-                  }}
-                  className={`block w-full px-5 py-3.5 text-left text-[15px] ${dayPalette.muted}`}
-                >
-                  {label}
-                </button>
-              ))}
-
-              <button
-                onClick={async () => {
-                  await supabase.auth.signOut()
-                  setUser(null)
-                  setDisplayName('')
-                  setProducts([])
-                  setTodayAmRoutine(null)
-                  setTodayPmRoutine(null)
-                  setTodayAmSteps([])
-                  setTodayPmSteps([])
-                  setCompletedSteps([])
-                  setProgressCompletions([])
-                  setMenuOpen(false)
-                  setScreen('welcome')
-                }}
-                className={`block w-full border-t px-5 py-3.5 text-left text-[15px] ${dayPalette.hair} ${dayPalette.faint}`}
-              >
-                Log out
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="mt-7">
+        <div className="mt-4">
           <p className={`text-[15px] ${dayPalette.muted}`}>
             Hello, {displayName}
           </p>
@@ -2690,7 +3343,7 @@ if (screen === 'today') {
           </p>
 
           <h2 className="mt-1 font-display text-[28px] font-light leading-[1.05] tracking-tight">
-            Morning routine
+            AM Routine
           </h2>
 
           <div className="mt-6">
@@ -2712,6 +3365,22 @@ if (screen === 'today') {
               renderSteps(amSteps, dayPalette)
             )}
           </div>
+
+          {amIngredientWarnings.length > 0 && (
+            <div className={`mt-4 flex flex-col gap-2.5 rounded-2xl border ${dayPalette.hair} p-4`}>
+              {amIngredientWarnings.map((w, i) => (
+                <div key={i}>
+                  <p className="text-[13px] font-semibold">
+                    {w.ingredientA} + {w.ingredientB}
+                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${dayPalette.chip}`}>
+                      {w.relationship}
+                    </span>
+                  </p>
+                  <p className={`mt-0.5 text-[13px] leading-relaxed ${dayPalette.muted}`}>{w.message}</p>
+                </div>
+              ))}
+            </div>
+          )}
 
           {todayAmRoutine && !routinesLoading && (
             <div className="mt-7 flex flex-col gap-3.5">
@@ -2740,17 +3409,27 @@ if (screen === 'today') {
         }}
       />
 
-      <div ref={nightSectionRef} className={`${nightPalette.page} transition-colors duration-500`}>
-      <div className="mx-auto flex w-full max-w-md flex-col px-6 pb-10">
+      <div className={`${nightPalette.page} transition-colors duration-500`}>
+      <div className="mx-auto flex w-full max-w-md flex-col px-6 pb-28">
           <p className={`text-[13px] font-semibold uppercase tracking-wide ${nightPalette.mark}`}>
             Night
           </p>
 
           <h2 className="mt-1 font-display text-[28px] font-light leading-[1.05] tracking-tight">
-            {isRestNight ? 'Rest night' : 'Tonight'}
+            PM Routine
           </h2>
 
-          {isRestNight && (
+          {nightPlan.nightType !== 'plain' && (
+            <span className={`mt-2 inline-block rounded-full px-3 py-1 text-xs font-semibold ${nightPalette.chip}`}>
+              {nightPlan.nightType === 'retinol'
+                ? 'Retinol night'
+                : nightPlan.nightType === 'exfoliation'
+                  ? 'Exfoliation night'
+                  : 'Recovery night'}
+            </span>
+          )}
+
+          {nightPlan.nightType === 'recovery' && (
             <p className={`mt-2 max-w-[300px] text-[14px] leading-relaxed ${nightPalette.muted}`}>
               Nothing strong tonight. Your skin repairs itself between actives,
               so this counts as part of the routine.
@@ -2775,19 +3454,25 @@ if (screen === 'today') {
             ) : (
               <>
                 {renderSteps(pmSteps, nightPalette)}
-
-                {pmNotes.length > 0 && (
-                  <div className={`mt-7 flex flex-col gap-3 border-t pt-5 ${nightPalette.hair}`}>
-                    {pmNotes.map((note, i) => (
-                      <p key={i} className={`text-sm leading-relaxed ${nightPalette.muted}`}>
-                        {note}
-                      </p>
-                    ))}
-                  </div>
-                )}
               </>
             )}
           </div>
+
+          {pmIngredientWarnings.length > 0 && (
+            <div className={`mt-4 flex flex-col gap-2.5 rounded-2xl border ${nightPalette.hair} p-4`}>
+              {pmIngredientWarnings.map((w, i) => (
+                <div key={i}>
+                  <p className="text-[13px] font-semibold">
+                    {w.ingredientA} + {w.ingredientB}
+                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${nightPalette.chip}`}>
+                      {w.relationship}
+                    </span>
+                  </p>
+                  <p className={`mt-0.5 text-[13px] leading-relaxed ${nightPalette.muted}`}>{w.message}</p>
+                </div>
+              ))}
+            </div>
+          )}
 
           {todayPmRoutine && !routinesLoading && (
             <div className="mt-7 flex flex-col gap-3.5">
@@ -2807,36 +3492,47 @@ if (screen === 'today') {
         {(todayAmRoutine || todayPmRoutine) && !routinesLoading && (
           <div className={`mt-8 rounded-3xl ${nightPalette.surface} p-5`}>
             <h2 className={`text-[15px] font-semibold ${nightPalette.text}`}>
-              How's your skin today?
+              Log today's skin condition
             </h2>
 
-            <div className="mt-4 flex flex-col gap-3">
+            <div className="mt-5 flex flex-col gap-4">
               {[
-                ['breakouts', 'Breakouts'],
-                ['dryness', 'Dryness'],
-                ['oiliness', 'Oiliness'],
-                ['redness', 'Redness'],
-              ].map(([key, label]) => (
-                <div key={key} className="flex items-center justify-between">
-                  <span className={`text-[14px] ${nightPalette.muted}`}>{label}</span>
+                ['breakouts', 'Breakouts', '#f43f5e'],
+                ['dryness', 'Dryness', '#f59e0b'],
+                ['oiliness', 'Oiliness', '#10b981'],
+                ['redness', 'Redness', '#8b5cf6'],
+              ].map(([key, label, color]) => (
+                <div key={key}>
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[13px] font-medium ${nightPalette.muted}`}>{label}</span>
+                    <span className={`text-[13px] font-semibold tabular-nums ${nightPalette.text}`}>
+                      {todaySkinLog[key]}
+                    </span>
+                  </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="mt-1.5 flex items-center gap-2.5">
                     <button
                       type="button"
                       onClick={() => updateSkinMetric(key, -1)}
-                      className={`flex h-8 w-8 items-center justify-center rounded-full border text-lg leading-none ${nightPalette.hair} ${nightPalette.muted}`}
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-base leading-none ${nightPalette.hair} ${nightPalette.muted}`}
                     >
                       −
                     </button>
 
-                    <span className={`w-5 text-center text-[15px] font-semibold tabular-nums ${nightPalette.text}`}>
-                      {todaySkinLog[key]}
-                    </span>
+                    <div className={`h-2.5 flex-1 overflow-hidden rounded-full ${nightPalette.rail}`}>
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: `${Math.min(100, (todaySkinLog[key] / 10) * 100)}%`,
+                          backgroundColor: color,
+                        }}
+                      />
+                    </div>
 
                     <button
                       type="button"
                       onClick={() => updateSkinMetric(key, 1)}
-                      className={`flex h-8 w-8 items-center justify-center rounded-full text-lg leading-none ${nightPalette.btn}`}
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-base leading-none ${nightPalette.btn}`}
                     >
                       +
                     </button>
@@ -2849,6 +3545,8 @@ if (screen === 'today') {
 
       </div>
       </div>
+
+      {renderBottomTabs('today', dayPalette)}
     </main>
   )
 }
@@ -2893,7 +3591,7 @@ if (screen === 'routinePlanner') {
           </h1>
 
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Tell Tracka when you want to use each product, and it will organize your morning and night routines.
+            Tell Tracka+ when you want to use each product, and it will organize your morning and night routines.
           </p>
         </div>
 
@@ -3156,7 +3854,7 @@ if (screen === 'routineHistory') {
           <div className="mt-8 flex flex-col gap-4">
             {routineHistory.map((routine) => (
               <div
-                key={routine.routine_code}
+                key={routine.routine_code || routine.created_at}
                 className={`rounded-3xl ${t.surface} p-5`}
               >
                 <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>
@@ -3170,7 +3868,7 @@ if (screen === 'routineHistory') {
                   }}
                   className={`mt-1 text-left text-[19px] font-semibold ${t.mark}`}
                 >
-                  {routine.routine_code || 'No routine code'}
+                  {routine.routine_code || 'Routine'}
                 </button>
 
                 <p className={`mt-1 text-[13px] ${t.muted}`}>
@@ -3211,11 +3909,15 @@ if (screen === 'routineDetails') {
           </p>
 
           <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            {selectedRoutine?.routine_code}
+            {selectedRoutine?.routine_code || 'Routine'}
           </h1>
 
           <p className={`mt-3 text-[15px] ${t.muted}`}>
-            Previous routine
+            {selectedRoutine?.created_at
+              ? new Date(selectedRoutine.created_at).toLocaleDateString('en-GB', {
+                  day: 'numeric', month: 'long', year: 'numeric',
+                })
+              : 'Previous routine'}
           </p>
         </div>
 
@@ -3231,13 +3933,17 @@ if (screen === 'routineDetails') {
                 key={routine.id}
                 className={`rounded-3xl ${t.surface} p-5`}
               >
-                <h2 className="text-[17px] font-semibold">
+                <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+                  {routine.time_of_day === 'AM' ? 'Morning' : 'Night'}
+                </p>
+
+                <h2 className="mt-0.5 text-[17px] font-semibold">
                   {routine.time_of_day === 'AM'
                     ? 'Morning routine'
                     : 'Night routine'}
                 </h2>
 
-                <div className={`mt-4 flex flex-col divide-y ${t.hair}`}>
+                <div className="mt-4 flex flex-col gap-3">
                   {routine.steps.length === 0 ? (
                     <p className={`text-[15px] ${t.muted}`}>
                       No steps recorded.
@@ -3246,15 +3952,31 @@ if (screen === 'routineDetails') {
                     routine.steps.map((step, index) => (
                       <div
                         key={step.id}
-                        className="py-3 first:pt-0 last:pb-0"
+                        className={`flex items-center gap-4 rounded-2xl border ${t.hair} p-4`}
                       >
-                        <p className={`text-[11px] font-semibold ${t.faint}`}>
-                          STEP {index + 1}
-                        </p>
+                        <span
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${t.node}`}
+                        >
+                          {index + 1}
+                        </span>
 
-                        <p className="mt-0.5 text-[15px] font-medium">
-                          {step.step_name}
-                        </p>
+                        <span className="min-w-0 flex-1">
+                          {step.user_products?.products?.brand && (
+                            <span className={`block truncate text-[12px] font-medium ${t.faint}`}>
+                              {step.user_products.products.brand}
+                            </span>
+                          )}
+
+                          <span className="mt-0.5 block text-[15px] font-semibold">
+                            {step.step_name}
+                          </span>
+
+                          {step.user_products?.products?.category && (
+                            <span className={`mt-0.5 block text-[12px] capitalize ${t.muted}`}>
+                              {step.user_products.products.category}
+                            </span>
+                          )}
+                        </span>
                       </div>
                     ))
                   )}
@@ -3305,6 +4027,16 @@ if (screen === 'progress') {
 
   const stepDays = new Set(stepHistory.map((entry) => entry.local_date))
 
+  const streakMessage = (n) => {
+    if (n === 0) return 'Complete your routine to start a streak'
+    if (n === 1) return 'Great start! Keep it going tomorrow.'
+    if (n === 2) return 'You are building a habit! Keep it going'
+    if (n >= 30) return '30 days! Look at you building a skincare habit.'
+    if (n >= 14) return 'Two weeks strong. Your consistency is showing.'
+    if (n >= 7) return 'One week of consistency!'
+    return `${n} days down. Keep your streak alive!`
+  }
+
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
@@ -3322,20 +4054,37 @@ if (screen === 'progress') {
         </button>
 
         <div className="mt-5">
-          <h1 className="font-display text-[54px] font-light leading-[0.95] tracking-tight">
-            {currentStreak} {currentStreak === 1 ? 'night' : 'nights'}
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            My progress
+          </p>
+
+          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Your consistency
           </h1>
 
-          <p className={`mt-3 max-w-[290px] text-[15px] leading-relaxed ${t.muted}`}>
-            {currentStreak === 0
-              ? 'Finish tonight and your streak starts again. Nothing is lost.'
-              : longestStreak > currentStreak
-                ? `Your longest run so far was ${longestStreak}. One missed night won't end it.`
-                : "That's your best run yet. One missed night won't end it."}
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Keep track of your skincare routine and build your streak.
           </p>
         </div>
 
-        <div className={`mt-8 rounded-3xl ${t.surface} px-5 py-6`}>
+        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+          <p className={`flex items-center gap-1.5 text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="#F97316">
+              <path d="M12 2c1.5 3 .5 4.5-.5 6C10 6.5 9.5 5 10 3c-2.5 2-5 5.5-5 9a7 7 0 0 0 14 0c0-4-2.5-7-3.5-8.5.3 2-.5 3.3-1.5 4.2C13.8 6 13 4 12 2Z" />
+            </svg>
+            Current streak
+          </p>
+
+          <h2 className="mt-1 font-display text-[40px] font-light leading-[0.95] tracking-tight">
+            {currentStreak} {currentStreak === 1 ? 'day' : 'days'}
+          </h2>
+
+          <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>
+            {streakMessage(currentStreak)}
+          </p>
+        </div>
+
+        <div className={`mt-4 rounded-3xl ${t.surface} px-5 py-6`}>
 
           <div className="flex items-baseline justify-between">
             <span className="font-display text-[22px]">
@@ -3366,17 +4115,20 @@ if (screen === 'progress') {
               return (
                 <button
                   key={day}
-                  onClick={() => setSelectedProgressDate(key)}
+                  onClick={() => {
+                    setSelectedProgressDate(key)
+                    loadDayDetails(key)
+                  }}
                   className={`flex h-[34px] items-center justify-center rounded-[10px] text-[13px] ${
                     finished
                       ? `${t.btn} font-semibold`
                       : partial
-                        ? `${t.chip} font-semibold`
+                        ? `bg-slate-500/15 ${t.faint} font-semibold`
                         : isToday
                           ? `${t.chip} font-bold`
                           : future
                             ? t.faint
-                            : `bg-slate-500/15 ${t.faint}`
+                            : `bg-amber-500/20 ${t.faint}`
                   }`}
                 >
                   {day}
@@ -3391,11 +4143,11 @@ if (screen === 'progress') {
               <span className={`text-xs ${t.muted}`}>Finished</span>
             </span>
             <span className="flex items-center gap-2">
-              <span className={`h-3 w-3 rounded ${t.chip}`} />
+              <span className="h-3 w-3 rounded bg-slate-500/15" />
               <span className={`text-xs ${t.muted}`}>Part done</span>
             </span>
             <span className="flex items-center gap-2">
-              <span className="h-3 w-3 rounded bg-slate-500/15" />
+              <span className="h-3 w-3 rounded bg-amber-500/20" />
               <span className={`text-xs ${t.muted}`}>Missed</span>
             </span>
           </div>
@@ -3403,16 +4155,84 @@ if (screen === 'progress') {
         </div>
 
         {selectedProgressDate && (
-          <p className={`mt-6 text-sm leading-relaxed ${t.muted}`}>
-            {new Date(selectedProgressDate + 'T00:00:00').toLocaleDateString('en-GB', {
-              weekday: 'long', day: 'numeric', month: 'long',
-            })}
-            {completedDates.has(selectedProgressDate)
-              ? ' — routine finished.'
-              : stepDays.has(selectedProgressDate)
-                ? ' — some steps done.'
-                : ' — nothing recorded.'}
-          </p>
+          <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
+            <p className="text-[16px] font-semibold">
+              {new Date(selectedProgressDate + 'T00:00:00').toLocaleDateString('en-GB', {
+                weekday: 'long', day: 'numeric', month: 'long',
+              })}
+            </p>
+
+            <p className={`mt-0.5 text-[13px] ${t.muted}`}>
+              {dayDetailLoading
+                ? 'Loading…'
+                : completedDates.has(selectedProgressDate)
+                  ? 'Routine finished'
+                  : stepDays.has(selectedProgressDate) || (dayDetailSteps && dayDetailSteps.length > 0)
+                    ? 'Some steps done'
+                    : selectedProgressDate > todayString
+                      ? 'Upcoming'
+                      : 'Nothing recorded'}
+            </p>
+
+            {dayDetailLoading ? (
+              <p className={`mt-4 text-[13px] ${t.muted}`}>Loading…</p>
+            ) : (
+              (() => {
+                const amDoneSteps = (dayDetailSteps || []).filter((s) => s.timeOfDay === 'AM')
+                const pmDoneSteps = (dayDetailSteps || []).filter((s) => s.timeOfDay === 'PM')
+
+                const renderList = (list) => (
+                  <div className="mt-2 flex flex-col gap-2.5">
+                    {list.map((step) => (
+                      <div key={step.id} className="flex items-center gap-2.5">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="2.2"
+                          strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 ${t.mark}`}>
+                          <path d="M4 12.5l5.2 5.2L20 7" />
+                        </svg>
+                        <span className="min-w-0 flex-1 text-[14px]">
+                          {step.brand && (
+                            <span className={`block truncate text-[11px] font-medium ${t.faint}`}>
+                              {step.brand}
+                            </span>
+                          )}
+                          {step.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )
+
+                if (amDoneSteps.length === 0 && pmDoneSteps.length === 0) {
+                  return (
+                    <p className={`mt-4 text-[13px] leading-relaxed ${t.muted}`}>
+                      {selectedProgressDate > todayString
+                        ? "This day hasn't happened yet."
+                        : 'No steps were logged for this day.'}
+                    </p>
+                  )
+                }
+
+                return (
+                  <div className={`mt-4 flex flex-col gap-4 border-t pt-4 ${t.hair}`}>
+                    {amDoneSteps.length > 0 && (
+                      <div>
+                        <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Morning</p>
+                        {renderList(amDoneSteps)}
+                      </div>
+                    )}
+
+                    {pmDoneSteps.length > 0 && (
+                      <div>
+                        <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Night</p>
+                        {renderList(pmDoneSteps)}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()
+            )}
+          </div>
         )}
 
       </div>
@@ -3420,61 +4240,48 @@ if (screen === 'progress') {
   )
 }
 if (screen === 'skinTrends') {
-  const chartDays = Array.from({ length: 30 }, (_, i) => addDays(todayString, i - 29))
-  const chartPoints = chartDays.map((date) => {
-    const log = skinLogs.find((entry) => entry.local_date === date)
-    return { date, value: log ? log.breakouts : null }
-  })
+  const METRICS = [
+    ['breakouts', 'Breakouts', '#f43f5e'],
+    ['dryness', 'Dryness', '#f59e0b'],
+    ['oiliness', 'Oiliness', '#10b981'],
+    ['redness', 'Redness', '#8b5cf6'],
+  ]
 
-  const loggedValues = chartPoints.map((p) => p.value).filter((v) => v !== null)
-  const hasEnoughData = loggedValues.length >= 3
+  const chartDays = Array.from({ length: 30 }, (_, i) => addDays(todayString, i - 29))
+  const logsByDay = new Map(skinLogs.map((entry) => [entry.local_date, entry]))
+  const loggedDays = chartDays.filter((date) => logsByDay.has(date))
+  const hasEnoughData = loggedDays.length >= 3
 
   const chartW = 328
-  const chartH = 120
-  const columnW = chartW / (chartPoints.length - 1)
-  const maxValue = Math.max(4, ...loggedValues)
-  const xFor = (i) => (i / (chartPoints.length - 1)) * chartW
+  const chartH = 140
+  const columnW = chartW / (chartDays.length - 1)
+  const maxValue = Math.max(
+    4,
+    ...loggedDays.flatMap((date) => {
+      const log = logsByDay.get(date)
+      return [log.breakouts, log.dryness, log.oiliness, log.redness]
+    })
+  )
+  const xFor = (i) => (i / (chartDays.length - 1)) * chartW
   const yFor = (v) => chartH - (v / maxValue) * chartH
 
-  const segments = []
-  let current = []
-  chartPoints.forEach((p, i) => {
-    if (p.value === null) {
-      if (current.length) segments.push(current)
-      current = []
-      return
-    }
-    current.push([xFor(i), yFor(p.value)])
-  })
-  if (current.length) segments.push(current)
-
-  const introducedMarks = products
-    .filter(
-      (item) =>
-        item.opened_date &&
-        item.opened_date >= chartDays[0] &&
-        item.opened_date <= todayString
-    )
-    .map((item) => ({ x: xFor(chartDays.indexOf(item.opened_date)) }))
-
-  const lastLogged = [...chartPoints].reverse().find((p) => p.value !== null)
-
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth()
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const firstWeekday = new Date(year, month, 1).getDay()
-  const leadingBlanks = firstWeekday === 0 ? 6 : firstWeekday - 1
-
-  const severityOf = (log) =>
-    !log ? null : log.breakouts + log.dryness + log.oiliness + log.redness
-
-  const severityClass = (severity) => {
-    if (severity === null) return `border ${t.hair} ${t.faint}`
-    if (severity === 0) return `${t.chip} border-transparent`
-    if (severity <= 4) return `${t.chip} border-transparent`
-    return `border-transparent bg-rose-500/15 ${t.danger}`
+  const segmentsFor = (key) => {
+    const segments = []
+    let current = []
+    chartDays.forEach((date, i) => {
+      const log = logsByDay.get(date)
+      if (!log) {
+        if (current.length) segments.push(current)
+        current = []
+        return
+      }
+      current.push([xFor(i), yFor(log[key])])
+    })
+    if (current.length) segments.push(current)
+    return segments
   }
+
+  const lastLoggedDay = [...loggedDays].pop()
 
   const selectedLog = selectedTrendDate
     ? skinLogs.find((entry) => entry.local_date === selectedTrendDate)
@@ -3497,29 +4304,25 @@ if (screen === 'skinTrends') {
         </button>
 
         <div className="mt-5">
-          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            Skin trends
-          </p>
-
-          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            How your skin's been
+          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Skin insights
           </h1>
 
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Breakouts over the last 30 days, and which new products landed nearby.
+            Your skin journey over the last 30 days.
           </p>
         </div>
 
         <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-          <h2 className="text-[15px] font-semibold">Breakout trend</h2>
+          <h2 className="text-[15px] font-semibold">Skin condition</h2>
 
           {!hasEnoughData ? (
             <p className={`mt-3 text-[13px] leading-relaxed ${t.muted}`}>
-              Log your skin on a few more days on the Today screen to see a trend here.
+              Log your skin on a few more days on the Today screen to see a chart here.
             </p>
           ) : (
             <>
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} className="mt-4 w-full" style={{ height: 130 }}>
+              <svg viewBox={`0 0 ${chartW} ${chartH}`} className="mt-4 w-full" style={{ height: 150 }}>
                 <g className={t.hair}>
                   <line x1="0" y1={yFor(maxValue)} x2={chartW} y2={yFor(maxValue)} stroke="currentColor" strokeWidth="1" />
                   <line x1="0" y1={yFor(maxValue / 2)} x2={chartW} y2={yFor(maxValue / 2)} stroke="currentColor" strokeWidth="1" />
@@ -3529,42 +4332,28 @@ if (screen === 'skinTrends') {
                 <g className={t.faint}>
                   <text x="2" y={yFor(maxValue) - 3} fontSize="10" fontWeight="600">{maxValue}</text>
                   <text x="2" y={yFor(maxValue / 2) - 3} fontSize="10" fontWeight="600">{Math.round(maxValue / 2)}</text>
-
-                  {introducedMarks.map((mark, i) => (
-                    <line
-                      key={i}
-                      x1={mark.x} y1={chartH - 10} x2={mark.x} y2={chartH}
-                      stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                    />
-                  ))}
                 </g>
 
-                <g className={t.mark}>
-                  {segments.map((seg, i) => (
-                    <path
-                      key={i}
-                      d={'M' + seg.map(([x, y]) => `${x},${y}`).join(' L')}
-                      fill="none" stroke="currentColor" strokeWidth="2"
-                      strokeLinecap="round" strokeLinejoin="round"
-                    />
-                  ))}
+                {METRICS.map(([key, , color]) => (
+                  <g key={key}>
+                    {segmentsFor(key).map((seg, i) => (
+                      <path
+                        key={i}
+                        d={'M' + seg.map(([x, y]) => `${x},${y}`).join(' L')}
+                        fill="none" stroke={color} strokeWidth="2"
+                        strokeLinecap="round" strokeLinejoin="round"
+                      />
+                    ))}
 
-                  {lastLogged && (
-                    <circle
-                      cx={xFor(chartPoints.indexOf(lastLogged))}
-                      cy={yFor(lastLogged.value)}
-                      r="4" fill="currentColor"
-                    />
-                  )}
-
-                  {selectedLog && (
-                    <circle
-                      cx={xFor(chartDays.indexOf(selectedTrendDate))}
-                      cy={yFor(selectedLog.breakouts)}
-                      r="4" fill="currentColor" opacity="0.5"
-                    />
-                  )}
-                </g>
+                    {lastLoggedDay && (
+                      <circle
+                        cx={xFor(chartDays.indexOf(lastLoggedDay))}
+                        cy={yFor(logsByDay.get(lastLoggedDay)[key])}
+                        r="3.5" fill={color}
+                      />
+                    )}
+                  </g>
+                ))}
 
                 {chartDays.map((date, i) => (
                   <rect
@@ -3583,6 +4372,15 @@ if (screen === 'skinTrends') {
                 <span>
                   {new Date(todayString + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                 </span>
+              </div>
+
+              <div className={`mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t pt-4 ${t.hair}`}>
+                {METRICS.map(([key, label, color]) => (
+                  <span key={key} className="flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+                    <span className={`text-xs ${t.muted}`}>{label}</span>
+                  </span>
+                ))}
               </div>
             </>
           )}
@@ -3609,28 +4407,201 @@ if (screen === 'skinTrends') {
           </div>
         )}
 
-        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-          <h2 className="text-[15px] font-semibold">Products to watch</h2>
+      </div>
+    </main>
+  )
+}
+if (screen === 'progressPhotos') {
+  const toggleCompare = (id) => {
+    setComparePhotos((ids) => {
+      if (ids.includes(id)) return ids.filter((x) => x !== id)
+      if (ids.length >= 2) return [ids[1], id]
+      return [...ids, id]
+    })
+  }
 
-          <p className={`mt-1 text-[12px] leading-relaxed ${t.faint}`}>
-            Candidates to observe, not a diagnosis.
+  const comparing = [...comparePhotos]
+    .map((id) => progressPhotos.find((p) => p.id === id))
+    .filter(Boolean)
+    .sort((a, b) => a.local_date.localeCompare(b.local_date))
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('today')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Today
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Progress photos
+          </h1>
+
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Capture your skin over time and compare how far you've come.
           </p>
+        </div>
 
-          {productsToWatch.length === 0 ? (
-            <p className={`mt-3 text-[13px] ${t.muted}`}>
-              Nothing flagged right now.
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <label className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border py-8 text-[13px] font-semibold ${t.hair} ${t.muted}`}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 8a2 2 0 0 1 2-2h1.2l.8-1.6A1 1 0 0 1 8.9 4h6.2a1 1 0 0 1 .9.6L16.8 6H18a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" />
+              <circle cx="12" cy="13" r="3.5" />
+            </svg>
+            Take a photo
+            <input
+              type="file"
+              accept="image/*"
+              capture="user"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                setPendingPhoto({ file, previewUrl: URL.createObjectURL(file), date: localDateString() })
+                e.target.value = ''
+              }}
+            />
+          </label>
+
+          <label className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border py-8 text-[13px] font-semibold ${t.hair} ${t.muted}`}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M3 16l4.5-4.5a2 2 0 0 1 2.8 0L15 16M14 15l1.5-1.5a2 2 0 0 1 2.8 0L21 16" />
+              <circle cx="8" cy="9" r="1.4" />
+            </svg>
+            Choose from library
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                setPendingPhoto({ file, previewUrl: URL.createObjectURL(file), date: localDateString() })
+                e.target.value = ''
+              }}
+            />
+          </label>
+        </div>
+
+        {pendingPhoto && (
+          <div className={`mt-6 rounded-3xl ${t.surface} p-4`}>
+            <img src={pendingPhoto.previewUrl} alt="" className="aspect-square w-full rounded-xl object-cover" />
+
+            <label className={`mt-3 block text-[13px] font-semibold`}>
+              Date this photo was taken
+            </label>
+            <input
+              type="date"
+              value={pendingPhoto.date}
+              max={localDateString()}
+              onChange={(e) => setPendingPhoto((p) => ({ ...p, date: e.target.value }))}
+              className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-[14px] ${t.hair}`}
+            />
+
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={() => {
+                  URL.revokeObjectURL(pendingPhoto.previewUrl)
+                  setPendingPhoto(null)
+                }}
+                className={`flex-1 rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  await uploadProgressPhoto(pendingPhoto.file, pendingPhoto.date)
+                  URL.revokeObjectURL(pendingPhoto.previewUrl)
+                  setPendingPhoto(null)
+                }}
+                className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn}`}
+              >
+                Save photo
+              </button>
+            </div>
+          </div>
+        )}
+
+        {photoUploading && (
+          <p className={`mt-3 text-[13px] ${t.muted}`}>Uploading...</p>
+        )}
+
+        {photoError && (
+          <p className={`mt-3 text-[13px] ${t.danger}`}>{photoError}</p>
+        )}
+
+        {comparing.length === 2 && (
+          <div className={`mt-6 rounded-3xl ${t.surface} p-4`}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-[15px] font-semibold">Compare</h2>
+              <button onClick={() => setComparePhotos([])} className={`text-[13px] ${t.muted}`}>
+                Clear
+              </button>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {comparing.map((photo) => (
+                <div key={photo.id}>
+                  {photoUrls[photo.path] && (
+                    <img src={photoUrls[photo.path]} alt="" className="aspect-square w-full rounded-xl object-cover" />
+                  )}
+                  <p className={`mt-1.5 text-center text-[12px] ${t.faint}`}>
+                    {new Date(photo.local_date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[15px] font-semibold">Your journey</h2>
+            {progressPhotos.length > 0 && (
+              <p className={`text-[12px] ${t.faint}`}>Tap to compare</p>
+            )}
+          </div>
+
+          {progressPhotos.length === 0 ? (
+            <p className={`mt-3 text-[13px] leading-relaxed ${t.muted}`}>
+              No photos yet. Take your first one to start tracking your skin's journey.
             </p>
           ) : (
-            <div className={`mt-3 flex flex-col divide-y ${t.hair}`}>
-              {productsToWatch.map((item) => (
-                <div key={item.id} className="py-3 first:pt-0 last:pb-0">
-                  <p className="text-[14px] font-medium">{item.name}</p>
-                  <p className={`mt-0.5 text-[12px] leading-relaxed ${t.muted}`}>
-                    Introduced{' '}
-                    {new Date(item.openedDate + 'T00:00:00').toLocaleDateString('en-GB', {
-                      day: 'numeric', month: 'short',
-                    })}{' '}
-                    — breakouts went from {item.beforeAvg.toFixed(1)} to {item.afterAvg.toFixed(1)} a day on average.
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {progressPhotos.map((photo) => (
+                <div key={photo.id}>
+                  <div className={`relative aspect-square overflow-hidden rounded-xl ${t.chip}`}>
+                    <button onClick={() => setViewingPhoto(photo)} className="h-full w-full">
+                      {photoUrls[photo.path] && (
+                        <img src={photoUrls[photo.path]} alt="" className="h-full w-full object-cover" />
+                      )}
+                    </button>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleCompare(photo.id)
+                      }}
+                      className={`absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ${
+                        comparePhotos.includes(photo.id) ? t.nodeDone : 'bg-black/30 text-white'
+                      }`}
+                    >
+                      {comparePhotos.includes(photo.id) ? comparePhotos.indexOf(photo.id) + 1 : ''}
+                    </button>
+                  </div>
+
+                  <p className={`mt-1 text-center text-[11px] ${t.faint}`}>
+                    {new Date(photo.local_date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                   </p>
                 </div>
               ))}
@@ -3638,84 +4609,69 @@ if (screen === 'skinTrends') {
           )}
         </div>
 
-        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-          <div className="flex items-baseline justify-between">
-            <span className="font-display text-[22px]">
-              {now.toLocaleDateString('en-GB', { month: 'long' })}
-            </span>
-            <span className={`text-[13px] ${t.faint}`}>skin condition</span>
+        {viewingPhoto && (
+          <div className="fixed inset-0 z-20 flex flex-col overflow-y-auto bg-black/90 px-6 py-8">
+            <button
+              onClick={() => setViewingPhoto(null)}
+              className="self-end text-[15px] font-semibold text-white"
+            >
+              Close
+            </button>
+
+            {photoUrls[viewingPhoto.path] && (
+              <img src={photoUrls[viewingPhoto.path]} alt="" className="mt-4 max-h-[60vh] w-full rounded-2xl object-contain" />
+            )}
+
+            <p className="mt-4 text-center text-[14px] text-white/80">
+              {new Date(viewingPhoto.local_date + 'T00:00:00').toLocaleDateString('en-GB', {
+                weekday: 'long', day: 'numeric', month: 'long',
+              })}
+            </p>
+
+            <textarea
+              key={viewingPhoto.id}
+              defaultValue={viewingPhoto.note || ''}
+              onBlur={(e) => saveProgressPhotoNote(viewingPhoto, e.target.value)}
+              placeholder="Add a note about your skin..."
+              rows={2}
+              className="mt-4 w-full rounded-xl border border-white/20 bg-white/10 p-3 text-[13px] text-white placeholder-white/50"
+            />
+
+            <button
+              onClick={() => deleteProgressPhoto(viewingPhoto)}
+              className="mt-6 text-[14px] font-semibold text-rose-400"
+            >
+              Delete photo
+            </button>
           </div>
-
-          <div className="mt-5 grid grid-cols-7 gap-[7px] text-center">
-            {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((letter, i) => (
-              <span key={i} className={`pb-1 text-[11px] font-semibold ${t.faint}`}>
-                {letter}
-              </span>
-            ))}
-
-            {Array.from({ length: leadingBlanks }, (_, i) => <span key={`b${i}`} />)}
-
-            {Array.from({ length: daysInMonth }, (_, i) => {
-              const day = i + 1
-              const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-              const log = skinLogs.find((entry) => entry.local_date === key)
-              const severity = severityOf(log)
-
-              return (
-                <button
-                  key={day}
-                  onClick={() => setSelectedTrendDate(key)}
-                  className={`flex h-[34px] items-center justify-center rounded-[10px] text-[13px] font-semibold ${severityClass(severity)}`}
-                >
-                  {day}
-                </button>
-              )
-            })}
-          </div>
-
-          <div className={`mt-5 flex gap-4 border-t pt-4 ${t.hair}`}>
-            <span className="flex items-center gap-2">
-              <span className={`h-3 w-3 rounded ${t.chip}`} />
-              <span className={`text-xs ${t.muted}`}>Mild</span>
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="h-3 w-3 rounded bg-rose-500/15" />
-              <span className={`text-xs ${t.muted}`}>Flared up</span>
-            </span>
-          </div>
-        </div>
+        )}
 
       </div>
     </main>
   )
 }
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+    <main className="min-h-screen bg-white text-[#101B2D]">
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-7 text-center">
 
-        <div className="mb-10">
-          <p className={`text-[15px] font-semibold tracking-wide ${t.mark}`}>
-            Tracka
-          </p>
+        <div className="mb-5">
+          <img src="/logo-wordmark.jpg" alt="Tracka+" className="mx-auto w-full max-w-[260px]" />
 
-          <h1 className="mt-2 font-display text-[54px] font-light leading-[0.95] tracking-tight">
-            Your skincare,
-            <br />
-            on schedule.
-          </h1>
-
-          <p className={`mt-4 max-w-[300px] text-[15px] leading-relaxed ${t.muted}`}>
-            Build your routine, stay consistent, and track your progress —
-            morning and night.
+          <p className="mt-2 text-[15px] leading-relaxed text-[#51637E]">
+            Your daily skincare routine tracker.
           </p>
         </div>
 
         <button
           onClick={() => setScreen('auth')}
-          className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+          className="w-full rounded-2xl bg-[#2554EB] py-[18px] text-base font-bold text-white"
         >
           Get started
         </button>
+
+        <p className="mt-6 whitespace-nowrap text-[11px] text-[#7488A3]">
+          Build your routine. Stay consistent. Track your progress.
+        </p>
 
       </div>
     </main>

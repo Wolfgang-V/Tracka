@@ -53,7 +53,10 @@ const matches = (text, word) =>
     : text.includes(word)
 
 export function detectActive(product = {}) {
-  const text = [product.name, product.brand, product.category]
+  // ingredients (when we have them) go first — an INCI list naming
+  // "Retinol" or "Salicylic Acid" is more reliable than a product name
+  // that doesn't mention its actives at all.
+  const text = [product.ingredients, product.name, product.brand, product.category]
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
@@ -72,15 +75,16 @@ export function detectActive(product = {}) {
 export const SLOT_ORDER = {
   cleanser: 1,
   toner: 2,
-  exfoliant: 3,
-  serum: 4,
-  treatment: 5,
-  mask: 6,
-  moisturizer: 7,
-  oil: 8,
-  other: 8,
-  sunscreen: 9,
+  essence: 3,
+  exfoliant: 4,
+  serum: 5,
+  treatment: 6,
+  mask: 7,
+  moisturizer: 8,
+  oil: 9,
+  other: 9,
+  sunscreen: 10,
 }
 
 export const slotRank = (category) =>
-  SLOT_ORDER[String(category || 'other').toLowerCase()] ?? 8
+  SLOT_ORDER[String(category || 'other').toLowerCase()] ?? 9

@@ -2,7 +2,7 @@ self.addEventListener('install', () => self.skipWaiting())
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()))
 
 self.addEventListener('push', (event) => {
-  let payload = { title: 'Tracka', body: 'Time for your routine', url: '/' }
+  let payload = { title: 'Tracka+', body: 'Time for your routine', url: '/' }
 
   try {
     if (event.data) payload = { ...payload, ...event.data.json() }

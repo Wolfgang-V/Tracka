@@ -1,107 +1,161 @@
-// Cron target. Invoked every 5 minutes (see supabase/migrations for the
-// pg_cron schedule). Finds every user whose morning/night reminder time
-// falls in the current 5-minute window, in their own timezone, and sends
-// them a web push notification.
-import { createClient } from 'npm:@supabase/supabase-js@2'
-import webpush from 'npm:web-push@3'
+// Runs every few minutes. Finds whoever is due a reminder in their own
+// timezone, works out what their routine actually is, and sends it.
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
-const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY')!
-const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY')!
-const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:support@tracka.app'
+import webpush from 'npm:web-push@3.6.7'
+import { createClient } from 'npm:@supabase/supabase-js@2.45.0'
+import { planNight } from './planNight.js'
 
-webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
+const supabase = createClient(
+  Deno.env.get('SUPABASE_URL')!,
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+)
 
-const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
+const vapidPublic = Deno.env.get('VAPID_PUBLIC_KEY') ?? ''
+const vapidPrivate = Deno.env.get('VAPID_PRIVATE_KEY') ?? ''
+const vapidSubject = Deno.env.get('VAPID_SUBJECT') ?? ''
 
-// Compares a 'HH:MM' reminder time against "now" in the given IANA
-// timezone. Due if within 5 minutes, matching the cron interval so no
-// user is skipped between runs.
-function isDue(nowUtc: Date, timeOfDay: string | null, timezone: string) {
-  if (!timeOfDay) return false
-
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: timezone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(nowUtc)
-
-  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0')
-  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0')
-
-  const [targetH, targetM] = timeOfDay.slice(0, 5).split(':').map(Number)
-
-  const nowMinutes = hour * 60 + minute
-  const targetMinutes = targetH * 60 + targetM
-
-  return Math.abs(nowMinutes - targetMinutes) < 5
+let vapidError: string | null = null
+try {
+  webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate)
+} catch (err: any) {
+  vapidError = err?.message ?? String(err)
 }
 
-Deno.serve(async () => {
-  const now = new Date()
+const listWords = (names: string[]) =>
+  names.length <= 1
+    ? names.join('')
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 
-  const { data: settings, error: settingsError } = await supabase
-    .from('reminder_settings')
-    .select('user_id, morning_enabled, morning_time, night_enabled, night_time, timezone')
+async function buildNightMessage(userId: string, today: string) {
+  const { data: routines } = await supabase
+    .from('routines').select('id')
+    .eq('user_id', userId).eq('is_active', true).eq('time_of_day', 'PM')
 
-  if (settingsError) {
-    console.error('SETTINGS ERROR:', settingsError)
-    return new Response(JSON.stringify({ error: settingsError.message }), { status: 500 })
+  const routineId = routines?.[0]?.id
+  if (!routineId) return null
+
+  const { data: steps } = await supabase
+    .from('routine_steps')
+    .select('id, step_order, step_name, frequency, user_products(products(name, brand, category, ingredients))')
+    .eq('routine_id', routineId).eq('is_active', true).order('step_order')
+
+  if (!steps?.length) return null
+
+  const { data: history } = await supabase
+    .from('routine_step_completions')
+    .select('routine_step_id, local_date')
+    .eq('user_id', userId).lt('local_date', today)
+
+  const plan = planNight({
+    today,
+    steps: steps.map((step: any) => ({
+      id: step.id,
+      name: step.user_products?.products?.name || step.step_name,
+      brand: step.user_products?.products?.brand,
+      category: step.user_products?.products?.category,
+      ingredients: step.user_products?.products?.ingredients,
+      frequency: step.frequency,
+      step_order: step.step_order,
+    })),
+    history: history ?? [],
+  })
+
+  const names = plan.steps.map((s: any) => s.name)
+  const hasActive = plan.steps.some((s: any) => s.active && s.active !== 'none')
+  if (!names.length) return null
+
+  return hasActive
+    ? `Tonight: ${listWords(names)}.`
+    : `Rest night — ${listWords(names)}. Nothing strong.`
+}
+
+async function buildMorningMessage(userId: string) {
+  const { data: routines } = await supabase
+    .from('routines').select('id')
+    .eq('user_id', userId).eq('is_active', true).eq('time_of_day', 'AM')
+
+  const routineId = routines?.[0]?.id
+  if (!routineId) return null
+
+  const { data: steps } = await supabase
+    .from('routine_steps')
+    .select('step_name, user_products(products(name))')
+    .eq('routine_id', routineId).eq('is_active', true).order('step_order')
+
+  if (!steps?.length) return null
+
+  const names = steps.map((step: any) => step.user_products?.products?.name || step.step_name)
+  return `This morning: ${listWords(names)}.`
+}
+
+Deno.serve(async (req) => {
+  const dryRun = new URL(req.url).searchParams.get('dry') === '1'
+
+  const diag: any = {
+    vapidError,
+    vapidPublicHead: vapidPublic.slice(0, 12),
+    vapidPublicLength: vapidPublic.length,
   }
 
-  const due = (settings ?? [])
-    .map((row) => {
-      const timezone = row.timezone || 'UTC'
-      const morningDue = row.morning_enabled && isDue(now, row.morning_time, timezone)
-      const nightDue = row.night_enabled && isDue(now, row.night_time, timezone)
-      return { ...row, morningDue, nightDue }
+  const { data: due, error } = await supabase.rpc('due_reminders', { window_minutes: 6 })
+
+  if (error) {
+    return new Response(JSON.stringify({ error: error.message, diag }), {
+      status: 500, headers: { 'Content-Type': 'application/json' },
     })
-    .filter((row) => row.morningDue || row.nightDue)
-
-  if (due.length === 0) {
-    return new Response(JSON.stringify({ checked: settings?.length ?? 0, sent: 0 }), { status: 200 })
   }
 
-  const { data: subscriptions, error: subError } = await supabase
-    .from('push_subscriptions')
-    .select('user_id, subscription')
-    .in('user_id', due.map((row) => row.user_id))
+  diag.dueCount = due?.length ?? 0
 
-  if (subError) {
-    console.error('SUBSCRIPTIONS ERROR:', subError)
-    return new Response(JSON.stringify({ error: subError.message }), { status: 500 })
-  }
+  let sent = 0, skipped = 0, failed = 0
+  const errors: any[] = []
 
-  let sent = 0
+  for (const row of due ?? []) {
+    const name = row.username ? `, ${row.username}` : ''
+    const body = row.slot === 'night'
+      ? await buildNightMessage(row.user_id, row.local_date)
+      : await buildMorningMessage(row.user_id)
 
-  for (const sub of subscriptions ?? []) {
-    const row = due.find((r) => r.user_id === sub.user_id)
-    if (!row) continue
+    if (!body) {
+      skipped++
+      errors.push({ user: row.user_id, reason: 'no routine steps' })
+      continue
+    }
 
-    const payload = JSON.stringify({
-      title: 'Tracka',
-      body: row.morningDue ? 'Time for your morning routine.' : 'Time for your night routine.',
+    const payload = {
+      title: row.slot === 'night' ? `Good evening${name}` : `Good morning${name}`,
+      body,
       url: '/',
-      tag: row.morningDue ? 'morning' : 'night',
-    })
+      tag: `routine-${row.slot}`,
+    }
+
+    if (dryRun) {
+      skipped++
+      errors.push({ user: row.user_id, dryRun: payload })
+      continue
+    }
 
     try {
-      await webpush.sendNotification(sub.subscription, payload)
-      sent += 1
-    } catch (err) {
-      console.error('SEND ERROR for', sub.user_id, err)
-
-      // Browser dropped the subscription (uninstalled, cleared data, etc).
-      const statusCode = (err as { statusCode?: number }).statusCode
-      if (statusCode === 404 || statusCode === 410) {
-        await supabase.from('push_subscriptions').delete().eq('user_id', sub.user_id)
+      await webpush.sendNotification(row.subscription, JSON.stringify(payload))
+      await supabase.from('reminder_log').insert({
+        user_id: row.user_id, slot: row.slot, local_date: row.local_date,
+      })
+      sent++
+    } catch (err: any) {
+      failed++
+      errors.push({
+        user: row.user_id,
+        statusCode: err?.statusCode ?? null,
+        message: err?.message ?? String(err),
+        responseBody: typeof err?.body === 'string' ? err.body.slice(0, 300) : null,
+      })
+      if (err?.statusCode === 404 || err?.statusCode === 410) {
+        await supabase.from('push_subscriptions').delete().eq('user_id', row.user_id)
       }
     }
   }
 
-  return new Response(JSON.stringify({ checked: settings?.length ?? 0, due: due.length, sent }), {
-    status: 200,
+  return new Response(JSON.stringify({ sent, skipped, failed, errors, diag }), {
+    headers: { 'Content-Type': 'application/json' },
   })
 })
