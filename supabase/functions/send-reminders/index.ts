@@ -84,8 +84,7 @@ async function buildMorningMessage(userId: string) {
 
   if (!steps?.length) return null
 
-  const names = steps.map((step: any) => step.user_products?.products?.name || step.step_name)
-  return `This morning: ${listWords(names)}.`
+  return "Let's kickstart your day with your morning skincare routine!"
 }
 
 Deno.serve(async (req) => {

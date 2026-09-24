@@ -347,15 +347,21 @@ setRoutineHistory(groupedRoutines)
     const checkUser = async (user) => {
       try {
         setUser(user)
-        if (!window.location.search.includes('recovery=true')) {
-          setScreen('today')
-        }
 
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('username')
-          .eq('id', user.id)
-          .maybeSingle()
+        const isRecovery = window.location.search.includes('recovery=true')
+
+        const [{ data: profile, error }, { data: existingSkinProfile }] = await Promise.all([
+          supabase.from('profiles').select('username').eq('id', user.id).maybeSingle(),
+          // New users land on the skin profile step until they've filled
+          // it in at least once; after that, straight to Today.
+          isRecovery
+            ? Promise.resolve({ data: null })
+            : supabase.from('skin_profiles').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
+        ])
+
+        if (!isRecovery) {
+          setScreen(existingSkinProfile ? 'today' : 'skinProfile')
+        }
 
         if (error) {
           console.error('Profile error:', error)
@@ -2690,7 +2696,16 @@ if (screen === 'login') {
                 setDisplayName(profile.username)
               }
 
-              setScreen('today')
+              // New users land on the skin profile step until they've
+              // filled it in at least once; after that, straight to Today.
+              const { data: existingSkinProfile } = await supabase
+                .from('skin_profiles')
+                .select('id')
+                .eq('user_id', data.user.id)
+                .limit(1)
+                .maybeSingle()
+
+              setScreen(existingSkinProfile ? 'today' : 'skinProfile')
             }}
             className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
           >
