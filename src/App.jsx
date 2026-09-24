@@ -3969,87 +3969,47 @@ if (missingTime) {
   return
 }
 
-    const currentUser = user
-
-if (!currentUser) {
-  notify('Please log in first.')
-  return
-}
+    if (!user) {
+      notify('Please log in first.')
+      return
+    }
 
     setRoutineSaving(true)
 
-       const { error: deactivateError } = await supabase
-      .from('routines')
-      .update({ is_active: false })
-      .eq('user_id', currentUser.id)
+    const routineCode = `TRK-${Date.now().toString().slice(-6)}`
 
-   if (deactivateError) {
-  notify('Routine update failed: ' + deactivateError.message)
-  setRoutineSaving(false)
-  return
-}
+    const buildSteps = (time) =>
+      products
+        .filter((item) => {
+          const selectedTime = productTimes[item.id]
+          return selectedTime === time || selectedTime === 'BOTH'
+        })
+        .map((item, index) => ({
+          user_product_id: item.id,
+          step_order: index + 1,
+          step_name: item.products?.name || 'Skincare product',
+          frequency: productFrequencies[item.id] || 'daily',
+        }))
 
-   const routineCode =
-  `TRK-${Date.now().toString().slice(-6)}`
-
-const routineTimes = ['AM', 'PM']
-
-for (const time of routineTimes) {
-  const productsForTime = products.filter((item) => {
-    const selectedTime = productTimes[item.id]
-
-    return (
-      selectedTime === time ||
-      selectedTime === 'BOTH'
-    )
-  })
-
-  if (productsForTime.length === 0) continue
-
-  const { data: routine, error: routineError } =
-    await supabase
-      .from('routines')
-      .insert({
-        user_id: currentUser.id,
-        name: `${time} Routine`,
-        time_of_day: time,
-        routine_code: routineCode,
-        is_active: true,
-      })
-      .select()
-      .single()
-
-  if (routineError) {
-    notify('Routine creation failed: ' + routineError.message)
-    setRoutineSaving(false)
-    return
-  }
-
-  const routineSteps = productsForTime.map(
-    (item, index) => ({
-      routine_id: routine.id,
-      user_product_id: item.id,
-      step_order: index + 1,
-      step_name: item.products?.name || 'Skincare product',
-      frequency: productFrequencies[item.id] || 'daily',
-      is_active: true,
+    // One DB function doing deactivate-old + insert-new in a single
+    // transaction, instead of two separate requests from the client — a
+    // dropped connection between them used to leave someone with no
+    // active routine at all despite their products still being there.
+    const { error } = await supabase.rpc('create_routine', {
+      p_routine_code: routineCode,
+      p_am_steps: buildSteps('AM'),
+      p_pm_steps: buildSteps('PM'),
     })
-  )
 
-  const { error: stepsError } =
-    await supabase
-      .from('routine_steps')
-      .insert(routineSteps)
-
-  if (stepsError) {
-    notify('Routine steps failed: ' + stepsError.message)
     setRoutineSaving(false)
-    return
-  }
-}
-setRoutineSaving(false)
-setScreen('today')
-loadRoutines()
+
+    if (error) {
+      notify('Could not save your routine: ' + error.message)
+      return
+    }
+
+    setScreen('today')
+    loadRoutines()
   }}
   className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
 >
