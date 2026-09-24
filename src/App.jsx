@@ -2984,7 +2984,7 @@ if (screen === 'settings') {
           <div className="pr-4">
             <p className="text-[15px] font-semibold">Dark mode</p>
             <p className={`mt-0.5 text-[13px] ${t.muted}`}>
-              Tracka+ stays light by default. Turn this on if you prefer dark.
+              Switch to dark mode
             </p>
           </div>
 
