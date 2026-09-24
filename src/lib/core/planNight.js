@@ -4,13 +4,12 @@
 
 import { ACTIVES, activeLabel, detectActive, slotRank } from './actives.js'
 
-export const FREQUENCIES = {
-  daily: { label: 'Every night', nights: 1 },
-  alternate: { label: 'Every other night', nights: 2 },
-  every3: { label: 'Every 3 nights', nights: 3 },
-  twice_week: { label: 'Twice a week', nights: 3 },
-  once_week: { label: 'Once a week', nights: 7 },
-}
+// 0=Sunday..6=Saturday, matching JS Date.getDay() — lets the engine compare
+// today's weekday against a step's days_of_week directly, no lookup table.
+export const DAY_NAMES = [
+  'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+]
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]
 
 // sameNight: don't put these two in the same routine.
 // nextNight: don't use this the night after one of these.
@@ -62,9 +61,9 @@ export function addMonths(dateString, amount) {
   return dt.toISOString().slice(0, 10)
 }
 
-export function daysBetween(from, to) {
-  const ms = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)
-  return Math.round(ms / 86400000)
+export function dayOfWeek(dateString) {
+  const [y, m, d] = dateString.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay()
 }
 
 // A routine logged at 1am belongs to the night before, so the day
@@ -80,11 +79,24 @@ export function localDateString(date = new Date(), cutoffHour = 4) {
   )
 }
 
+// When a step isn't due today, says which day it next is — "tomorrow" or
+// a day name, whichever reads more naturally.
+function nextDueLabel(daysOfWeek, todayDow) {
+  if (!daysOfWeek.length) return null
+  for (let offset = 1; offset <= 7; offset++) {
+    const d = (todayDow + offset) % 7
+    if (daysOfWeek.includes(d)) {
+      return offset === 1 ? 'tomorrow' : `on ${DAY_NAMES[d]}`
+    }
+  }
+  return null
+}
+
 // --- the engine ---
 
 /**
  * @param today        'YYYY-MM-DD'
- * @param steps        [{ id, name, brand, category, frequency, step_order, active?, opened_date?, pao_months? }]
+ * @param steps        [{ id, name, brand, category, daysOfWeek, step_order, active?, opened_date?, pao_months? }]
  * @param history      [{ routine_step_id, local_date }]  past completions
  * @param restrictions { pregnancy?: boolean }  clinical restrictions, not
  *   scheduling preferences — checked before due-ness so they apply even
@@ -92,15 +104,7 @@ export function localDateString(date = new Date(), cutoffHour = 4) {
  */
 export function planNight({ today, steps = [], history = [], restrictions = {} }) {
   const byId = new Map(steps.map((s) => [s.id, s]))
-
-  // most recent completion per step
-  const lastUsed = new Map()
-  for (const entry of history) {
-    const seen = lastUsed.get(entry.routine_step_id)
-    if (!seen || entry.local_date > seen) {
-      lastUsed.set(entry.routine_step_id, entry.local_date)
-    }
-  }
+  const todayDow = dayOfWeek(today)
 
   const yesterday = addDays(today, -1)
   const usedLastNight = new Set(
@@ -114,9 +118,8 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
 
   const enriched = steps.map((step) => {
     const active = step.active ?? detectActive(step)
-    const freq = FREQUENCIES[step.frequency] ?? FREQUENCIES.daily
-    const last = lastUsed.get(step.id) ?? null
-    const nightsSince = last ? daysBetween(last, today) : Infinity
+    const daysOfWeek =
+      step.daysOfWeek && step.daysOfWeek.length > 0 ? step.daysOfWeek : ALL_DAYS
 
     const expiresOn =
       step.opened_date && step.pao_months
@@ -127,28 +130,16 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
     return {
       ...step,
       active,
-      frequency: step.frequency ?? 'daily',
-      lastUsed: last,
-      nightsSince,
-      overdue: nightsSince - freq.nights,
-      _intervalNights: freq.nights,
+      daysOfWeek,
+      dueToday: daysOfWeek.includes(todayDow),
       expiresOn,
       expired,
     }
   })
 
-  // Plain everyday products are never in question — they always go in.
-  const base = enriched.filter(
-    (s) => s._intervalNights === 1 && s.active === ACTIVES.NONE
-  )
-
-  // Everything else competes for tonight: most overdue first.
   const candidates = enriched
-    .filter((s) => !(s._intervalNights === 1 && s.active === ACTIVES.NONE))
-    .sort(
-      (a, b) =>
-        b.overdue - a.overdue || (a.step_order ?? 0) - (b.step_order ?? 0)
-    )
+    .filter((s) => s.dueToday)
+    .sort((a, b) => (a.step_order ?? 0) - (b.step_order ?? 0))
 
   const chosen = []
   const skipped = []
@@ -160,17 +151,6 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
       skipped.push({ step, reason: 'restricted' })
       if (!notes.includes(PREGNANCY_NOTE)) notes.push(PREGNANCY_NOTE)
       restrictionApplied = true
-      continue
-    }
-
-    if (step.overdue < 0) {
-      const waitNights = -step.overdue
-      skipped.push({ step, reason: 'not_due' })
-      if (step.active !== ACTIVES.NONE) {
-        notes.push(
-          `${step.name} isn't due yet — next in ${waitNights} night${waitNights === 1 ? '' : 's'}.`
-        )
-      }
       continue
     }
 
@@ -199,7 +179,16 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
     chosen.push(step)
   }
 
-  const plan = [...base, ...chosen].sort(
+  for (const step of enriched) {
+    if (step.dueToday) continue
+    skipped.push({ step, reason: 'not_due' })
+    if (step.active !== ACTIVES.NONE) {
+      const next = nextDueLabel(step.daysOfWeek, todayDow)
+      notes.push(`${step.name} isn't scheduled for today${next ? ` — next ${next}.` : '.'}`)
+    }
+  }
+
+  const plan = chosen.sort(
     (a, b) =>
       slotRank(a.category) - slotRank(b.category) ||
       (a.step_order ?? 0) - (b.step_order ?? 0)

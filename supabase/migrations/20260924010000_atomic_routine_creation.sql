@@ -10,6 +10,11 @@
 -- security invoker (the default) — it runs as the calling user, so the
 -- existing RLS policies on routines/routine_steps still apply exactly as
 -- they do today; this isn't a privilege escalation, just fewer round trips.
+--
+-- Updated to write days_of_week instead of frequency, matching the
+-- weekday-picker replacing the frequency dropdown in Build my routine.
+-- create or replace is idempotent either way, whether or not the original
+-- version of this function was applied yet.
 create or replace function create_routine(
   p_routine_code text,
   p_am_steps jsonb,
@@ -41,13 +46,16 @@ begin
     values (v_user_id, 'AM Routine', 'AM', p_routine_code, true)
     returning id into v_routine_id;
 
-    insert into routine_steps (routine_id, user_product_id, step_order, step_name, frequency, is_active)
+    insert into routine_steps (routine_id, user_product_id, step_order, step_name, days_of_week, is_active)
     select
       v_routine_id,
       (elem->>'user_product_id')::uuid,
       (elem->>'step_order')::int,
       elem->>'step_name',
-      elem->>'frequency',
+      coalesce(
+        (select array_agg(x::smallint) from jsonb_array_elements_text(elem->'days_of_week') as x),
+        '{0,1,2,3,4,5,6}'
+      ),
       true
     from jsonb_array_elements(p_am_steps) as elem;
   end if;
@@ -57,13 +65,16 @@ begin
     values (v_user_id, 'PM Routine', 'PM', p_routine_code, true)
     returning id into v_routine_id;
 
-    insert into routine_steps (routine_id, user_product_id, step_order, step_name, frequency, is_active)
+    insert into routine_steps (routine_id, user_product_id, step_order, step_name, days_of_week, is_active)
     select
       v_routine_id,
       (elem->>'user_product_id')::uuid,
       (elem->>'step_order')::int,
       elem->>'step_name',
-      elem->>'frequency',
+      coalesce(
+        (select array_agg(x::smallint) from jsonb_array_elements_text(elem->'days_of_week') as x),
+        '{0,1,2,3,4,5,6}'
+      ),
       true
     from jsonb_array_elements(p_pm_steps) as elem;
   end if;

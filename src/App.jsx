@@ -9,6 +9,11 @@ import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredi
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
 
+// Fixed rather than window.location.origin — the old vercel.app URL still
+// resolves alongside the custom domain, so a signup or password reset
+// started from there would otherwise bake that domain into the email link.
+const SITE_URL = 'https://www.trackaplus.app'
+
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
@@ -115,6 +120,16 @@ function App() {
   const [confirmState, setConfirmState] = useState(null)
   const confirmAction = (message) =>
     new Promise((resolve) => setConfirmState({ message, resolve }))
+
+  // Keeps the page from scrolling behind the confirm dialog while it's open.
+  useEffect(() => {
+    if (!confirmState) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previous
+    }
+  }, [confirmState])
   // Defaults to light for everyone; dark mode is opt-in and remembered
   // per device, not switched automatically by time of day.
   const [themeMode, setThemeMode] = useState(() => {
@@ -164,7 +179,8 @@ function App() {
   const [productPaoMonths, setProductPaoMonths] = useState(0)
   const [productSaving, setProductSaving] = useState(false)
   const [products, setProducts] = useState([])
-  const [productFrequencies, setProductFrequencies] = useState({})
+  // Per product, which weekdays (0=Sun..6=Sat) it's used on.
+  const [productDays, setProductDays] = useState({})
   const [productTimes, setProductTimes] = useState({})
 
   const [todayAmRoutine, setTodayAmRoutine] = useState(null)
@@ -733,12 +749,35 @@ const finishRoutine = async (slot) => {
     return
   }
 
+  // One nested-select round trip (routines -> routine_steps -> user_products
+  // -> products) instead of three sequential ones, each waiting on the ids
+  // from the last. Same embedding pattern already used in loadDayDetails,
+  // just rooted one level higher.
   const { data: routines, error: routinesError } = await supabase
     .from('routines')
-    .select('*')
+    .select(`
+      *,
+      routine_steps (
+        id,
+        routine_id,
+        user_product_id,
+        step_order,
+        step_name,
+        days_of_week,
+        is_active,
+        user_products (
+          id,
+          opened_date,
+          pao_months,
+          products ( brand, name, category, ingredients )
+        )
+      )
+    `)
     .eq('user_id', user.id)
     .eq('is_active', true)
+    .eq('routine_steps.is_active', true)
     .order('created_at', { ascending: false })
+    .order('step_order', { foreignTable: 'routine_steps', ascending: true })
 
   if (routinesError) {
     console.error('ROUTINES ERROR:', routinesError)
@@ -759,92 +798,8 @@ const finishRoutine = async (slot) => {
 
   setTodayAmRoutine(amRoutine || null)
   setTodayPmRoutine(pmRoutine || null)
-
-  const routineIds = [
-    amRoutine?.id,
-    pmRoutine?.id,
-  ].filter(Boolean)
-
-  if (routineIds.length === 0) {
-  setTodayAmSteps([])
-  setTodayPmSteps([])
-  setRoutinesLoading(false)
-  return
-}
-
-  const { data: steps, error: stepsError } = await supabase
-    .from('routine_steps')
-    .select(`
-      id,
-      routine_id,
-      user_product_id,
-      step_order,
-      step_name,
-      frequency,
-      is_active
-    `)
-    .in('routine_id', routineIds)
-    .eq('is_active', true)
-    .order('step_order', { ascending: true })
-
-if (stepsError) {
-  console.error('STEPS ERROR:', stepsError)
-  setRoutinesLoading(false)
-  return
-}  const userProductIds = [
-    ...new Set(
-      (steps || []).map((step) => step.user_product_id)
-    ),
-  ]
-
-  let userProducts = []
-
-  if (userProductIds.length > 0) {
-    const { data, error: productsError } = await supabase
-      .from('user_products')
-      .select(`
-        id,
-        opened_date,
-        pao_months,
-        products (
-          brand,
-          name,
-          category,
-          ingredients
-        )
-      `)
-      .in('id', userProductIds)
-
-    if (productsError) {
-      console.error('PRODUCTS ERROR:', productsError)
-    } else {
-      userProducts = data || []
-    }
-  }
-
-  const productMap = {}
-
-  userProducts.forEach((item) => {
-    productMap[item.id] = item
-  })
-
-  const stepsWithProducts = (steps || []).map((step) => ({
-    ...step,
-    user_products:
-      productMap[step.user_product_id] || null,
-  }))
-
-  setTodayAmSteps(
-    stepsWithProducts.filter(
-      (step) => step.routine_id === amRoutine?.id
-    )
-  )
-
-   setTodayPmSteps(
-    stepsWithProducts.filter(
-      (step) => step.routine_id === pmRoutine?.id
-    )
-  )
+  setTodayAmSteps(amRoutine?.routine_steps || [])
+  setTodayPmSteps(pmRoutine?.routine_steps || [])
 
   setRoutinesLoading(false)
 }
@@ -907,7 +862,7 @@ const nightPlan = planNight({
     brand: step.user_products?.products?.brand,
     category: step.user_products?.products?.category,
     ingredients: step.user_products?.products?.ingredients,
-    frequency: step.frequency,
+    daysOfWeek: step.days_of_week,
     step_order: step.step_order,
     opened_date: step.user_products?.opened_date ?? null,
     pao_months: step.user_products?.pao_months ?? null,
@@ -1148,18 +1103,20 @@ useEffect(() => {
   const defaults = {}
 
   products.forEach((item) => {
-    if (productFrequencies[item.id]) return
+    if (productDays[item.id]) return
 
     const active = detectActive(item.products)
 
+    // Sensible starting points, same shape as the old frequency defaults —
+    // still editable per product from there.
     defaults[item.id] =
-      active === 'retinoid' ? 'every3'
-      : active === 'aha' || active === 'bha' ? 'twice_week'
-      : 'daily'
+      active === 'retinoid' ? [1, 3, 5] // Mon/Wed/Fri
+      : active === 'aha' || active === 'bha' ? [1, 4] // Mon/Thu
+      : [0, 1, 2, 3, 4, 5, 6] // every day
   })
 
   if (Object.keys(defaults).length > 0) {
-    setProductFrequencies((current) => ({ ...current, ...defaults }))
+    setProductDays((current) => ({ ...current, ...defaults }))
   }
 }, [products])
 
@@ -1457,7 +1414,7 @@ if (screen === 'auth') {
                   data: {
                     username,
                   },
-                  emailRedirectTo: `${window.location.origin}/?confirmed=true`,
+                  emailRedirectTo: `${SITE_URL}/?confirmed=true`,
                 },
               })
 
@@ -1480,11 +1437,7 @@ if (screen === 'auth') {
                 return
               }
 
-              notify(
-                'Account created! Please check your email to confirm your account, then log in to continue your setup.'
-              )
-
-              setScreen('login')
+              setScreen('checkEmail')
             }}
             className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
           >
@@ -2525,6 +2478,41 @@ const saveReminderSettings = async () => {
     )
   }
 
+if (screen === 'checkEmail') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-7 text-center">
+
+        <span className={`flex h-14 w-14 items-center justify-center rounded-full text-2xl ${t.chip}`}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="M3 7l9 6 9-6" />
+          </svg>
+        </span>
+
+        <h1 className="mt-6 font-display text-[40px] font-light leading-[1.05] tracking-tight">
+          Check your email
+        </h1>
+
+        <p className={`mt-3 max-w-[300px] text-[15px] leading-relaxed ${t.muted}`}>
+          We sent a confirmation link to <span className="font-semibold">{loginEmail}</span>. Tap it to
+          activate your account, then come back here and log in to finish setting up.
+        </p>
+
+        <button
+          onClick={() => setScreen('login')}
+          className={`mt-8 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+        >
+          Go to login
+        </button>
+
+      </div>
+    </main>
+  )
+}
+
 if (screen === 'login') {
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -2785,7 +2773,7 @@ if (screen === 'forgotPassword') {
               }
 
               const { error } = await supabase.auth.resetPasswordForEmail(loginEmail, {
-                redirectTo: `${window.location.origin}/?recovery=true`,
+                redirectTo: `${SITE_URL}/?recovery=true`,
               })
 
               if (error) {
@@ -3547,25 +3535,33 @@ if (screen === 'today') {
           </button>
 
           {menuOpen && (
-            <div className={`absolute right-0 top-16 z-10 w-52 overflow-hidden rounded-2xl ${dayPalette.surface} shadow-xl`}>
-              {[
-                ['My routine', 'routinePlanner'],
-                ['My progress', 'progress'],
-                ['Skin insights', 'skinTrends'],
-                ['Progress photos', 'progressPhotos'],
-              ].map(([label, target]) => (
-                <button
-                  key={target}
-                  onClick={() => {
-                    setMenuOpen(false)
-                    setScreen(target)
-                  }}
-                  className={`block w-full px-5 py-3.5 text-left text-[15px] ${dayPalette.muted}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <>
+              <div
+                className="fixed inset-0 z-[5]"
+                aria-hidden="true"
+                onClick={() => setMenuOpen(false)}
+              />
+
+              <div className={`absolute right-0 top-16 z-10 w-52 overflow-hidden rounded-2xl ${dayPalette.surface} shadow-xl`}>
+                {[
+                  ['My routine', 'routinePlanner'],
+                  ['My progress', 'progress'],
+                  ['Skin insights', 'skinTrends'],
+                  ['Progress photos', 'progressPhotos'],
+                ].map(([label, target]) => (
+                  <button
+                    key={target}
+                    onClick={() => {
+                      setMenuOpen(false)
+                      setScreen(target)
+                    }}
+                    className={`block w-full px-5 py-3.5 text-left text-[15px] ${dayPalette.muted}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
 
           <div className="mt-1 pr-16">
@@ -3935,25 +3931,40 @@ if (screen === 'routinePlanner') {
 
                   <div className="mt-4">
                     <label className={`text-[12px] font-semibold ${t.faint}`}>
-                      How often?
+                      Which days?
                     </label>
 
-                    <select
-                      className={`mt-2 w-full rounded-xl ${t.surface} border ${t.hair} px-4 py-3 text-[14px] outline-none`}
-                      value={productFrequencies[item.id] || 'daily'}
-                      onChange={(e) =>
-                        setProductFrequencies({
-                          ...productFrequencies,
-                          [item.id]: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="daily">Every day</option>
-                      <option value="alternate">Every other day</option>
-                      <option value="every3">Every 3 days</option>
-                      <option value="twice_week">Twice a week</option>
-                      <option value="once_week">Once a week</option>
-                    </select>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        ['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4],
+                        ['Fri', 5], ['Sat', 6], ['Sun', 0],
+                      ].map(([label, day]) => {
+                        const selectedDays = productDays[item.id] || []
+                        const selected = selectedDays.includes(day)
+
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            onClick={() =>
+                              setProductDays({
+                                ...productDays,
+                                [item.id]: selected
+                                  ? selectedDays.filter((d) => d !== day)
+                                  : [...selectedDays, day],
+                              })
+                            }
+                            className={`flex h-9 w-9 items-center justify-center rounded-full text-[12px] font-semibold transition ${
+                              selected
+                                ? `${t.chip} border border-transparent`
+                                : `border ${t.hair} ${t.muted}`
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
                 </div>
               ))
@@ -4003,7 +4014,7 @@ if (missingTime) {
           user_product_id: item.id,
           step_order: index + 1,
           step_name: item.products?.name || 'Skincare product',
-          frequency: productFrequencies[item.id] || 'daily',
+          days_of_week: productDays[item.id] || [0, 1, 2, 3, 4, 5, 6],
         }))
 
     // One DB function doing deactivate-old + insert-new in a single
@@ -4926,20 +4937,32 @@ if (screen === 'progressPhotos') {
       {screenContent}
 
       {toast && (
-        <div className="fixed inset-x-0 bottom-24 z-50 flex justify-center px-6">
+        <div className="fixed inset-x-0 bottom-28 z-50 flex justify-center px-6">
           <div
-            className={`flex w-full max-w-md items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 shadow-xl ${
+            className={`flex w-full max-w-md items-start gap-3 rounded-2xl border px-4 py-3.5 shadow-xl backdrop-blur ${
               toast.tone === 'success'
-                ? 'border-emerald-400/30 bg-emerald-50 text-emerald-700'
-                : 'border-rose-400/30 bg-rose-50 text-rose-700'
+                ? `border-emerald-400/30 ${isNight ? 'bg-emerald-400/15' : 'bg-emerald-50'}`
+                : `border-rose-400/30 ${isNight ? 'bg-rose-400/15' : 'bg-rose-50'}`
             }`}
           >
-            <p className="text-[14px] leading-relaxed">{toast.message}</p>
+            <p
+              className={`min-w-0 flex-1 break-words text-[14px] leading-relaxed ${
+                toast.tone === 'success'
+                  ? isNight ? 'text-emerald-300' : 'text-emerald-700'
+                  : t.danger
+              }`}
+            >
+              {toast.message}
+            </p>
             <button
               type="button"
               aria-label="Dismiss"
               onClick={() => setToast(null)}
-              className="shrink-0 text-[13px] font-semibold opacity-70"
+              className={`shrink-0 text-[13px] font-semibold opacity-70 ${
+                toast.tone === 'success'
+                  ? isNight ? 'text-emerald-300' : 'text-emerald-700'
+                  : t.danger
+              }`}
             >
               Close
             </button>
