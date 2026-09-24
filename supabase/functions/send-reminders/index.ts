@@ -36,7 +36,7 @@ async function buildNightMessage(userId: string, today: string) {
 
   const { data: steps } = await supabase
     .from('routine_steps')
-    .select('id, step_order, step_name, days_of_week, user_products(products(name, brand, category, ingredients))')
+    .select('id, step_order, step_name, frequency, days_of_week, user_products(products(name, brand, category, ingredients))')
     .eq('routine_id', routineId).eq('is_active', true).order('step_order')
 
   if (!steps?.length) return null
@@ -54,6 +54,7 @@ async function buildNightMessage(userId: string, today: string) {
       brand: step.user_products?.products?.brand,
       category: step.user_products?.products?.category,
       ingredients: step.user_products?.products?.ingredients,
+      frequency: step.frequency,
       daysOfWeek: step.days_of_week,
       step_order: step.step_order,
     })),

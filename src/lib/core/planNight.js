@@ -4,8 +4,16 @@
 
 import { ACTIVES, activeLabel, detectActive, slotRank } from './actives.js'
 
-// 0=Sunday..6=Saturday, matching JS Date.getDay() — lets the engine compare
-// today's weekday against a step's days_of_week directly, no lookup table.
+export const FREQUENCIES = {
+  daily: { label: 'Every night', nights: 1 },
+  alternate: { label: 'Every other night', nights: 2 },
+  every3: { label: 'Every 3 nights', nights: 3 },
+  twice_week: { label: 'Twice a week', nights: 3 },
+  once_week: { label: 'Once a week', nights: 7 },
+}
+
+// 0=Sunday..6=Saturday — matches JS Date.getDay() and Postgres extract(dow),
+// so no conversion at either end.
 export const DAY_NAMES = [
   'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
 ]
@@ -61,6 +69,11 @@ export function addMonths(dateString, amount) {
   return dt.toISOString().slice(0, 10)
 }
 
+export function daysBetween(from, to) {
+  const ms = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)
+  return Math.round(ms / 86400000)
+}
+
 export function dayOfWeek(dateString) {
   const [y, m, d] = dateString.split('-').map(Number)
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay()
@@ -79,9 +92,9 @@ export function localDateString(date = new Date(), cutoffHour = 4) {
   )
 }
 
-// When a step isn't due today, says which day it next is — "tomorrow" or
-// a day name, whichever reads more naturally.
-function nextDueLabel(daysOfWeek, todayDow) {
+// When a day restriction is what's holding a due step back, says which
+// day it'll next be both due AND allowed.
+function nextAllowedLabel(daysOfWeek, todayDow) {
   if (!daysOfWeek.length) return null
   for (let offset = 1; offset <= 7; offset++) {
     const d = (todayDow + offset) % 7
@@ -96,15 +109,32 @@ function nextDueLabel(daysOfWeek, todayDow) {
 
 /**
  * @param today        'YYYY-MM-DD'
- * @param steps        [{ id, name, brand, category, daysOfWeek, step_order, active?, opened_date?, pao_months? }]
+ * @param steps        [{ id, name, brand, category, frequency, daysOfWeek, step_order, active?, opened_date?, pao_months? }]
  * @param history      [{ routine_step_id, local_date }]  past completions
  * @param restrictions { pregnancy?: boolean }  clinical restrictions, not
  *   scheduling preferences — checked before due-ness so they apply even
  *   on a night the step would have been skipped anyway.
+ *
+ * frequency and daysOfWeek answer different questions and both matter:
+ * frequency ("every 3 nights") is a cadence resolved against history, which
+ * is what lets a skipped night resolve itself later instead of the product
+ * just never happening that week. daysOfWeek is a fixed constraint on top
+ * of that cadence — "but never on a Sunday" — not a replacement for it.
+ * A step that's due by cadence but falls on a day it's not allowed simply
+ * waits; it doesn't lose its place the way a pure calendar schedule would.
  */
 export function planNight({ today, steps = [], history = [], restrictions = {} }) {
   const byId = new Map(steps.map((s) => [s.id, s]))
   const todayDow = dayOfWeek(today)
+
+  // most recent completion per step
+  const lastUsed = new Map()
+  for (const entry of history) {
+    const seen = lastUsed.get(entry.routine_step_id)
+    if (!seen || entry.local_date > seen) {
+      lastUsed.set(entry.routine_step_id, entry.local_date)
+    }
+  }
 
   const yesterday = addDays(today, -1)
   const usedLastNight = new Set(
@@ -118,6 +148,9 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
 
   const enriched = steps.map((step) => {
     const active = step.active ?? detectActive(step)
+    const freq = FREQUENCIES[step.frequency] ?? FREQUENCIES.daily
+    const last = lastUsed.get(step.id) ?? null
+    const nightsSince = last ? daysBetween(last, today) : Infinity
     const daysOfWeek =
       step.daysOfWeek && step.daysOfWeek.length > 0 ? step.daysOfWeek : ALL_DAYS
 
@@ -130,27 +163,73 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
     return {
       ...step,
       active,
+      frequency: step.frequency ?? 'daily',
       daysOfWeek,
-      dueToday: daysOfWeek.includes(todayDow),
+      allowedToday: daysOfWeek.includes(todayDow),
+      lastUsed: last,
+      nightsSince,
+      overdue: nightsSince - freq.nights,
+      _intervalNights: freq.nights,
       expiresOn,
       expired,
     }
   })
 
+  // Plain everyday products are never in question — they always go in,
+  // unless the person has explicitly restricted today for this one too.
+  const base = enriched.filter(
+    (s) => s._intervalNights === 1 && s.active === ACTIVES.NONE
+  )
+
+  // Everything else competes for tonight: most overdue first.
   const candidates = enriched
-    .filter((s) => s.dueToday)
-    .sort((a, b) => (a.step_order ?? 0) - (b.step_order ?? 0))
+    .filter((s) => !(s._intervalNights === 1 && s.active === ACTIVES.NONE))
+    .sort(
+      (a, b) =>
+        b.overdue - a.overdue || (a.step_order ?? 0) - (b.step_order ?? 0)
+    )
 
   const chosen = []
   const skipped = []
   const notes = []
   let restrictionApplied = false
 
+  for (const step of base) {
+    if (step.allowedToday) {
+      chosen.push(step)
+    } else {
+      skipped.push({ step, reason: 'day_restricted' })
+    }
+  }
+
   for (const step of candidates) {
     if (restrictions.pregnancy && RESTRICTED_IN_PREGNANCY.includes(step.active)) {
       skipped.push({ step, reason: 'restricted' })
       if (!notes.includes(PREGNANCY_NOTE)) notes.push(PREGNANCY_NOTE)
       restrictionApplied = true
+      continue
+    }
+
+    if (step.overdue < 0) {
+      const waitNights = -step.overdue
+      skipped.push({ step, reason: 'not_due' })
+      if (step.active !== ACTIVES.NONE) {
+        notes.push(
+          `${step.name} isn't due yet — next in ${waitNights} night${waitNights === 1 ? '' : 's'}.`
+        )
+      }
+      continue
+    }
+
+    // Due by cadence, but today isn't one of the allowed days — it stays
+    // due and will be offered again the next allowed day, same as it
+    // would if the person had just skipped it themselves.
+    if (!step.allowedToday) {
+      skipped.push({ step, reason: 'day_restricted' })
+      const next = nextAllowedLabel(step.daysOfWeek, todayDow)
+      notes.push(
+        `${step.name} is due, but today's set aside — next ${next || 'when a scheduled day comes up'}.`
+      )
       continue
     }
 
@@ -177,15 +256,6 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
     }
 
     chosen.push(step)
-  }
-
-  for (const step of enriched) {
-    if (step.dueToday) continue
-    skipped.push({ step, reason: 'not_due' })
-    if (step.active !== ACTIVES.NONE) {
-      const next = nextDueLabel(step.daysOfWeek, todayDow)
-      notes.push(`${step.name} isn't scheduled for today${next ? ` — next ${next}.` : '.'}`)
-    }
   }
 
   const plan = chosen.sort(

@@ -11,10 +11,17 @@
 -- existing RLS policies on routines/routine_steps still apply exactly as
 -- they do today; this isn't a privilege escalation, just fewer round trips.
 --
--- Updated to write days_of_week instead of frequency, matching the
--- weekday-picker replacing the frequency dropdown in Build my routine.
--- create or replace is idempotent either way, whether or not the original
--- version of this function was applied yet.
+-- Writes both frequency and days_of_week: frequency is still the cadence
+-- ("every 3 nights", resolved against history in planNight), days_of_week
+-- is a constraint on top of it ("but never on a Sunday"), not a
+-- replacement — see the note at the top of src/lib/core/planNight.js for
+-- why collapsing these into days_of_week alone breaks skip-resilience.
+-- This function has never been created before (confirmed nothing named
+-- create_routine exists yet), so this is a first create, not a replace.
+--
+-- set search_path = public: without it, table names resolve against
+-- whatever search_path the caller happens to have, which Supabase's own
+-- linter flags as a hijacking risk.
 create or replace function create_routine(
   p_routine_code text,
   p_am_steps jsonb,
@@ -22,6 +29,7 @@ create or replace function create_routine(
 )
 returns void
 language plpgsql
+set search_path = public
 as $$
 declare
   v_user_id uuid := auth.uid();
@@ -29,6 +37,12 @@ declare
 begin
   if v_user_id is null then
     raise exception 'Not authenticated';
+  end if;
+
+  -- Both empty would deactivate every existing routine and create nothing
+  -- — indistinguishable from data loss from the user's side, and silent.
+  if jsonb_array_length(p_am_steps) = 0 and jsonb_array_length(p_pm_steps) = 0 then
+    raise exception 'At least one of p_am_steps or p_pm_steps must be non-empty';
   end if;
 
   update routine_steps
@@ -46,12 +60,13 @@ begin
     values (v_user_id, 'AM Routine', 'AM', p_routine_code, true)
     returning id into v_routine_id;
 
-    insert into routine_steps (routine_id, user_product_id, step_order, step_name, days_of_week, is_active)
+    insert into routine_steps (routine_id, user_product_id, step_order, step_name, frequency, days_of_week, is_active)
     select
       v_routine_id,
       (elem->>'user_product_id')::uuid,
       (elem->>'step_order')::int,
       elem->>'step_name',
+      coalesce(elem->>'frequency', 'daily'),
       coalesce(
         (select array_agg(x::smallint) from jsonb_array_elements_text(elem->'days_of_week') as x),
         '{0,1,2,3,4,5,6}'
@@ -65,12 +80,13 @@ begin
     values (v_user_id, 'PM Routine', 'PM', p_routine_code, true)
     returning id into v_routine_id;
 
-    insert into routine_steps (routine_id, user_product_id, step_order, step_name, days_of_week, is_active)
+    insert into routine_steps (routine_id, user_product_id, step_order, step_name, frequency, days_of_week, is_active)
     select
       v_routine_id,
       (elem->>'user_product_id')::uuid,
       (elem->>'step_order')::int,
       elem->>'step_name',
+      coalesce(elem->>'frequency', 'daily'),
       coalesce(
         (select array_agg(x::smallint) from jsonb_array_elements_text(elem->'days_of_week') as x),
         '{0,1,2,3,4,5,6}'

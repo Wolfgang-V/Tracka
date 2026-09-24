@@ -179,7 +179,11 @@ function App() {
   const [productPaoMonths, setProductPaoMonths] = useState(0)
   const [productSaving, setProductSaving] = useState(false)
   const [products, setProducts] = useState([])
-  // Per product, which weekdays (0=Sun..6=Sat) it's used on.
+  const [productFrequencies, setProductFrequencies] = useState({})
+  // Per product, which weekdays (0=Sun..6=Sat) it's ALLOWED on — a
+  // constraint on top of frequency, not a replacement for it. Frequency
+  // still decides when something is due; this just says which days it's
+  // not allowed to land on, e.g. "twice a week, never on Sunday."
   const [productDays, setProductDays] = useState({})
   const [productTimes, setProductTimes] = useState({})
 
@@ -763,6 +767,7 @@ const finishRoutine = async (slot) => {
         user_product_id,
         step_order,
         step_name,
+        frequency,
         days_of_week,
         is_active,
         user_products (
@@ -862,6 +867,7 @@ const nightPlan = planNight({
     brand: step.user_products?.products?.brand,
     category: step.user_products?.products?.category,
     ingredients: step.user_products?.products?.ingredients,
+    frequency: step.frequency,
     daysOfWeek: step.days_of_week,
     step_order: step.step_order,
     opened_date: step.user_products?.opened_date ?? null,
@@ -1103,16 +1109,32 @@ useEffect(() => {
   const defaults = {}
 
   products.forEach((item) => {
-    if (productDays[item.id]) return
+    if (productFrequencies[item.id]) return
 
     const active = detectActive(item.products)
 
-    // Sensible starting points, same shape as the old frequency defaults —
-    // still editable per product from there.
     defaults[item.id] =
-      active === 'retinoid' ? [1, 3, 5] // Mon/Wed/Fri
-      : active === 'aha' || active === 'bha' ? [1, 4] // Mon/Thu
-      : [0, 1, 2, 3, 4, 5, 6] // every day
+      active === 'retinoid' ? 'every3'
+      : active === 'aha' || active === 'bha' ? 'twice_week'
+      : 'daily'
+  })
+
+  if (Object.keys(defaults).length > 0) {
+    setProductFrequencies((current) => ({ ...current, ...defaults }))
+  }
+}, [products])
+
+useEffect(() => {
+  if (products.length === 0) return
+
+  const defaults = {}
+
+  // Every day allowed by default — days_of_week is an opt-out restriction
+  // ("never on Sunday"), not a schedule, so it starts unrestricted and
+  // frequency alone decides cadence until someone deselects a day.
+  products.forEach((item) => {
+    if (productDays[item.id]) return
+    defaults[item.id] = [0, 1, 2, 3, 4, 5, 6]
   })
 
   if (Object.keys(defaults).length > 0) {
@@ -3931,8 +3953,34 @@ if (screen === 'routinePlanner') {
 
                   <div className="mt-4">
                     <label className={`text-[12px] font-semibold ${t.faint}`}>
-                      Which days?
+                      How often?
                     </label>
+
+                    <select
+                      className={`mt-2 w-full rounded-xl ${t.surface} border ${t.hair} px-4 py-3 text-[14px] outline-none`}
+                      value={productFrequencies[item.id] || 'daily'}
+                      onChange={(e) =>
+                        setProductFrequencies({
+                          ...productFrequencies,
+                          [item.id]: e.target.value,
+                        })
+                      }
+                    >
+                      <option value="daily">Every day</option>
+                      <option value="alternate">Every other day</option>
+                      <option value="every3">Every 3 days</option>
+                      <option value="twice_week">Twice a week</option>
+                      <option value="once_week">Once a week</option>
+                    </select>
+                  </div>
+
+                  <div className="mt-4">
+                    <label className={`text-[12px] font-semibold ${t.faint}`}>
+                      Any days to rule out?
+                    </label>
+                    <p className={`mt-0.5 text-[11px] ${t.faint}`}>
+                      All days are fine by default — tap to remove one, like never on a Sunday.
+                    </p>
 
                     <div className="mt-2 flex flex-wrap gap-2">
                       {[
@@ -4014,6 +4062,7 @@ if (missingTime) {
           user_product_id: item.id,
           step_order: index + 1,
           step_name: item.products?.name || 'Skincare product',
+          frequency: productFrequencies[item.id] || 'daily',
           days_of_week: productDays[item.id] || [0, 1, 2, 3, 4, 5, 6],
         }))
 

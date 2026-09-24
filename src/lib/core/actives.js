@@ -1,6 +1,15 @@
-// Works out what a product actually is, from its name, brand and category.
-// Guessed rather than asked, so users never have to answer chemistry questions.
-// Anything guessed wrong can be corrected later and stored on the step.
+// Works out what a product actually is.
+//
+// Two sources, treated differently:
+//  - The NAME is trusted broadly. Anything called "Retinol Serum" is a retinoid.
+//  - The INGREDIENT LIST is scanned only for strong, unambiguous actives.
+//    Lists are full of trace ingredients — lactic acid as a pH adjuster,
+//    retinyl palmitate at a fraction of a percent — that don't behave like
+//    the real thing. Counting those would schedule ordinary moisturisers
+//    as treatments.
+//
+// Ingredient lists are ignored for cleansers entirely: they're on the skin
+// for thirty seconds and rinsed off.
 
 export const ACTIVES = {
   RETINOID: 'retinoid',
@@ -13,7 +22,6 @@ export const ACTIVES = {
   NONE: 'none',
 }
 
-// Friendly names for the notes shown to users
 export const ACTIVE_LABELS = {
   [ACTIVES.RETINOID]: 'retinol',
   [ACTIVES.AHA]: 'an exfoliating acid',
@@ -27,9 +35,8 @@ export const ACTIVE_LABELS = {
 
 export const activeLabel = (active) => ACTIVE_LABELS[active] || 'an active'
 
-// Order matters: the strongest, most specific match wins.
-// Retinoids are checked first so "Retinol Cleanser" is treated as a retinoid.
-const PATTERNS = [
+// Checked against name, brand and category. Order matters: first match wins.
+const NAME_PATTERNS = [
   [ACTIVES.RETINOID, [
     'retinol', 'retinal', 'retinaldehyde', 'retinoid', 'retinyl',
     'tretinoin', 'adapalene', 'differin', 'granactive',
@@ -45,33 +52,55 @@ const PATTERNS = [
   [ACTIVES.NIACINAMIDE, ['niacinamide']],
 ]
 
-// Short tokens like "aha" need word boundaries, or a brand name
-// such as "Mahalo" would match them.
+// Checked against the ingredient list. Deliberately narrow.
+const INGREDIENT_PATTERNS = [
+  [ACTIVES.RETINOID, [
+    'retinol', 'retinaldehyde', 'retinal,', 'tretinoin', 'adapalene',
+    'hydroxypinacolone retinoate',
+  ]],
+  [ACTIVES.BENZOYL_PEROXIDE, ['benzoyl peroxide']],
+  [ACTIVES.BHA, ['salicylic acid']],
+  [ACTIVES.AHA, ['glycolic acid', 'mandelic acid']],
+  [ACTIVES.VITAMIN_C, [
+    'ascorbic acid', 'ethyl ascorbic acid', 'tetrahexyldecyl ascorbate',
+  ]],
+  [ACTIVES.AZELAIC, ['azelaic acid']],
+]
+
 const matches = (text, word) =>
   word.length <= 3
     ? new RegExp(`\\b${word}\\b`, 'i').test(text)
     : text.includes(word)
 
+const firstMatch = (text, patterns) => {
+  for (const [active, keywords] of patterns) {
+    if (keywords.some((word) => matches(text, word))) return active
+  }
+  return null
+}
+
 export function detectActive(product = {}) {
-  // ingredients (when we have them) go first — an INCI list naming
-  // "Retinol" or "Salicylic Acid" is more reliable than a product name
-  // that doesn't mention its actives at all.
-  const text = [product.ingredients, product.name, product.brand, product.category]
+  const nameText = [product.name, product.brand, product.category]
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
 
-  if (!text.trim()) return ACTIVES.NONE
+  const fromName = nameText.trim() ? firstMatch(nameText, NAME_PATTERNS) : null
+  if (fromName) return fromName
 
-  for (const [active, keywords] of PATTERNS) {
-    if (keywords.some((word) => matches(text, word))) return active
+  const isCleanser = String(product.category || '').toLowerCase() === 'cleanser'
+  const ingredients = String(product.ingredients || '').toLowerCase()
+
+  if (ingredients && !isCleanser) {
+    // trailing comma lets 'retinal,' match "Retinal, Glycerin" but not "Retinaldehyde"
+    const fromIngredients = firstMatch(`${ingredients},`, INGREDIENT_PATTERNS)
+    if (fromIngredients) return fromIngredients
   }
 
   return ACTIVES.NONE
 }
 
-// Thin to thick. Decides the order steps are shown in, regardless of
-// the order the user happened to add them.
+// Thin to thick.
 export const SLOT_ORDER = {
   cleanser: 1,
   toner: 2,
