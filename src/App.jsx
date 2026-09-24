@@ -2505,7 +2505,7 @@ const saveReminderSettings = async () => {
           {noMatch && (
             <div className={`mt-5 rounded-3xl border ${t.hair} p-5`}>
               <p className={`text-[14px] leading-relaxed ${t.muted}`}>
-                We don't have "{ingredientQuery.trim()}" in our database yet. We can't confirm how to use it
+                Can't find "{ingredientQuery.trim()}". We can't confirm how to use it
                 or what it mixes with — treat it carefully and check the product's own instructions.
               </p>
             </div>
