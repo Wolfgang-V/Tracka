@@ -1,8 +1,9 @@
 // Runs every few minutes. Finds whoever is due a reminder in their own
 // timezone, works out what their routine actually is, and sends it.
-// Also checks two other things on the same tick: a ~30-minute follow-up
-// for a missed reminder, and 3/7-day inactivity nudges — no separate cron
-// job needed for either.
+// Also checks three other things on the same tick: a ~30-minute follow-up
+// for a missed reminder, 3/7-day inactivity nudges, and a once-only nudge
+// for signups who never finished onboarding — no separate cron job
+// needed for any of them.
 
 import webpush from 'npm:web-push@3.6.7'
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0'
@@ -209,6 +210,30 @@ Deno.serve(async (req) => {
           days_inactive: row.days_inactive,
           last_completed_snapshot: row.last_completed,
         })
+      })
+    }
+  }
+
+  // --- once-only nudge for signups who never finished onboarding ---
+
+  const { data: onboarding, error: onboardingError } = await supabase.rpc('due_onboarding_nudges')
+
+  if (onboardingError) {
+    diag.onboardingError = onboardingError.message
+  } else {
+    diag.onboardingDueCount = onboarding?.length ?? 0
+
+    for (const row of onboarding ?? []) {
+      const name = row.username ? `, ${row.username}` : ''
+      const payload = {
+        title: `Hey${name} 👋`,
+        body: "You're a few steps away from your first routine — pick up where you left off.",
+        url: '/',
+        tag: 'onboarding-nudge',
+      }
+
+      await sendPush(row.subscription, payload, row.user_id, dryRun, result, async () => {
+        await supabase.from('onboarding_nudge_log').insert({ user_id: row.user_id })
       })
     }
   }

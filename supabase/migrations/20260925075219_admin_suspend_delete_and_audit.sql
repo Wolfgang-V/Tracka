@@ -1,20 +1,17 @@
--- Suspend and delete, both admin-gated the same way as admin_list_users
--- (hardcoded email check inside the function, not just client-side), both
--- refusing to target the admin's own account, and both revoked from
--- public/anon so only an authenticated session can even attempt the call
--- — the real gate is still the email check inside.
---
--- Suspend sets auth.users.banned_until directly — Auth (GoTrue) reads this
--- column on every login attempt, so this doesn't need the Admin API.
--- Unsuspend clears it back to null.
---
--- Delete removes the auth.users row directly. Whatever has
--- "references auth.users(id) on delete cascade" cleans up with it; a
--- table without that cascade will make the whole delete fail with a
--- clear FK error rather than partially deleting — nothing silent either
--- way. Not covered: files in Storage (progress photos) aren't touched by
--- a SQL delete, since Storage isn't a Postgres table — those would need
--- a follow-up if that ever matters.
+-- Destructive admin actions with no record of who did them is a bad place
+-- to be even with one admin. RLS on with no policies: only definer
+-- functions and the service role can touch it.
+create table if not exists admin_audit_log (
+  id         uuid primary key default gen_random_uuid(),
+  actor_id   uuid not null,
+  action     text not null,
+  target_id  uuid,
+  details    jsonb,
+  created_at timestamptz not null default now()
+);
+
+alter table admin_audit_log enable row level security;
+
 create or replace function admin_suspend_user(target_id uuid, suspend boolean)
 returns void
 language plpgsql
@@ -36,6 +33,16 @@ begin
   update auth.users
   set banned_until = case when suspend then '2999-12-31'::timestamptz else null end
   where id = target_id;
+
+  if not found then
+    raise exception 'No such user';
+  end if;
+
+  insert into admin_audit_log (actor_id, action, target_id, details)
+  values (auth.uid(),
+          case when suspend then 'suspend' else 'unsuspend' end,
+          target_id,
+          jsonb_build_object('suspend', suspend));
 end;
 $$;
 
@@ -48,6 +55,9 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_email text;
+  v_photos int;
 begin
   if not exists (
     select 1 from auth.users u
@@ -60,6 +70,24 @@ begin
     raise exception 'Cannot delete your own account';
   end if;
 
+  select u.email::text into v_email from auth.users u where u.id = target_id;
+
+  if v_email is null then
+    raise exception 'No such user';
+  end if;
+
+  -- Deleting the row does NOT remove the stored file. Refuse rather than
+  -- silently orphan someone's face photos in the bucket forever; the caller
+  -- must clear them through the storage API first.
+  select count(*) into v_photos from progress_photos where user_id = target_id;
+
+  if v_photos > 0 then
+    raise exception 'User has % progress photo(s). Delete the files from storage first.', v_photos;
+  end if;
+
+  insert into admin_audit_log (actor_id, action, target_id, details)
+  values (auth.uid(), 'delete', target_id, jsonb_build_object('email', v_email));
+
   delete from auth.users where id = target_id;
 end;
 $$;
@@ -67,9 +95,11 @@ $$;
 revoke all on function admin_delete_user(uuid) from public;
 grant execute on function admin_delete_user(uuid) to authenticated;
 
--- admin_list_users needs to surface suspension status for the UI to show
--- it and pick the right button.
-create or replace function admin_list_users()
+-- Return type gained a column, and create-or-replace can't change a
+-- return type. It has to be dropped first.
+drop function if exists admin_list_users();
+
+create function admin_list_users()
 returns table (
   id uuid,
   email text,
@@ -107,3 +137,6 @@ begin
   order by u.created_at desc;
 end;
 $$;
+
+revoke all on function admin_list_users() from public;
+grant execute on function admin_list_users() to authenticated;;

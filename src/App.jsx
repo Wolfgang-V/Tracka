@@ -19,6 +19,12 @@ const SITE_URL = 'https://www.trackaplus.app'
 // before returning anything. This just decides which screen to show.
 const ADMIN_EMAIL = 'trackaplusapp@gmail.com'
 
+// Temporary — brand data (local BRANDS list, Nigerian products list, live
+// Open Beauty Facts search) is on hold until that's refreshed. The Brand
+// field itself stays; only the autocomplete dropdown is off. Flip this
+// back to true once the data's updated, nothing else needs to change.
+const BRAND_SUGGESTIONS_ENABLED = false
+
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
@@ -1191,7 +1197,7 @@ useEffect(() => {
 // Live brand search against Open Beauty Facts, debounced so it doesn't
 // fire on every keystroke. Merged with the local BRANDS list in the UI.
 useEffect(() => {
-  if (screen !== 'addProduct' || !productBrand.trim()) {
+  if (!BRAND_SUGGESTIONS_ENABLED || screen !== 'addProduct' || !productBrand.trim()) {
     setLiveBrandMatches([])
     return
   }
@@ -2151,7 +2157,7 @@ const saveReminderSettings = async () => {
                 className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
 
-              {brandSuggestionsOpen && productBrand.trim() && (() => {
+              {BRAND_SUGGESTIONS_ENABLED && brandSuggestionsOpen && productBrand.trim() && (() => {
                 const merged = searchNigerianBrands(productBrand)
 
                 for (const brand of BRANDS) {
@@ -2979,7 +2985,9 @@ if (screen === 'login') {
                 console.error(profileError)
                 notify('Profile could not be loaded: ' + profileError.message)
               } else {
-                setDisplayName(profile.username)
+                // Same fallback as the mount-flow checkUser — a null
+                // username used to render as a blank greeting here.
+                setDisplayName(profile.username || data.user.email?.split('@')[0] || 'there')
                 setOnboardingCompleted(profile.onboarding_completed !== false)
               }
 
