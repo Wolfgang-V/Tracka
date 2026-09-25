@@ -17,7 +17,7 @@ const SITE_URL = 'https://www.trackaplus.app'
 // This is a UX shortcut, not the security boundary — the real enforcement
 // is server-side, in admin_list_users() checking the caller's email
 // before returning anything. This just decides which screen to show.
-const ADMIN_EMAIL = 'trackaplus@gmail.com'
+const ADMIN_EMAIL = 'trackaplusapp@gmail.com'
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -173,6 +173,12 @@ function App() {
   const [loginError, setLoginError] = useState(null)
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
+  // Gates the bottom tab bar / quick-nav grid on the onboarding screens —
+  // a brand-new user only sees the 3-step flow until they finish it, no
+  // way to wander off to progress/insights/photos before there's anything
+  // there to show. Defaults true so a returning user's nav never
+  // flickers hidden while this loads.
+  const [onboardingCompleted, setOnboardingCompleted] = useState(true)
 
   const [gender, setGender] = useState('')
   // undefined = not yet answered (nothing shows selected); null is reserved
@@ -207,11 +213,10 @@ function App() {
   const [productPaoMonths, setProductPaoMonths] = useState(0)
   const [productSaving, setProductSaving] = useState(false)
   const [products, setProducts] = useState([])
-  const [productFrequencies, setProductFrequencies] = useState({})
-  // Per product, which weekdays (0=Sun..6=Sat) it's ALLOWED on — a
-  // constraint on top of frequency, not a replacement for it. Frequency
-  // still decides when something is due; this just says which days it's
-  // not allowed to land on, e.g. "twice a week, never on Sunday."
+  // Per product, which weekdays (0=Sun..6=Sat) it's used on — this is the
+  // whole schedule now, the separate frequency dropdown was folded into
+  // it. Sent to the DB with frequency always 'daily', which combined with
+  // planNight's cadence logic makes days_of_week the effective schedule.
   const [productDays, setProductDays] = useState({})
   const [productTimes, setProductTimes] = useState({})
 
@@ -404,7 +409,7 @@ setRoutineHistory(groupedRoutines)
         const isRecovery = window.location.search.includes('recovery=true')
 
         const [{ data: profile, error }, { data: existingSkinProfile }] = await Promise.all([
-          supabase.from('profiles').select('username').eq('id', user.id).maybeSingle(),
+          supabase.from('profiles').select('username, onboarding_completed').eq('id', user.id).maybeSingle(),
           // New users land on the skin profile step until they've filled
           // it in at least once; after that, straight to Today.
           isRecovery
@@ -426,6 +431,8 @@ setRoutineHistory(groupedRoutines)
         } else {
           setDisplayName(user.email?.split('@')[0] || 'there')
         }
+
+        setOnboardingCompleted(profile?.onboarding_completed !== false)
 
         await loadRestrictions(user.id)
       } finally {
@@ -1141,33 +1148,18 @@ useEffect(() => {
 
   const defaults = {}
 
+  // days_of_week is the schedule now — the frequency dropdown was folded
+  // into it, so these are the same starting points that dropdown used to
+  // default to, just expressed as which days rather than how often.
   products.forEach((item) => {
-    if (productFrequencies[item.id]) return
+    if (productDays[item.id]) return
 
     const active = detectActive(item.products)
 
     defaults[item.id] =
-      active === 'retinoid' ? 'every3'
-      : active === 'aha' || active === 'bha' ? 'twice_week'
-      : 'daily'
-  })
-
-  if (Object.keys(defaults).length > 0) {
-    setProductFrequencies((current) => ({ ...current, ...defaults }))
-  }
-}, [products])
-
-useEffect(() => {
-  if (products.length === 0) return
-
-  const defaults = {}
-
-  // Every day allowed by default — days_of_week is an opt-out restriction
-  // ("never on Sunday"), not a schedule, so it starts unrestricted and
-  // frequency alone decides cadence until someone deselects a day.
-  products.forEach((item) => {
-    if (productDays[item.id]) return
-    defaults[item.id] = [0, 1, 2, 3, 4, 5, 6]
+      active === 'retinoid' ? [1, 3, 5] // Mon/Wed/Fri
+      : active === 'aha' || active === 'bha' ? [1, 4] // Mon/Thu
+      : [0, 1, 2, 3, 4, 5, 6] // every day
   })
 
   if (Object.keys(defaults).length > 0) {
@@ -1320,13 +1312,90 @@ const loadAdminUsers = async () => {
 
   if (error) {
     console.error('ADMIN LIST USERS ERROR:', error)
-    setAdminError(error.message)
+    // "Not authorized" only ever means someone other than the admin
+    // account reached this screen — show nothing rather than a raw
+    // Postgres error hinting an authorization check exists at all.
+    setAdminError(error.message === 'Not authorized' ? null : error.message)
     setAdminLoading(false)
     return
   }
 
   setAdminUsers(data || [])
   setAdminLoading(false)
+}
+
+const exportAdminUsersCsv = (users) => {
+  const headers = ['Email', 'Username', 'Onboarded', 'Signed up', 'Last active', 'Email confirmed', 'Suspended']
+
+  const escapeCsv = (value) => {
+    const str = String(value ?? '')
+    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str
+  }
+
+  const rows = users.map((u) => [
+    u.email,
+    u.username || '',
+    u.onboarding_completed ? 'Yes' : 'No',
+    u.created_at,
+    u.last_sign_in_at || '',
+    u.email_confirmed_at ? 'Yes' : 'No',
+    isSuspended(u) ? 'Yes' : 'No',
+  ])
+
+  const csv = [headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `tracka-signups-${localDateString()}.csv`
+  link.click()
+
+  URL.revokeObjectURL(url)
+}
+
+const isSuspended = (targetUser) =>
+  Boolean(targetUser.banned_until) && new Date(targetUser.banned_until) > new Date()
+
+const toggleSuspendUser = async (targetUser) => {
+  const suspended = isSuspended(targetUser)
+
+  const confirmed = await confirmAction(
+    suspended
+      ? `Unsuspend ${targetUser.email}? They'll be able to log in again.`
+      : `Suspend ${targetUser.email}? They won't be able to log in until unsuspended.`
+  )
+  if (!confirmed) return
+
+  const { error } = await supabase.rpc('admin_suspend_user', {
+    target_id: targetUser.id,
+    suspend: !suspended,
+  })
+
+  if (error) {
+    notify('Could not update this account: ' + error.message)
+    return
+  }
+
+  notify(suspended ? 'Account unsuspended.' : 'Account suspended.', 'success')
+  loadAdminUsers()
+}
+
+const deleteUserAccount = async (targetUser) => {
+  const confirmed = await confirmAction(
+    `Permanently delete ${targetUser.email}? This deletes their account and all their data. This cannot be undone.`
+  )
+  if (!confirmed) return
+
+  const { error } = await supabase.rpc('admin_delete_user', { target_id: targetUser.id })
+
+  if (error) {
+    notify('Could not delete this account: ' + error.message)
+    return
+  }
+
+  notify('Account deleted.', 'success')
+  loadAdminUsers()
 }
 
 // Wrapped in an IIFE so the toast/confirm overlay below can render once,
@@ -1507,6 +1576,12 @@ if (screen === 'auth') {
               setProducts([])
               setUser(data.user)
               setDisplayName(username)
+              setOnboardingCompleted(false)
+
+              if (data.user.email === ADMIN_EMAIL) {
+                setScreen('admin')
+                return
+              }
 
               if (data.session) {
                 setScreen('skinProfile')
@@ -1618,21 +1693,23 @@ const saveReminderSettings = async () => {
             Back
           </button>
 
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            {[
-              ['My progress', 'progress'],
-              ['Skin insights', 'skinTrends'],
-              ['Progress photos', 'progressPhotos'],
-            ].map(([label, target]) => (
-              <button
-                key={target}
-                onClick={() => setScreen(target)}
-                className={`rounded-2xl px-2 py-2.5 text-center text-[12px] font-semibold leading-tight ${t.chip}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {onboardingCompleted && (
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              {[
+                ['My progress', 'progress'],
+                ['Skin insights', 'skinTrends'],
+                ['Progress photos', 'progressPhotos'],
+              ].map(([label, target]) => (
+                <button
+                  key={target}
+                  onClick={() => setScreen(target)}
+                  className={`rounded-2xl px-2 py-2.5 text-center text-[12px] font-semibold leading-tight ${t.chip}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="mt-5">
             <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
@@ -1862,7 +1939,7 @@ const saveReminderSettings = async () => {
           </div>
         </div>
 
-        {renderBottomTabs('skinProfile', t)}
+        {onboardingCompleted && renderBottomTabs('skinProfile', t)}
       </main>
     )
   }
@@ -2022,7 +2099,7 @@ const saveReminderSettings = async () => {
           </div>
         </div>
 
-        {renderBottomTabs('products', t)}
+        {onboardingCompleted && renderBottomTabs('products', t)}
       </main>
     )
   }
@@ -2558,7 +2635,7 @@ const saveReminderSettings = async () => {
 
         </div>
 
-        {renderBottomTabs('products', t)}
+        {onboardingCompleted && renderBottomTabs('products', t)}
       </main>
     )
   }
@@ -2629,9 +2706,20 @@ if (screen === 'admin') {
         </div>
 
         {!adminLoading && !adminError && (
-          <p className={`mt-1 text-[13px] ${t.faint}`}>
-            {adminUsers.length} {adminUsers.length === 1 ? 'user' : 'users'}
-          </p>
+          <div className="mt-3 flex items-center justify-between">
+            <p className={`text-[13px] ${t.faint}`}>
+              {adminUsers.length} {adminUsers.length === 1 ? 'user' : 'users'}
+            </p>
+
+            <button
+              type="button"
+              disabled={adminUsers.length === 0}
+              onClick={() => exportAdminUsersCsv(adminUsers)}
+              className={`rounded-xl border px-3 py-1.5 text-[12px] font-semibold ${t.hair} ${t.muted} disabled:opacity-40`}
+            >
+              Export CSV
+            </button>
+          </div>
         )}
 
         {adminLoading && (
@@ -2656,13 +2744,21 @@ if (screen === 'admin') {
                     <p className={`truncate text-[13px] ${t.muted}`}>{u.email}</p>
                   </div>
 
-                  <span
-                    className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                      u.onboarding_completed ? t.chip : `border ${t.hair} ${t.faint}`
-                    }`}
-                  >
-                    {u.onboarding_completed ? 'Onboarded' : 'Incomplete'}
-                  </span>
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                        u.onboarding_completed ? t.chip : `border ${t.hair} ${t.faint}`
+                      }`}
+                    >
+                      {u.onboarding_completed ? 'Onboarded' : 'Incomplete'}
+                    </span>
+
+                    {isSuspended(u) && (
+                      <span className="rounded-full border border-rose-400/30 bg-rose-400/10 px-2.5 py-1 text-[11px] font-semibold">
+                        <span className={t.danger}>Suspended</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className={`mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] ${t.faint}`}>
@@ -2681,6 +2777,24 @@ if (screen === 'admin') {
                   {!u.email_confirmed_at && (
                     <span className={t.danger}>Email not confirmed</span>
                   )}
+                </div>
+
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleSuspendUser(u)}
+                    className={`flex-1 rounded-xl border px-3 py-2 text-[12px] font-semibold ${t.hair} ${t.muted}`}
+                  >
+                    {isSuspended(u) ? 'Unsuspend' : 'Suspend'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => deleteUserAccount(u)}
+                    className={`flex-1 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-[12px] font-semibold ${t.danger}`}
+                  >
+                    Delete
+                  </button>
                 </div>
               </div>
             ))}
@@ -2857,7 +2971,7 @@ if (screen === 'login') {
               const { data: profile, error: profileError } =
                 await supabase
                   .from('profiles')
-                  .select('username')
+                  .select('username, onboarding_completed')
                   .eq('id', data.user.id)
                   .single()
 
@@ -2866,6 +2980,7 @@ if (screen === 'login') {
                 notify('Profile could not be loaded: ' + profileError.message)
               } else {
                 setDisplayName(profile.username)
+                setOnboardingCompleted(profile.onboarding_completed !== false)
               }
 
               // New users land on the skin profile step until they've
@@ -4115,34 +4230,8 @@ if (screen === 'routinePlanner') {
 
                   <div className="mt-4">
                     <label className={`text-[12px] font-semibold ${t.faint}`}>
-                      How often?
+                      How often? <span className="font-normal">(choose the days you want to use this product)</span>
                     </label>
-
-                    <select
-                      className={`mt-2 w-full rounded-xl ${t.surface} border ${t.hair} px-4 py-3 text-[14px] outline-none`}
-                      value={productFrequencies[item.id] || 'daily'}
-                      onChange={(e) =>
-                        setProductFrequencies({
-                          ...productFrequencies,
-                          [item.id]: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="daily">Every day</option>
-                      <option value="alternate">Every other day</option>
-                      <option value="every3">Every 3 days</option>
-                      <option value="twice_week">Twice a week</option>
-                      <option value="once_week">Once a week</option>
-                    </select>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className={`text-[12px] font-semibold ${t.faint}`}>
-                      Any days to rule out?
-                    </label>
-                    <p className={`mt-0.5 text-[11px] ${t.faint}`}>
-                      All days are fine by default — tap to remove one, like never on a Sunday.
-                    </p>
 
                     <div className="mt-2 flex flex-wrap gap-2">
                       {[
@@ -4224,7 +4313,7 @@ if (missingTime) {
           user_product_id: item.id,
           step_order: index + 1,
           step_name: item.products?.name || 'Skincare product',
-          frequency: productFrequencies[item.id] || 'daily',
+          frequency: 'daily',
           days_of_week: productDays[item.id] || [0, 1, 2, 3, 4, 5, 6],
         }))
 
@@ -4249,6 +4338,16 @@ if (missingTime) {
       `Your routine is ready, ${displayName}`,
       'Time to stay consistent.'
     )
+
+    if (!onboardingCompleted) {
+      setOnboardingCompleted(true)
+      if (user) {
+        await supabase
+          .from('profiles')
+          .update({ onboarding_completed: true })
+          .eq('id', user.id)
+      }
+    }
 
     setScreen('today')
     loadRoutines()
