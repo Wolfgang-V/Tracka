@@ -14,11 +14,36 @@ const VAPID_PUBLIC_KEY =
 // started from there would otherwise bake that domain into the email link.
 const SITE_URL = 'https://www.trackaplus.app'
 
+// This is a UX shortcut, not the security boundary — the real enforcement
+// is server-side, in admin_list_users() checking the caller's email
+// before returning anything. This just decides which screen to show.
+const ADMIN_EMAIL = 'trackaplus@gmail.com'
+
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
   const raw = atob(base64)
   return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)))
+}
+
+// Fires immediately from client-side actions (new product, routine built)
+// rather than through the push pipeline — no server round trip needed for
+// a nudge that's reacting to something that just happened on this device.
+// Silently does nothing if permission was never granted; doesn't prompt.
+const showLocalNotification = async (title, body) => {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+  if (!('serviceWorker' in navigator)) return
+
+  try {
+    const registration = await navigator.serviceWorker.ready
+    await registration.showNotification(title, {
+      body,
+      tag: 'tracka-local',
+      icon: '/icons/icon-192.png',
+    })
+  } catch (error) {
+    console.error('LOCAL NOTIFICATION ERROR:', error)
+  }
 }
 
 const registerServiceWorker = async () => {
@@ -107,6 +132,9 @@ function App() {
   // Replaces the native alert dialog everywhere so error/success messages
   // look like the app instead of the OS. tone: 'error' | 'success'.
   const [toast, setToast] = useState(null)
+  const [adminUsers, setAdminUsers] = useState([])
+  const [adminLoading, setAdminLoading] = useState(true)
+  const [adminError, setAdminError] = useState(null)
   const notify = (message, tone = 'error') => setToast({ message, tone })
 
   useEffect(() => {
@@ -367,6 +395,11 @@ setRoutineHistory(groupedRoutines)
     const checkUser = async (user) => {
       try {
         setUser(user)
+
+        if (user.email === ADMIN_EMAIL) {
+          setScreen('admin')
+          return
+        }
 
         const isRecovery = window.location.search.includes('recovery=true')
 
@@ -1157,6 +1190,10 @@ useEffect(() => {
     loadProgressPhotos()
   }
 
+  if (screen === 'admin') {
+    loadAdminUsers()
+  }
+
 }, [screen])
 
 // Live brand search against Open Beauty Facts, debounced so it doesn't
@@ -1273,6 +1310,23 @@ const loadSkinProfile = async () => {
     )
     setSensitivity(data.sensitivity || '')
   }
+}
+
+const loadAdminUsers = async () => {
+  setAdminLoading(true)
+  setAdminError(null)
+
+  const { data, error } = await supabase.rpc('admin_list_users')
+
+  if (error) {
+    console.error('ADMIN LIST USERS ERROR:', error)
+    setAdminError(error.message)
+    setAdminLoading(false)
+    return
+  }
+
+  setAdminUsers(data || [])
+  setAdminLoading(false)
 }
 
 // Wrapped in an IIFE so the toast/confirm overlay below can render once,
@@ -2278,6 +2332,15 @@ const saveReminderSettings = async () => {
                   setProducts(updatedProducts || [])
                 }
 
+                // products still holds the pre-add list here — only nudge
+                // when this isn't their very first product.
+                if (products.length > 0) {
+                  showLocalNotification(
+                    'New product alert 👀',
+                    'Remember: introduce slowly.'
+                  )
+                }
+
                 setProductBrand('')
                 setProductName('')
                 setProductCategory('')
@@ -2535,6 +2598,100 @@ if (screen === 'checkEmail') {
   )
 }
 
+if (screen === 'admin') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+
+        <div className="flex items-center justify-between">
+          <div>
+            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+              Admin
+            </p>
+            <h1 className="mt-1 font-display text-[32px] font-light leading-[1.05] tracking-tight">
+              Signups
+            </h1>
+          </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              const confirmed = await confirmAction('Log out of the admin dashboard?')
+              if (!confirmed) return
+              await supabase.auth.signOut()
+              setUser(null)
+              setScreen('welcome')
+            }}
+            className={`rounded-2xl border px-4 py-2.5 text-[13px] font-semibold ${t.hair} ${t.muted}`}
+          >
+            Log out
+          </button>
+        </div>
+
+        {!adminLoading && !adminError && (
+          <p className={`mt-1 text-[13px] ${t.faint}`}>
+            {adminUsers.length} {adminUsers.length === 1 ? 'user' : 'users'}
+          </p>
+        )}
+
+        {adminLoading && (
+          <p className={`mt-8 text-[15px] ${t.muted}`}>Loading…</p>
+        )}
+
+        {adminError && (
+          <div className="mt-6 rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4">
+            <p className={`text-[13px] leading-relaxed ${t.danger}`}>{adminError}</p>
+          </div>
+        )}
+
+        {!adminLoading && !adminError && (
+          <div className="mt-5 flex flex-col gap-3">
+            {adminUsers.map((u) => (
+              <div key={u.id} className={`rounded-2xl border ${t.hair} p-4`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px] font-semibold">
+                      {u.username || 'No username yet'}
+                    </p>
+                    <p className={`truncate text-[13px] ${t.muted}`}>{u.email}</p>
+                  </div>
+
+                  <span
+                    className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                      u.onboarding_completed ? t.chip : `border ${t.hair} ${t.faint}`
+                    }`}
+                  >
+                    {u.onboarding_completed ? 'Onboarded' : 'Incomplete'}
+                  </span>
+                </div>
+
+                <div className={`mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] ${t.faint}`}>
+                  <span>
+                    Signed up {new Date(u.created_at).toLocaleDateString('en-GB', {
+                      day: 'numeric', month: 'short', year: 'numeric',
+                    })}
+                  </span>
+                  <span>
+                    {u.last_sign_in_at
+                      ? `Last active ${new Date(u.last_sign_in_at).toLocaleDateString('en-GB', {
+                          day: 'numeric', month: 'short', year: 'numeric',
+                        })}`
+                      : 'Never signed in again'}
+                  </span>
+                  {!u.email_confirmed_at && (
+                    <span className={t.danger}>Email not confirmed</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+      </div>
+    </main>
+  )
+}
+
 if (screen === 'login') {
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -2691,6 +2848,11 @@ if (screen === 'login') {
               setDisplayName('')
 
               setUser(data.user)
+
+              if (data.user.email === ADMIN_EMAIL) {
+                setScreen('admin')
+                return
+              }
 
               const { data: profile, error: profileError } =
                 await supabase
@@ -4082,6 +4244,11 @@ if (missingTime) {
       notify('Could not save your routine: ' + error.message)
       return
     }
+
+    showLocalNotification(
+      `Your routine is ready, ${displayName}`,
+      'Time to stay consistent.'
+    )
 
     setScreen('today')
     loadRoutines()

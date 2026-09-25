@@ -1,27 +1,15 @@
--- routinePlanner currently deactivates old routines, then inserts new
--- ones, as separate requests from the client. If the deactivate lands and
--- the insert then fails (dropped connection, timeout — the kind of thing
--- that happens on a flaky mobile network), the user is left with zero
--- active routines: Today shows "You haven't set up a routine yet" even
--- though their products are all still there.
---
--- This moves the whole operation into one function, so it's one
--- transaction: either the swap fully happens or nothing changes at all.
--- security invoker (the default) — it runs as the calling user, so the
--- existing RLS policies on routines/routine_steps still apply exactly as
--- they do today; this isn't a privilege escalation, just fewer round trips.
---
--- Writes both frequency and days_of_week: frequency is still the cadence
--- ("every 3 nights", resolved against history in planNight), days_of_week
--- is a constraint on top of it ("but never on a Sunday"), not a
--- replacement — see the note at the top of src/lib/core/planNight.js for
--- why collapsing these into days_of_week alone breaks skip-resilience.
--- This function has never been created before (confirmed nothing named
--- create_routine exists yet), so this is a first create, not a replace.
---
--- set search_path = public: without it, table names resolve against
--- whatever search_path the caller happens to have, which Supabase's own
--- linter flags as a hijacking risk.
+-- Match the UPDATE policy: you must own the routine AND the product.
+drop policy if exists "Users can create their own routine steps" on routine_steps;
+
+create policy "Users can create their own routine steps"
+  on routine_steps for insert
+  with check (
+    exists (select 1 from routines r
+             where r.id = routine_steps.routine_id and r.user_id = auth.uid())
+    and exists (select 1 from user_products up
+                 where up.id = routine_steps.user_product_id and up.user_id = auth.uid())
+  );
+
 create or replace function create_routine(
   p_routine_code text,
   p_am_steps jsonb,
@@ -29,6 +17,7 @@ create or replace function create_routine(
 )
 returns void
 language plpgsql
+security invoker
 set search_path = public
 as $$
 declare
@@ -39,10 +28,11 @@ begin
     raise exception 'Not authenticated';
   end if;
 
-  -- Both empty would deactivate every existing routine and create nothing
-  -- — indistinguishable from data loss from the user's side, and silent.
-  if jsonb_array_length(p_am_steps) = 0 and jsonb_array_length(p_pm_steps) = 0 then
-    raise exception 'At least one of p_am_steps or p_pm_steps must be non-empty';
+  -- Without this, an empty call silently wipes the user's routine and
+  -- leaves them with nothing, which looks identical to data loss.
+  if coalesce(jsonb_array_length(p_am_steps), 0) = 0
+     and coalesce(jsonb_array_length(p_pm_steps), 0) = 0 then
+    raise exception 'A routine needs at least one step';
   end if;
 
   update routine_steps
@@ -95,4 +85,4 @@ begin
     from jsonb_array_elements(p_pm_steps) as elem;
   end if;
 end;
-$$;
+$$;;

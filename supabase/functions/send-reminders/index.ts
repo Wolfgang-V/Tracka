@@ -1,9 +1,11 @@
 // Runs every few minutes. Finds whoever is due a reminder in their own
 // timezone, works out what their routine actually is, and sends it.
+// Also checks two other things on the same tick: a ~30-minute follow-up
+// for a missed reminder, and 3/7-day inactivity nudges — no separate cron
+// job needed for either.
 
 import webpush from 'npm:web-push@3.6.7'
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0'
-import { planNight } from './planNight.js'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -21,12 +23,7 @@ try {
   vapidError = err?.message ?? String(err)
 }
 
-const listWords = (names: string[]) =>
-  names.length <= 1
-    ? names.join('')
-    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
-
-async function buildNightMessage(userId: string, today: string) {
+async function buildNightMessage(userId: string) {
   const { data: routines } = await supabase
     .from('routines').select('id')
     .eq('user_id', userId).eq('is_active', true).eq('time_of_day', 'PM')
@@ -36,38 +33,12 @@ async function buildNightMessage(userId: string, today: string) {
 
   const { data: steps } = await supabase
     .from('routine_steps')
-    .select('id, step_order, step_name, frequency, days_of_week, user_products(products(name, brand, category, ingredients))')
+    .select('step_name, user_products(products(name))')
     .eq('routine_id', routineId).eq('is_active', true).order('step_order')
 
   if (!steps?.length) return null
 
-  const { data: history } = await supabase
-    .from('routine_step_completions')
-    .select('routine_step_id, local_date')
-    .eq('user_id', userId).lt('local_date', today)
-
-  const plan = planNight({
-    today,
-    steps: steps.map((step: any) => ({
-      id: step.id,
-      name: step.user_products?.products?.name || step.step_name,
-      brand: step.user_products?.products?.brand,
-      category: step.user_products?.products?.category,
-      ingredients: step.user_products?.products?.ingredients,
-      frequency: step.frequency,
-      daysOfWeek: step.days_of_week,
-      step_order: step.step_order,
-    })),
-    history: history ?? [],
-  })
-
-  const names = plan.steps.map((s: any) => s.name)
-  const hasActive = plan.steps.some((s: any) => s.active && s.active !== 'none')
-  if (!names.length) return null
-
-  return hasActive
-    ? `Tonight: ${listWords(names)}.`
-    : `Rest night — ${listWords(names)}. Nothing strong.`
+  return "It's time for your night routine."
 }
 
 async function buildMorningMessage(userId: string) {
@@ -88,6 +59,43 @@ async function buildMorningMessage(userId: string) {
   return "Let's kickstart your day with your morning skincare routine!"
 }
 
+type SendResult = { sent: number; skipped: number; failed: number; errors: any[] }
+
+// Shared by all three notification loops: sends the push, deletes the
+// subscription if it's gone stale (404/410), and lets the caller decide
+// how this particular kind of send gets logged for dedup.
+async function sendPush(
+  subscription: any,
+  payload: Record<string, unknown>,
+  userId: string,
+  dryRun: boolean,
+  result: SendResult,
+  onSent: () => Promise<void>
+) {
+  if (dryRun) {
+    result.skipped++
+    result.errors.push({ user: userId, dryRun: payload })
+    return
+  }
+
+  try {
+    await webpush.sendNotification(subscription, JSON.stringify(payload))
+    await onSent()
+    result.sent++
+  } catch (err: any) {
+    result.failed++
+    result.errors.push({
+      user: userId,
+      statusCode: err?.statusCode ?? null,
+      message: err?.message ?? String(err),
+      responseBody: typeof err?.body === 'string' ? err.body.slice(0, 300) : null,
+    })
+    if (err?.statusCode === 404 || err?.statusCode === 410) {
+      await supabase.from('push_subscriptions').delete().eq('user_id', userId)
+    }
+  }
+}
+
 Deno.serve(async (req) => {
   const dryRun = new URL(req.url).searchParams.get('dry') === '1'
 
@@ -96,6 +104,10 @@ Deno.serve(async (req) => {
     vapidPublicHead: vapidPublic.slice(0, 12),
     vapidPublicLength: vapidPublic.length,
   }
+
+  const result: SendResult = { sent: 0, skipped: 0, failed: 0, errors: [] }
+
+  // --- primary reminders, at the time the user set ---
 
   const { data: due, error } = await supabase.rpc('due_reminders', { window_minutes: 6 })
 
@@ -107,18 +119,15 @@ Deno.serve(async (req) => {
 
   diag.dueCount = due?.length ?? 0
 
-  let sent = 0, skipped = 0, failed = 0
-  const errors: any[] = []
-
   for (const row of due ?? []) {
     const name = row.username ? `, ${row.username}` : ''
     const body = row.slot === 'night'
-      ? await buildNightMessage(row.user_id, row.local_date)
+      ? await buildNightMessage(row.user_id)
       : await buildMorningMessage(row.user_id)
 
     if (!body) {
-      skipped++
-      errors.push({ user: row.user_id, reason: 'no routine steps' })
+      result.skipped++
+      result.errors.push({ user: row.user_id, reason: 'no routine steps' })
       continue
     }
 
@@ -129,33 +138,82 @@ Deno.serve(async (req) => {
       tag: `routine-${row.slot}`,
     }
 
-    if (dryRun) {
-      skipped++
-      errors.push({ user: row.user_id, dryRun: payload })
-      continue
-    }
-
-    try {
-      await webpush.sendNotification(row.subscription, JSON.stringify(payload))
+    await sendPush(row.subscription, payload, row.user_id, dryRun, result, async () => {
       await supabase.from('reminder_log').insert({
         user_id: row.user_id, slot: row.slot, local_date: row.local_date,
       })
-      sent++
-    } catch (err: any) {
-      failed++
-      errors.push({
-        user: row.user_id,
-        statusCode: err?.statusCode ?? null,
-        message: err?.message ?? String(err),
-        responseBody: typeof err?.body === 'string' ? err.body.slice(0, 300) : null,
+    })
+  }
+
+  // --- follow-ups, ~30 minutes after a missed reminder ---
+
+  const { data: followups, error: followupsError } = await supabase.rpc('due_followups', { window_minutes: 6 })
+
+  if (followupsError) {
+    diag.followupsError = followupsError.message
+  } else {
+    diag.followupsDueCount = followups?.length ?? 0
+
+    for (const row of followups ?? []) {
+      const name = row.username ? `, ${row.username}` : ''
+      const payload = row.slot === 'morning'
+        ? {
+            title: `Hey${name} ☀️`,
+            body: 'Your morning routine is still waiting for you. Take a few minutes to show your skin some love.',
+            url: '/',
+            tag: 'routine-followup-morning',
+          }
+        : {
+            title: `Hey${name} 🌙`,
+            body: 'Before you sleep… did you forget something? 👀',
+            url: '/',
+            tag: 'routine-followup-night',
+          }
+
+      await sendPush(row.subscription, payload, row.user_id, dryRun, result, async () => {
+        await supabase.from('reminder_followup_log').insert({
+          user_id: row.user_id, slot: row.slot, local_date: row.local_date,
+        })
       })
-      if (err?.statusCode === 404 || err?.statusCode === 410) {
-        await supabase.from('push_subscriptions').delete().eq('user_id', row.user_id)
-      }
     }
   }
 
-  return new Response(JSON.stringify({ sent, skipped, failed, errors, diag }), {
+  // --- 3-day / 7-day inactivity nudges ---
+
+  const { data: inactive, error: inactiveError } = await supabase.rpc('due_inactivity_nudges')
+
+  if (inactiveError) {
+    diag.inactiveError = inactiveError.message
+  } else {
+    diag.inactiveDueCount = inactive?.length ?? 0
+
+    for (const row of inactive ?? []) {
+      const name = row.username ? `, ${row.username}` : ''
+      const payload = row.days_inactive === 3
+        ? {
+            title: `Hey${name} 👋`,
+            body: 'Your skincare routine misses you.',
+            url: '/',
+            tag: 'inactivity-3',
+          }
+        : {
+            title: `We haven't seen you in a while${name} 👀`,
+            body: 'Ready to get back on track?',
+            url: '/',
+            tag: 'inactivity-7',
+          }
+
+      await sendPush(row.subscription, payload, row.user_id, dryRun, result, async () => {
+        await supabase.from('inactivity_nudge_log').insert({
+          user_id: row.user_id,
+          days_inactive: row.days_inactive,
+          last_completed_snapshot: row.last_completed,
+        })
+      })
+    }
+  }
+
+  return new Response(JSON.stringify({ ...result, diag }), {
     headers: { 'Content-Type': 'application/json' },
   })
 })
