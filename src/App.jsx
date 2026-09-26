@@ -1150,30 +1150,6 @@ useEffect(() => {
 }, [products])
 
 useEffect(() => {
-  if (products.length === 0) return
-
-  const defaults = {}
-
-  // days_of_week is the schedule now — the frequency dropdown was folded
-  // into it, so these are the same starting points that dropdown used to
-  // default to, just expressed as which days rather than how often.
-  products.forEach((item) => {
-    if (productDays[item.id]) return
-
-    const active = detectActive(item.products)
-
-    defaults[item.id] =
-      active === 'retinoid' ? [1, 3, 5] // Mon/Wed/Fri
-      : active === 'aha' || active === 'bha' ? [1, 4] // Mon/Thu
-      : [0, 1, 2, 3, 4, 5, 6] // every day
-  })
-
-  if (Object.keys(defaults).length > 0) {
-    setProductDays((current) => ({ ...current, ...defaults }))
-  }
-}, [products])
-
-useEffect(() => {
   if (screen === 'today') {
     loadRoutines()
     loadStepHistory()
@@ -4299,6 +4275,15 @@ if (screen === 'routinePlanner') {
 
 if (missingTime) {
   notify('Please choose a time for every product.')
+  return
+}
+
+const missingDays = products.find(
+  (item) => !productDays[item.id] || productDays[item.id].length === 0
+)
+
+if (missingDays) {
+  notify('Please choose at least one day for every product.')
   return
 }
 
