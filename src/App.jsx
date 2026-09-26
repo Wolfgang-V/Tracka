@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from './lib/supabase'
-import { detectActive, slotRank } from './lib/core/actives'
-import { planNight, localDateString, addDays, PREGNANCY_NOTE } from './lib/core/planNight'
+import { slotRank } from './lib/core/actives'
+import { planNight, localDateString, addDays, addMonths, PREGNANCY_NOTE } from './lib/core/planNight'
 import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
@@ -19,11 +19,12 @@ const SITE_URL = 'https://www.trackaplus.app'
 // before returning anything. This just decides which screen to show.
 const ADMIN_EMAIL = 'trackaplusapp@gmail.com'
 
-// Temporary — brand data (local BRANDS list, Nigerian products list, live
-// Open Beauty Facts search) is on hold until that's refreshed. The Brand
-// field itself stays; only the autocomplete dropdown is off. Flip this
-// back to true once the data's updated, nothing else needs to change.
-const BRAND_SUGGESTIONS_ENABLED = false
+// Temporary — product/brand data (local BRANDS list, Nigerian
+// brands/products list, live Open Beauty Facts search) is on hold until
+// there's a real database/structure behind it. The Brand and Product
+// name fields stay as plain text; only the autocomplete/matching is off.
+// Flip this back to true once that data exists, nothing else needs to change.
+const PRODUCT_SUGGESTIONS_ENABLED = false
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -204,7 +205,6 @@ function App() {
   const [liveBrandMatches, setLiveBrandMatches] = useState([])
   const [productSuggestionsOpen, setProductSuggestionsOpen] = useState(false)
   const [liveProductMatches, setLiveProductMatches] = useState([])
-  const [productSearchLoading, setProductSearchLoading] = useState(false)
   const [settingsStatus, setSettingsStatus] = useState(null)
   const [morningReminderEnabled, setMorningReminderEnabled] = useState(true)
   const [morningReminderTime, setMorningReminderTime] = useState('07:00')
@@ -1173,7 +1173,7 @@ useEffect(() => {
 // Live brand search against Open Beauty Facts, debounced so it doesn't
 // fire on every keystroke. Merged with the local BRANDS list in the UI.
 useEffect(() => {
-  if (!BRAND_SUGGESTIONS_ENABLED || screen !== 'addProduct' || !productBrand.trim()) {
+  if (!PRODUCT_SUGGESTIONS_ENABLED || screen !== 'addProduct' || !productBrand.trim()) {
     setLiveBrandMatches([])
     return
   }
@@ -1192,15 +1192,13 @@ useEffect(() => {
 // product list is local and curated, so it shows instantly; Open Beauty
 // Facts results are appended once the debounced network search resolves.
 useEffect(() => {
-  if (screen !== 'addProduct' || !productBrand.trim()) {
+  if (!PRODUCT_SUGGESTIONS_ENABLED || screen !== 'addProduct' || !productBrand.trim()) {
     setLiveProductMatches([])
     return
   }
 
   const localMatches = searchNigerianProducts(productBrand, productName)
   setLiveProductMatches(localMatches)
-
-  setProductSearchLoading(true)
 
   const timer = setTimeout(() => {
     searchProducts(productBrand, productName)
@@ -1213,11 +1211,9 @@ useEffect(() => {
           if (!dupe) merged.push(match)
         }
         setLiveProductMatches(merged)
-        setProductSearchLoading(false)
       })
       .catch(() => {
         setLiveProductMatches(localMatches)
-        setProductSearchLoading(false)
       })
   }, 400)
 
@@ -2133,7 +2129,7 @@ const saveReminderSettings = async () => {
                 className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
 
-              {BRAND_SUGGESTIONS_ENABLED && brandSuggestionsOpen && productBrand.trim() && (() => {
+              {PRODUCT_SUGGESTIONS_ENABLED && brandSuggestionsOpen && productBrand.trim() && (() => {
                 const merged = searchNigerianBrands(productBrand)
 
                 for (const brand of BRANDS) {
@@ -2174,7 +2170,7 @@ const saveReminderSettings = async () => {
               })()}
 
               <p className={`mt-1.5 text-[12px] ${t.faint}`}>
-                Not listed? Type the brand name.
+                Type the brand name.
               </p>
             </div>
 
@@ -2197,7 +2193,7 @@ const saveReminderSettings = async () => {
                 className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
 
-              {productSuggestionsOpen && productBrand.trim() && liveProductMatches.length > 0 && (
+              {PRODUCT_SUGGESTIONS_ENABLED && productSuggestionsOpen && productBrand.trim() && liveProductMatches.length > 0 && (
                 <div className={`absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border ${t.hair} ${t.surface} shadow-lg`}>
                   {liveProductMatches.slice(0, 8).map((match) => (
                     <button
@@ -2221,15 +2217,9 @@ const saveReminderSettings = async () => {
                 </div>
               )}
 
-              {productBrand.trim() && (
-                <p className={`mt-1.5 text-[12px] ${productIngredients ? t.mark : t.faint}`}>
-                  {productIngredients
-                    ? "Found this product's ingredients — we'll use them to catch clashes like retinol and acids in your routine."
-                    : productSearchLoading
-                      ? 'Searching Open Beauty Facts…'
-                      : "Not listed? Just keep typing — it'll be added as you type it."}
-                </p>
-              )}
+              <p className={`mt-1.5 text-[12px] ${t.faint}`}>
+                Type the product name.
+              </p>
             </div>
 
             <div>
@@ -2265,6 +2255,7 @@ const saveReminderSettings = async () => {
                 type="date"
                 value={productOpenedDate}
                 onChange={(e) => setProductOpenedDate(e.target.value)}
+                min={addMonths(localDateString(), -120)}
                 max={localDateString()}
                 className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
