@@ -24,7 +24,7 @@ const ADMIN_EMAIL = 'trackaplusapp@gmail.com'
 // there's a real database/structure behind it. The Brand and Product
 // name fields stay as plain text; only the autocomplete/matching is off.
 // Flip this back to true once that data exists, nothing else needs to change.
-const PRODUCT_SUGGESTIONS_ENABLED = false
+const PRODUCT_SUGGESTIONS_ENABLED = true
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -2200,7 +2200,15 @@ const saveReminderSettings = async () => {
                 }
                 const matches = merged.slice(0, 8)
 
-                if (matches.length === 0) return null
+                if (matches.length === 0) {
+                  return (
+                    <div className={`absolute z-10 mt-1 w-full rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 shadow-lg`}>
+                      <p className={`text-[13px] ${t.muted}`}>
+                        Can't find "{productBrand.trim()}"? It'll be saved as a new brand.
+                      </p>
+                    </div>
+                  )
+                }
 
                 return (
                   <div className={`absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl border ${t.hair} ${t.surface} shadow-lg`}>
@@ -2266,6 +2274,14 @@ const saveReminderSettings = async () => {
                       )}
                     </button>
                   ))}
+                </div>
+              )}
+
+              {PRODUCT_SUGGESTIONS_ENABLED && productSuggestionsOpen && productBrand.trim() && productName.trim() && liveProductMatches.length === 0 && (
+                <div className={`absolute z-10 mt-1 w-full rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 shadow-lg`}>
+                  <p className={`text-[13px] ${t.muted}`}>
+                    Can't find "{productName.trim()}"? It'll be saved as a new product.
+                  </p>
                 </div>
               )}
 
