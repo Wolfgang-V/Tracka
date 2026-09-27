@@ -220,6 +220,7 @@ function App() {
   const [ingredientQuery, setIngredientQuery] = useState('')
   const [productOpenedDate, setProductOpenedDate] = useState('')
   const [productPaoMonths, setProductPaoMonths] = useState(0)
+  const [productExpiryDate, setProductExpiryDate] = useState('')
   const [productSaving, setProductSaving] = useState(false)
   const [products, setProducts] = useState([])
   // Per product, which weekdays (0=Sun..6=Sat) it's used on — this is the
@@ -351,6 +352,7 @@ setRoutineHistory(groupedRoutines)
           product_id,
           opened_date,
           pao_months,
+          expiry_date,
           products (
             id,
             brand,
@@ -1072,17 +1074,47 @@ const todaySkinLog = skinLogs.find((log) => log.local_date === todayString) || {
 }
 
 const getPaoStatus = (item) => {
-  if (!item.opened_date || !item.pao_months) return null
+  // Sunscreen past its date isn't just inert like a serum would be — it
+  // can leave you unprotected without any visible sign, so it gets a firm
+  // warning instead of the same quiet note every other category gets.
+  const isSunscreen = (item.products?.category || '').toLowerCase() === 'sunscreen'
 
-  const expires = new Date(item.opened_date + 'T00:00:00')
-  expires.setMonth(expires.getMonth() + item.pao_months)
+  const paoExpires =
+    item.opened_date && item.pao_months
+      ? (() => {
+          const d = new Date(item.opened_date + 'T00:00:00')
+          d.setMonth(d.getMonth() + item.pao_months)
+          return d
+        })()
+      : null
+
+  const printedExpires = item.expiry_date
+    ? new Date(item.expiry_date + 'T00:00:00')
+    : null
+
+  if (!paoExpires && !printedExpires) return null
+
+  // Whichever comes sooner is the real use-by date — PAO only starts
+  // counting once opened, but a printed expiry applies regardless.
+  const expires =
+    paoExpires && printedExpires
+      ? (paoExpires < printedExpires ? paoExpires : printedExpires)
+      : (paoExpires || printedExpires)
 
   const daysLeft = Math.round(
     (expires - new Date(todayString + 'T00:00:00')) / 86400000
   )
 
-  if (daysLeft < 0) return { label: 'Expired', expired: true }
-  if (daysLeft === 0) return { label: 'Expires today', expired: true }
+  if (daysLeft < 0) {
+    return isSunscreen
+      ? { label: 'Expired — don\'t rely on this for protection', expired: true, firm: true }
+      : { label: 'Expired', expired: true }
+  }
+  if (daysLeft === 0) {
+    return isSunscreen
+      ? { label: 'Expires today — replace before your next reapply', expired: true, firm: true }
+      : { label: 'Expires today', expired: true }
+  }
   if (daysLeft <= 30) return { label: `${daysLeft}d left`, expired: false }
 
   return {
@@ -2085,7 +2117,25 @@ const saveReminderSettings = async () => {
                         </p>
                       )}
 
-                      {status && (
+                      {item.expiry_date && (
+                        <p className={`mt-0.5 flex items-center gap-1 text-[11px] ${t.faint}`}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" strokeWidth="2"
+                            strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                            <rect x="3" y="4" width="18" height="18" rx="2" />
+                            <path d="M16 2v4M8 2v4M3 10h18" />
+                          </svg>
+                          Expires {new Date(item.expiry_date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </p>
+                      )}
+
+                      {status && status.firm && (
+                        <p className={`mt-2 rounded-lg border border-rose-400/30 bg-rose-400/10 px-2 py-1.5 text-[11px] font-semibold leading-snug ${t.danger}`}>
+                          {status.label}
+                        </p>
+                      )}
+
+                      {status && !status.firm && (
                         <p className={`mt-2 text-[11px] font-semibold ${status.expired ? t.danger : t.faint}`}>
                           {status.label}
                         </p>
@@ -2204,7 +2254,7 @@ const saveReminderSettings = async () => {
                   return (
                     <div className={`absolute z-10 mt-1 w-full rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 shadow-lg`}>
                       <p className={`text-[13px] ${t.muted}`}>
-                        Can't find "{productBrand.trim()}"? It'll be saved as a new brand.
+                        Can't find "{productBrand.trim()}"? Save it as a new brand.
                       </p>
                     </div>
                   )
@@ -2280,7 +2330,7 @@ const saveReminderSettings = async () => {
               {PRODUCT_SUGGESTIONS_ENABLED && productSuggestionsOpen && productBrand.trim() && productName.trim() && liveProductMatches.length === 0 && (
                 <div className={`absolute z-10 mt-1 w-full rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 shadow-lg`}>
                   <p className={`text-[13px] ${t.muted}`}>
-                    Can't find "{productName.trim()}"? It'll be saved as a new product.
+                    Can't find "{productName.trim()}"? Save it as a new product.
                   </p>
                 </div>
               )}
@@ -2327,6 +2377,24 @@ const saveReminderSettings = async () => {
                 max={localDateString()}
                 className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
+            </div>
+
+            <div>
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+                Expiry date
+              </label>
+
+              <input
+                type="date"
+                value={productExpiryDate}
+                onChange={(e) => setProductExpiryDate(e.target.value)}
+                min={localDateString()}
+                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+              />
+
+              <p className={`mt-1.5 text-[12px] ${t.faint}`}>
+                Optional — the printed expiry date on the box, if it has one.
+              </p>
             </div>
 
             <div>
@@ -2415,6 +2483,7 @@ const saveReminderSettings = async () => {
                       is_active: true,
                       opened_date: productOpenedDate || null,
                       pao_months: productPaoMonths || null,
+                      expiry_date: productExpiryDate || null,
                     })
 
                 if (userProductError) {
@@ -2433,6 +2502,7 @@ const saveReminderSettings = async () => {
                     product_id,
                     opened_date,
                     pao_months,
+                    expiry_date,
                     products (
                       id,
                       brand,
@@ -2465,6 +2535,7 @@ const saveReminderSettings = async () => {
                 setProductIngredients('')
                 setProductOpenedDate('')
                 setProductPaoMonths(0)
+                setProductExpiryDate('')
                 setProductSaving(false)
                 setScreen('products')
               }}
