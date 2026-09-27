@@ -151,10 +151,12 @@ function App() {
   }, [toast])
 
   // Replaces window.confirm() — resolves true/false once the person taps
-  // an option, same as the native dialog but styled on-brand.
+  // an option, same as the native dialog but styled on-brand. Labels
+  // default to Cancel/Confirm but can be overridden for cases where that
+  // framing doesn't fit a plain yes/no question.
   const [confirmState, setConfirmState] = useState(null)
-  const confirmAction = (message) =>
-    new Promise((resolve) => setConfirmState({ message, resolve }))
+  const confirmAction = (message, labels) =>
+    new Promise((resolve) => setConfirmState({ message, resolve, labels }))
 
   // Keeps the page from scrolling behind the confirm dialog while it's open.
   useEffect(() => {
@@ -210,6 +212,7 @@ function App() {
   const [morningReminderTime, setMorningReminderTime] = useState('07:00')
   const [nightReminderEnabled, setNightReminderEnabled] = useState(true)
   const [nightReminderTime, setNightReminderTime] = useState('21:00')
+  const [spfReapplyEnabled, setSpfReapplyEnabled] = useState(false)
   const [productBrand, setProductBrand] = useState('')
   const [productName, setProductName] = useState('')
   const [productCategory, setProductCategory] = useState('')
@@ -1170,6 +1173,53 @@ useEffect(() => {
 
 }, [screen])
 
+// "Heading out today?" — asked once a day, only to people who already
+// opted into SPF reminders, right when they tick their sunscreen step
+// (the same event that starts the 2-hour clock server-side). Answering
+// either way records today's check-in; only "yes" actually unlocks the
+// reminders, but recording "no" too stops this from asking again today.
+useEffect(() => {
+  if (!user || !spfReapplyEnabled || screen !== 'today') return
+
+  const sunscreenStep = todayAmSteps.find(
+    (step) => (step.user_products?.products?.category || '').toLowerCase() === 'sunscreen'
+  )
+  if (!sunscreenStep || !completedSteps.includes(sunscreenStep.id)) return
+
+  let cancelled = false
+
+  const checkAndPrompt = async () => {
+    const today = localDateString()
+
+    const { data: existing } = await supabase
+      .from('spf_daily_checkin')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .eq('local_date', today)
+      .maybeSingle()
+
+    if (existing || cancelled) return
+
+    const headingOut = await confirmAction(
+      "Heading out today? We'll send two sunscreen reapply reminders if so.",
+      ['Not today', "I'm heading out"]
+    )
+
+    if (cancelled) return
+
+    await supabase.from('spf_daily_checkin').upsert(
+      { user_id: user.id, local_date: today, heading_out: headingOut },
+      { onConflict: 'user_id,local_date' }
+    )
+  }
+
+  checkAndPrompt()
+
+  return () => {
+    cancelled = true
+  }
+}, [user, spfReapplyEnabled, todayAmSteps, completedSteps, screen])
+
 // Live brand search against Open Beauty Facts, debounced so it doesn't
 // fire on every keystroke. Merged with the local BRANDS list in the UI.
 useEffect(() => {
@@ -1600,7 +1650,7 @@ const loadReminderSettings = async () => {
   const { data, error } = await supabase
     .from('reminder_settings')
     .select(
-      'morning_enabled, morning_time, night_enabled, night_time'
+      'morning_enabled, morning_time, night_enabled, night_time, spf_reapply_enabled'
     )
     .eq('user_id', currentUser.id)
     .maybeSingle()
@@ -1615,6 +1665,7 @@ const loadReminderSettings = async () => {
     setMorningReminderTime(data.morning_time?.slice(0, 5) || '07:00')
     setNightReminderEnabled(data.night_enabled)
     setNightReminderTime(data.night_time?.slice(0, 5) || '21:00')
+    setSpfReapplyEnabled(data.spf_reapply_enabled ?? false)
   }
 }
 
@@ -1637,6 +1688,7 @@ const saveReminderSettings = async () => {
         morning_time: morningReminderTime,
         night_enabled: nightReminderEnabled,
         night_time: nightReminderTime,
+        spf_reapply_enabled: spfReapplyEnabled,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         updated_at: new Date().toISOString(),
       },
@@ -3656,6 +3708,48 @@ if (screen === 'reminders') {
             )}
           </div>
 
+          {/* SPF REAPPLY */}
+          <div className={`rounded-3xl ${t.surface} p-5`}>
+            <div className="flex items-center justify-between gap-4">
+
+              <div>
+                <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.mark}`}>
+                  Sunscreen
+                </p>
+
+                <h2 className="mt-1 text-[17px] font-semibold">
+                  SPF reapply reminders
+                </h2>
+
+                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                  A midday and mid-afternoon nudge to reapply, on days you're heading outdoors.
+                  Off by default.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSpfReapplyEnabled(
+                    !spfReapplyEnabled
+                  )
+                }
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                  spfReapplyEnabled ? t.btn : t.rail
+                }`}
+              >
+                <span
+                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
+                    spfReapplyEnabled
+                      ? 'left-6'
+                      : 'left-1'
+                  }`}
+                />
+              </button>
+
+            </div>
+          </div>
+
         </div>
 
         <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
@@ -5283,7 +5377,7 @@ if (screen === 'progressPhotos') {
                 }}
                 className={`flex-1 rounded-2xl border px-4 py-3 text-[14px] font-semibold ${t.hair} ${t.muted}`}
               >
-                Cancel
+                {confirmState.labels?.[0] || 'Cancel'}
               </button>
               <button
                 type="button"
@@ -5293,7 +5387,7 @@ if (screen === 'progressPhotos') {
                 }}
                 className={`flex-1 rounded-2xl px-4 py-3 text-[14px] font-bold ${t.btn}`}
               >
-                Confirm
+                {confirmState.labels?.[1] || 'Confirm'}
               </button>
             </div>
           </div>

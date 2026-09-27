@@ -1,9 +1,10 @@
 // Runs every few minutes. Finds whoever is due a reminder in their own
 // timezone, works out what their routine actually is, and sends it.
-// Also checks three other things on the same tick: a ~30-minute follow-up
-// for a missed reminder, 3/7-day inactivity nudges, and a once-only nudge
-// for signups who never finished onboarding — no separate cron job
-// needed for any of them.
+// Also checks four other things on the same tick: a ~30-minute follow-up
+// for a missed reminder, 3/7-day inactivity nudges, a once-only nudge for
+// signups who never finished onboarding, and SPF reapply reminders every
+// 2h after sunscreen was ticked — no separate cron job needed for any of
+// them.
 
 import webpush from 'npm:web-push@3.6.7'
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0'
@@ -234,6 +235,33 @@ Deno.serve(async (req) => {
 
       await sendPush(row.subscription, payload, row.user_id, dryRun, result, async () => {
         await supabase.from('onboarding_nudge_log').insert({ user_id: row.user_id })
+      })
+    }
+  }
+
+  // --- SPF reapply reminders, every 2h after sunscreen was ticked, until 5pm ---
+
+  const { data: spf, error: spfError } = await supabase.rpc('due_spf_reminders', { window_minutes: 6 })
+
+  if (spfError) {
+    diag.spfError = spfError.message
+  } else {
+    diag.spfDueCount = spf?.length ?? 0
+
+    for (const row of spf ?? []) {
+      const payload = {
+        title: 'SPF check! ☀️',
+        body: 'Time to reapply your sunscreen.',
+        url: '/',
+        tag: `spf-reapply-${row.reapply_number}`,
+      }
+
+      await sendPush(row.subscription, payload, row.user_id, dryRun, result, async () => {
+        await supabase.from('spf_reminder_log').insert({
+          user_id: row.user_id,
+          local_date: row.local_date,
+          reapply_number: row.reapply_number,
+        })
       })
     }
   }
