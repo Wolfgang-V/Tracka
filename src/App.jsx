@@ -146,6 +146,16 @@ function App() {
   const isPoppingRef = useRef(false)
 
   useEffect(() => {
+    // The browser's own scroll restoration tries to remember and replay a
+    // scroll offset per history entry. That's meant for real page loads —
+    // here every "page" is the same document with different content
+    // swapped in, so replaying an old offset onto new content is what
+    // produced the jump on back/forward. Doing it ourselves instead means
+    // every screen change, including hardware back, always lands at the top.
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual'
+    }
+
     window.history.replaceState({ screen }, '')
 
     const onPopState = (event) => {
@@ -164,9 +174,10 @@ function App() {
   useEffect(() => {
     if (isPoppingRef.current) {
       isPoppingRef.current = false
-      return
+    } else {
+      window.history.pushState({ screen }, '')
     }
-    window.history.pushState({ screen }, '')
+    window.scrollTo(0, 0)
   }, [screen])
 
   // Replaces the native alert dialog everywhere so error/success messages
@@ -1491,7 +1502,7 @@ if (screen === 'auth') {
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
         <button
-          onClick={() => setScreen('welcome')}
+          onClick={() => window.history.back()}
           className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -1754,7 +1765,7 @@ const saveReminderSettings = async () => {
         <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
 
           <button
-            onClick={() => setScreen('today')}
+            onClick={() => window.history.back()}
             className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -2022,7 +2033,7 @@ const saveReminderSettings = async () => {
         <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
 
           <button
-            onClick={() => setScreen('today')}
+            onClick={() => window.history.back()}
             className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -2934,7 +2945,7 @@ if (screen === 'login') {
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
         <button
-          onClick={() => setScreen('auth')}
+          onClick={() => window.history.back()}
           className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -3152,7 +3163,7 @@ if (screen === 'forgotPassword') {
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
         <button
-          onClick={() => setScreen('login')}
+          onClick={() => window.history.back()}
           className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -4493,29 +4504,42 @@ if (missingDays) {
           days_of_week: productDays[item.id] || [0, 1, 2, 3, 4, 5, 6],
         }))
 
+    // A dropped connection surfaces here as a raw fetch error ("TypeError:
+    // Load failed" on Safari/WebKit, "Failed to fetch" on Chrome) rather
+    // than a structured Postgrest error — not something to show verbatim,
+    // and on a weak mobile connection often clears up in a couple of
+    // seconds. One silent retry before bothering the user with anything.
+    const isNetworkError = (err) =>
+      err instanceof TypeError || /load failed|failed to fetch|network/i.test(err.message || '')
+
     // One DB function doing deactivate-old + insert-new in a single
     // transaction, instead of two separate requests from the client — a
     // dropped connection between them used to leave someone with no
     // active routine at all despite their products still being there.
-    const { error } = await supabase.rpc('create_routine', {
+    // Safe to retry even if the first attempt actually landed server-side
+    // before the response was lost: create_routine always deactivates
+    // whatever's currently active first, so re-running it with the same
+    // steps just re-creates the same end state.
+    let { error } = await supabase.rpc('create_routine', {
       p_routine_code: routineCode,
       p_am_steps: buildSteps('AM'),
       p_pm_steps: buildSteps('PM'),
     })
 
+    if (error && isNetworkError(error)) {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      ;({ error } = await supabase.rpc('create_routine', {
+        p_routine_code: routineCode,
+        p_am_steps: buildSteps('AM'),
+        p_pm_steps: buildSteps('PM'),
+      }))
+    }
+
     setRoutineSaving(false)
 
     if (error) {
-      // A dropped connection surfaces here as a raw fetch error ("TypeError:
-      // Load failed" on Safari/WebKit, "Failed to fetch" on Chrome) rather
-      // than a structured Postgrest error — not something to show verbatim.
-      // Anything else is a real message from create_routine itself (e.g.
-      // "A routine needs at least one step") and is worth keeping as-is.
-      const isNetworkError =
-        error instanceof TypeError || /load failed|failed to fetch|network/i.test(error.message || '')
-
       notify(
-        isNetworkError
+        isNetworkError(error)
           ? "Couldn't save your routine — check your connection and try again."
           : 'Could not save your routine: ' + error.message
       )
