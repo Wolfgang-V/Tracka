@@ -1903,12 +1903,24 @@ const saveReminderSettings = async () => {
                   'Dryness',
                   'Hyperpigmentation',
                   'Sensitivity',
+                  'None',
                 ].map((concern) => (
                   <button
                     key={concern}
-                    onClick={() =>
-                      toggleOption(concern, concerns, setConcerns)
-                    }
+                    onClick={() => {
+                      // "None" is an exclusive choice, not just another
+                      // item in the list — picking it clears everything
+                      // else, and picking anything else clears "None".
+                      if (concern === 'None') {
+                        setConcerns(concerns.includes('None') ? [] : ['None'])
+                      } else {
+                        toggleOption(
+                          concern,
+                          concerns.filter((c) => c !== 'None'),
+                          setConcerns
+                        )
+                      }
+                    }}
                     className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
                       concerns.includes(concern)
                         ? `${t.chip} border-transparent`
@@ -3830,7 +3842,7 @@ if (screen === 'reminders') {
                 </h2>
 
                 <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                  Get timely reminders to reapply your sunscreen during the day. Off by default.
+                  Get timely reminders to reapply your sunscreen during the day.
                 </p>
               </div>
 
@@ -3874,7 +3886,7 @@ if (screen === 'reminders') {
 
               setPushStatus(
                 result.ok
-                  ? "You're set. Reminders will arrive on this device."
+                  ? "You're all set!"
                   : result.reason === 'needs_install'
                     ? 'Add Tracka+ to your home screen first, then open it from there.'
                     : result.reason === 'denied'
