@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from './lib/supabase'
-import { slotRank } from './lib/core/actives'
 import { planNight, localDateString, addDays, addMonths, PREGNANCY_NOTE } from './lib/core/planNight'
 import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
@@ -135,6 +134,40 @@ function App() {
   const [screen, setScreen] = useState('welcome')
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
+
+  // There's no router, so nothing was ever pushed onto browser history when
+  // screen changed — every screen sat on the same single entry. On Android,
+  // the system/gesture back button acts on that history, so with nothing to
+  // pop it closed the app straight from wherever the person was, instead of
+  // stepping back a screen the way Back buttons elsewhere in the UI do.
+  // isPoppingRef distinguishes "the user hit hardware back" (state already
+  // moved, don't push again) from "the app navigated forward" (push a new
+  // entry so back has somewhere to go).
+  const isPoppingRef = useRef(false)
+
+  useEffect(() => {
+    window.history.replaceState({ screen }, '')
+
+    const onPopState = (event) => {
+      const previousScreen = event.state?.screen
+      if (previousScreen) {
+        isPoppingRef.current = true
+        setScreen(previousScreen)
+      }
+    }
+
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (isPoppingRef.current) {
+      isPoppingRef.current = false
+      return
+    }
+    window.history.pushState({ screen }, '')
+  }, [screen])
 
   // Replaces the native alert dialog everywhere so error/success messages
   // look like the app instead of the OS. tone: 'error' | 'success'.
@@ -918,6 +951,30 @@ const nightPlan = planNight({
     brand: step.user_products?.products?.brand,
     category: step.user_products?.products?.category,
     ingredients: step.user_products?.products?.ingredients,
+    frequency: step.frequency,
+    daysOfWeek: step.days_of_week,
+    step_order: step.step_order,
+    opened_date: step.user_products?.opened_date ?? null,
+    pao_months: step.user_products?.pao_months ?? null,
+  })),
+  history: stepHistory.filter((entry) => entry.local_date < todayString),
+  restrictions,
+})
+
+// AM gets the same day-of-week/cadence engine as PM — it used to just list
+// every configured step unconditionally, which is why a product scheduled
+// for only some days still showed up (and blocked "finish routine") every
+// day. Actives conflict rules don't apply in the morning, so active is
+// forced to 'none' rather than left to detectActive.
+const amPlan = planNight({
+  today: todayString,
+  steps: todayAmSteps.map((step) => ({
+    id: step.id,
+    name: step.user_products?.products?.name || step.step_name,
+    brand: step.user_products?.products?.brand,
+    category: step.user_products?.products?.category,
+    ingredients: step.user_products?.products?.ingredients,
+    active: 'none',
     frequency: step.frequency,
     daysOfWeek: step.days_of_week,
     step_order: step.step_order,
@@ -3838,16 +3895,7 @@ if (screen === 'reminders') {
   )
 }
 if (screen === 'today') {
-  const amSteps = todayAmSteps
-    .map((step) => ({
-      id: step.id,
-      name: step.user_products?.products?.name || step.step_name,
-      brand: step.user_products?.products?.brand,
-      category: step.user_products?.products?.category,
-      ingredients: step.user_products?.products?.ingredients,
-      active: 'none',
-    }))
-    .sort((a, b) => slotRank(a.category) - slotRank(b.category))
+  const amSteps = amPlan.steps
 
   const pmSteps = nightPlan.steps
 
@@ -4054,8 +4102,8 @@ if (screen === 'today') {
 
               <button
                 onClick={() => {
-                  if (amDone < amSteps.length) {
-                    notify('You have not completed your morning routine — tick off each step first.')
+                  if (amSteps.length > 0 && amDone === 0) {
+                    notify('Tick off at least one step first.')
                     return
                   }
                   finishRoutine('AM')
@@ -4151,8 +4199,8 @@ if (screen === 'today') {
 
               <button
                 onClick={() => {
-                  if (pmDone < pmSteps.length) {
-                    notify('You have not completed your night routine — tick off each step first.')
+                  if (pmSteps.length > 0 && pmDone === 0) {
+                    notify('Tick off at least one step first.')
                     return
                   }
                   finishRoutine('PM')
@@ -4458,7 +4506,19 @@ if (missingDays) {
     setRoutineSaving(false)
 
     if (error) {
-      notify('Could not save your routine: ' + error.message)
+      // A dropped connection surfaces here as a raw fetch error ("TypeError:
+      // Load failed" on Safari/WebKit, "Failed to fetch" on Chrome) rather
+      // than a structured Postgrest error — not something to show verbatim.
+      // Anything else is a real message from create_routine itself (e.g.
+      // "A routine needs at least one step") and is worth keeping as-is.
+      const isNetworkError =
+        error instanceof TypeError || /load failed|failed to fetch|network/i.test(error.message || '')
+
+      notify(
+        isNetworkError
+          ? "Couldn't save your routine — check your connection and try again."
+          : 'Could not save your routine: ' + error.message
+      )
       return
     }
 
