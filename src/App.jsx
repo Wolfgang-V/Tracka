@@ -242,6 +242,10 @@ function App() {
   const [concerns, setConcerns] = useState([])
   const [goals, setGoals] = useState([])
   const [sensitivity, setSensitivity] = useState('')
+  // Only relevant once onboarding is done — during onboarding itself this
+  // screen is always the form. Revisiting later defaults to the read-only
+  // summary; "Update" swaps in the same form pre-filled with what's saved.
+  const [skinProfileEditing, setSkinProfileEditing] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [resetStatus, setResetStatus] = useState(null)
   const [newPassword, setNewPassword] = useState('')
@@ -1794,17 +1798,74 @@ const saveReminderSettings = async () => {
             </div>
           )}
 
+          {onboardingCompleted && !skinProfileEditing && skinType ? (
+            <>
+              <div className="mt-5">
+                <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
+                  Your skin profile
+                </h1>
+
+                <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+                  What Tracka+ knows about your skin right now.
+                </p>
+              </div>
+
+              <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+                {[
+                  ['Gender', gender || '—'],
+                  [
+                    'Pregnant or breastfeeding',
+                    pregnantOrBreastfeeding === true
+                      ? 'Yes'
+                      : pregnantOrBreastfeeding === false
+                        ? 'No'
+                        : pregnantOrBreastfeeding === null
+                          ? 'Rather not say'
+                          : '—',
+                  ],
+                  ['Skin type', skinType || '—'],
+                  ['Main concerns', concerns.length > 0 ? concerns.join(', ') : '—'],
+                  ['Goals', goals.length > 0 ? goals.join(', ') : '—'],
+                  ['Sensitivity', sensitivity || '—'],
+                ].map(([label, value], index, arr) => (
+                  <div
+                    key={label}
+                    className={`py-3.5 ${index < arr.length - 1 ? `border-b ${t.hair}` : ''}`}
+                  >
+                    <p className={`text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
+                      {label}
+                    </p>
+                    <p className="mt-1 text-[15px] font-medium">
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                onClick={() => setSkinProfileEditing(true)}
+                className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+              >
+                Update
+              </button>
+            </>
+          ) : (
+            <>
           <div className="mt-5">
-            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-              Step 1 of 3
-            </p>
+            {!onboardingCompleted && (
+              <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+                Step 1 of 3
+              </p>
+            )}
 
             <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-              Tell us about your skin
+              {onboardingCompleted ? 'Update your skin profile' : 'Tell us about your skin'}
             </h1>
 
             <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-              This helps Tracka+ organize your skincare journey around you.
+              {onboardingCompleted
+                ? "Skin changes — update this any time it does."
+                : 'This helps Tracka+ organize your skincare journey around you.'}
             </p>
           </div>
 
@@ -2023,15 +2084,34 @@ const saveReminderSettings = async () => {
                   return
                 }
 
-                notify('Skin profile saved!', 'success')
-                setScreen('products')
+                if (onboardingCompleted) {
+                  notify('Skin profile updated!', 'success')
+                  setSkinProfileEditing(false)
+                } else {
+                  notify('Skin profile saved!', 'success')
+                  setScreen('products')
+                }
               }}
               className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
             >
-              Continue
+              {onboardingCompleted ? 'Save changes' : 'Continue'}
             </button>
 
+            {onboardingCompleted && (
+              <button
+                onClick={async () => {
+                  await loadSkinProfile()
+                  setSkinProfileEditing(false)
+                }}
+                className={`w-full rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
+              >
+                Cancel
+              </button>
+            )}
+
           </div>
+            </>
+          )}
         </div>
 
         {onboardingCompleted && renderBottomTabs('skinProfile', t)}
