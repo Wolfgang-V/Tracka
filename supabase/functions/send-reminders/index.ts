@@ -239,7 +239,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  // --- SPF reapply reminders, every 2h after sunscreen was ticked, until 5pm ---
+  // --- SPF reapply reminders, fixed at 12:00 and 15:00 local time ---
 
   const { data: spf, error: spfError } = await supabase.rpc('due_spf_reminders', { window_minutes: 6 })
 
@@ -249,12 +249,19 @@ Deno.serve(async (req) => {
     diag.spfDueCount = spf?.length ?? 0
 
     for (const row of spf ?? []) {
-      const payload = {
-        title: 'SPF check! ☀️',
-        body: 'Time to reapply your sunscreen.',
-        url: '/',
-        tag: `spf-reapply-${row.reapply_number}`,
-      }
+      const payload = row.reapply_number === 1
+        ? {
+            title: 'SPF check! ☀️',
+            body: 'Time to reapply your sunscreen.',
+            url: '/',
+            tag: `spf-reapply-${row.reapply_number}`,
+          }
+        : {
+            title: 'Sunscreen reminder ☀️',
+            body: "It's time for another sunscreen application.",
+            url: '/',
+            tag: `spf-reapply-${row.reapply_number}`,
+          }
 
       await sendPush(row.subscription, payload, row.user_id, dryRun, result, async () => {
         await supabase.from('spf_reminder_log').insert({

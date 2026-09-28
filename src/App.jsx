@@ -1205,53 +1205,6 @@ useEffect(() => {
 
 }, [screen])
 
-// "Heading out today?" — asked once a day, only to people who already
-// opted into SPF reminders, right when they tick their sunscreen step
-// (the same event that starts the 2-hour clock server-side). Answering
-// either way records today's check-in; only "yes" actually unlocks the
-// reminders, but recording "no" too stops this from asking again today.
-useEffect(() => {
-  if (!user || !spfReapplyEnabled || screen !== 'today') return
-
-  const sunscreenStep = todayAmSteps.find(
-    (step) => (step.user_products?.products?.category || '').toLowerCase() === 'sunscreen'
-  )
-  if (!sunscreenStep || !completedSteps.includes(sunscreenStep.id)) return
-
-  let cancelled = false
-
-  const checkAndPrompt = async () => {
-    const today = localDateString()
-
-    const { data: existing } = await supabase
-      .from('spf_daily_checkin')
-      .select('user_id')
-      .eq('user_id', user.id)
-      .eq('local_date', today)
-      .maybeSingle()
-
-    if (existing || cancelled) return
-
-    const headingOut = await confirmAction(
-      "Heading out today? We'll send two sunscreen reapply reminders if so.",
-      ['Not today', "I'm heading out"]
-    )
-
-    if (cancelled) return
-
-    await supabase.from('spf_daily_checkin').upsert(
-      { user_id: user.id, local_date: today, heading_out: headingOut },
-      { onConflict: 'user_id,local_date' }
-    )
-  }
-
-  checkAndPrompt()
-
-  return () => {
-    cancelled = true
-  }
-}, [user, spfReapplyEnabled, todayAmSteps, completedSteps, screen])
-
 // Live brand search against Open Beauty Facts, debounced so it doesn't
 // fire on every keystroke. Merged with the local BRANDS list in the UI.
 useEffect(() => {
@@ -3805,12 +3758,11 @@ if (screen === 'reminders') {
                 </p>
 
                 <h2 className="mt-1 text-[17px] font-semibold">
-                  SPF reapply reminders
+                  Stay consistent with your sunscreen
                 </h2>
 
                 <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                  A midday and mid-afternoon nudge to reapply, on days you're heading outdoors.
-                  Off by default.
+                  Get timely reminders to reapply your sunscreen during the day. Off by default.
                 </p>
               </div>
 
@@ -3841,12 +3793,11 @@ if (screen === 'reminders') {
 
         <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
           <h2 className="text-[17px] font-semibold">
-            Notifications on this device
+            Notifications
           </h2>
 
           <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>
-            Reminders arrive on whichever device you turn this on. On iPhone, add
-            Tracka+ to your home screen first and open it from there.
+            Enable notifications to get your Tracka+ reminders.
           </p>
 
           <button
