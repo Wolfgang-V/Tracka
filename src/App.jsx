@@ -3973,7 +3973,19 @@ if (screen === 'today') {
           <div className="mt-1 pr-16">
             <p className={`text-[15px] ${dayPalette.muted}`}>
               Hello, {displayName}
+              {onboardingCompleted && (
+                <span className={`ml-1.5 ${dayPalette.mark}`}>✓</span>
+              )}
             </p>
+
+            {!onboardingCompleted && (
+              <button
+                onClick={() => setScreen('routinePlanner')}
+                className={`mt-2 inline-block rounded-full px-2.5 py-1 text-[11px] font-semibold ${dayPalette.chip}`}
+              >
+                Complete your profile →
+              </button>
+            )}
 
             <h1 className="mt-1.5 font-display text-[50px] font-light leading-[0.95] tracking-tight">
               Today
