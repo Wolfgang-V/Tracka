@@ -773,6 +773,10 @@ const saveProgressPhotoNote = async (photo, note) => {
 
   if (error) {
     console.error('PHOTO NOTE ERROR:', error)
+    // The textarea this is called from is uncontrolled (defaultValue), so
+    // without this the typed text just sits there looking saved — closing
+    // and reopening the photo would silently revert to the old note.
+    notify("That note didn't save. Try again.")
     return
   }
 
@@ -783,37 +787,52 @@ const saveProgressPhotoNote = async (photo, note) => {
 const updateSkinMetric = async (metric, delta) => {
   const today = localDateString()
 
-  const current = skinLogs.find((log) => log.local_date === today) || {
-    local_date: today,
-    breakouts: 0,
-    dryness: 0,
-    oiliness: 0,
-    redness: 0,
-  }
+  // previousRow/updatedRow are captured from inside the functional updater,
+  // not read from the outer skinLogs closure — tapping +/- rapidly on two
+  // metrics (or the same one twice) before the first request resolves
+  // would otherwise have both calls compute their "current" value from the
+  // same stale snapshot, silently dropping one of the increments.
+  let previousRow = null
+  let updatedRow = null
 
-  const nextValue = Math.max(0, Math.min(20, current[metric] + delta))
-  const updated = { ...current, [metric]: nextValue }
+  setSkinLogs((logs) => {
+    const existing = logs.find((log) => log.local_date === today) || {
+      local_date: today,
+      breakouts: 0,
+      dryness: 0,
+      oiliness: 0,
+      redness: 0,
+    }
+    previousRow = existing
 
-  setSkinLogs((logs) =>
-    logs.some((log) => log.local_date === today)
-      ? logs.map((log) => (log.local_date === today ? updated : log))
-      : [...logs, updated]
-  )
+    const nextValue = Math.max(0, Math.min(20, existing[metric] + delta))
+    updatedRow = { ...existing, [metric]: nextValue }
+
+    return logs.some((log) => log.local_date === today)
+      ? logs.map((log) => (log.local_date === today ? updatedRow : log))
+      : [...logs, updatedRow]
+  })
 
   const { error } = await supabase.from('skin_logs').upsert(
     {
       user_id: user.id,
       local_date: today,
-      breakouts: updated.breakouts,
-      dryness: updated.dryness,
-      oiliness: updated.oiliness,
-      redness: updated.redness,
+      breakouts: updatedRow.breakouts,
+      dryness: updatedRow.dryness,
+      oiliness: updatedRow.oiliness,
+      redness: updatedRow.redness,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id,local_date' }
   )
 
-  if (error) console.error('SKIN LOG SAVE ERROR:', error)
+  if (error) {
+    console.error('SKIN LOG SAVE ERROR:', error)
+    notify("That didn't save. Check your connection and try again.")
+    // The optimistic bump above was never actually persisted — revert it
+    // rather than leave the UI showing a value the database doesn't have.
+    setSkinLogs((logs) => logs.map((log) => (log.local_date === today ? previousRow : log)))
+  }
 }
 
 // Only the night routine counts toward the streak and lights up the
@@ -1018,9 +1037,12 @@ const inviteFriend = async () => {
       return
     }
 
-    setCompletedSteps(
-      completedSteps.filter((id) => id !== stepId)
-    )
+    // Functional update, not `completedSteps.filter(...)` off the outer
+    // closure — ticking a second step before this one's request resolves
+    // would otherwise overwrite state with a snapshot that predates the
+    // first tap, silently reverting it back to unchecked in the UI even
+    // though its row was already saved.
+    setCompletedSteps((current) => current.filter((id) => id !== stepId))
 
     return
   }
@@ -1046,7 +1068,7 @@ const inviteFriend = async () => {
     return
   }
 
-  setCompletedSteps([...completedSteps, stepId])
+  setCompletedSteps((current) => (current.includes(stepId) ? current : [...current, stepId]))
 }
 
 const todayString = localDateString()
