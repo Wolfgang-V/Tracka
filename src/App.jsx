@@ -875,7 +875,17 @@ const shareStreak = async (streak, tonightSteps) => {
       : 'I showed up for my skin today'
 
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      // Full picture: the image lands directly in Instagram/WhatsApp/etc.
       await navigator.share({ files: [file], title: 'Tracka+', text: caption })
+    } else if (navigator.share) {
+      // Sharing files isn't supported here (older iOS Safari, some Android
+      // WebViews), but plain text/link sharing has much wider support and
+      // still opens the same native sheet with Instagram/WhatsApp/X in it.
+      // Not chaining a download onto this one — a second user-gesture-style
+      // action (the download prompt) right before the share call risks the
+      // browser treating the share as no longer "in response to" the tap
+      // and silently refusing it, which would be worse than no image.
+      await navigator.share({ title: 'Tracka+', text: `${caption} ${SITE_URL}` })
     } else {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -900,8 +910,12 @@ const shareStreak = async (streak, tonightSteps) => {
 const inviteFriend = async () => {
   const shareData = {
     title: 'Tracka+',
+    // SITE_URL, not window.location.origin — same reasoning as the auth
+    // emails: the old vercel.app URL still resolves, so sharing whatever
+    // domain the tab happened to be on would leak that instead of the
+    // custom domain.
     text: 'I track my skincare routine with Tracka+ — join me.',
-    url: window.location.origin,
+    url: SITE_URL,
   }
 
   if (navigator.share) {
@@ -5049,6 +5063,21 @@ if (screen === 'progress') {
           <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>
             {streakMessage(currentStreak)}
           </p>
+
+          {currentStreak > 0 && (
+            <button
+              disabled={shareStreakBusy}
+              onClick={() =>
+                shareStreak(
+                  currentStreak,
+                  nightPlan.steps.filter((step) => completedSteps.includes(step.id))
+                )
+              }
+              className={`mt-4 w-full rounded-2xl py-3.5 text-[14px] font-bold ${t.btn} disabled:opacity-60`}
+            >
+              {shareStreakBusy ? 'Preparing…' : 'Share my streak'}
+            </button>
+          )}
         </div>
 
         <div className={`mt-4 rounded-3xl ${t.surface} px-5 py-6`}>
