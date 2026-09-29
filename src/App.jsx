@@ -6,6 +6,7 @@ import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
 import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
 import { generateStreakImage, isMilestoneStreak } from './lib/shareImage'
+import { flameColorForStreak, FLAME_PATH } from './lib/core/flameColor'
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
 
@@ -4953,7 +4954,11 @@ if (screen === 'completed') {
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-7 text-center">
 
         <span className={`flex h-14 w-14 items-center justify-center rounded-full text-2xl ${t.chip}`}>
-          {milestone ? '🔥' : '✓'}
+          {milestone ? (
+            <svg width="26" height="26" viewBox="0 0 24 24" fill={flameColorForStreak(currentStreak)}>
+              <path d={FLAME_PATH} />
+            </svg>
+          ) : '✓'}
         </span>
 
         <h1 className="mt-6 font-display text-[44px] font-light leading-[1.02] tracking-tight">
@@ -4968,31 +4973,56 @@ if (screen === 'completed') {
             : <>Great job taking care of your skin. See you {isPm ? 'in the morning' : 'tonight'} 👋</>}
         </p>
 
-        {isPm && (
+        {isPm ? (
+          <>
+            <button
+              disabled={shareStreakBusy}
+              onClick={() => shareStreak(currentStreak, tonightSteps)}
+              className={`mt-8 flex w-full items-center justify-center gap-2 rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 15V4M12 4l-4 4M12 4l4 4" />
+                <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" />
+              </svg>
+              {shareStreakBusy ? 'Preparing…' : 'Share my streak'}
+            </button>
+
+            <div className="mt-3 grid w-full grid-cols-2 gap-3">
+              <button
+                onClick={inviteFriend}
+                className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} ${t.muted}`}
+              >
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="9" cy="8" r="3.5" />
+                  <path d="M3.5 20v-1a5.5 5.5 0 0 1 5.5-5.5h0" />
+                  <path d="M18 8v6M15 11h6" />
+                </svg>
+                Invite
+              </button>
+
+              <button
+                onClick={() => setScreen('progress')}
+                className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} ${t.muted}`}
+              >
+                <svg width="17" height="17" viewBox="0 0 24 24" fill={flameColorForStreak(currentStreak)}>
+                  <path d={FLAME_PATH} />
+                </svg>
+                Streak
+              </button>
+            </div>
+          </>
+        ) : (
           <button
-            disabled={shareStreakBusy}
-            onClick={() => shareStreak(currentStreak, tonightSteps)}
-            className={`mt-8 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
+            onClick={() => setScreen('progress')}
+            className={`mt-8 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
           >
-            {shareStreakBusy ? 'Preparing…' : 'Share my streak'}
+            View my streak
           </button>
         )}
-
-        {isPm && (
-          <button
-            onClick={inviteFriend}
-            className={`mt-3 w-full rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
-          >
-            Invite a friend
-          </button>
-        )}
-
-        <button
-          onClick={() => setScreen('progress')}
-          className={`mt-3 w-full rounded-2xl py-[18px] text-base font-bold ${isPm ? `border ${t.hair} ${t.muted}` : t.btn}`}
-        >
-          View my streak
-        </button>
 
       </div>
     </main>
@@ -5050,8 +5080,8 @@ if (screen === 'progress') {
 
         <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
           <p className={`flex items-center gap-1.5 text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="#F97316">
-              <path d="M12 2c1.5 3 .5 4.5-.5 6C10 6.5 9.5 5 10 3c-2.5 2-5 5.5-5 9a7 7 0 0 0 14 0c0-4-2.5-7-3.5-8.5.3 2-.5 3.3-1.5 4.2C13.8 6 13 4 12 2Z" />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill={flameColorForStreak(currentStreak)}>
+              <path d={FLAME_PATH} />
             </svg>
             Current streak
           </p>
