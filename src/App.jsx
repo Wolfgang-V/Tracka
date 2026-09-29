@@ -5,6 +5,7 @@ import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
 import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
+import { generateStreakImage, isMilestoneStreak } from './lib/shareImage'
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
 
@@ -366,6 +367,7 @@ setRoutineHistory(groupedRoutines)
   const [todayPmSteps, setTodayPmSteps] = useState([])
   const [completedSteps, setCompletedSteps] = useState([])
   const [lastCompletedSlot, setLastCompletedSlot] = useState(null)
+  const [shareStreakBusy, setShareStreakBusy] = useState(false)
   const [stepHistory, setStepHistory] = useState([])
   const [menuOpen, setMenuOpen] = useState(false)
   const [pushStatus, setPushStatus] = useState(null)
@@ -842,6 +844,81 @@ const finishRoutine = async (slot) => {
 
   setLastCompletedSlot(slot)
   setScreen('completed')
+}
+
+// Renders tonight's completed steps into a shareable card and hands it to
+// the OS share sheet (Instagram/WhatsApp/etc pick it up from there, same
+// as any native app). Falls back to a plain download where the Web Share
+// API can't take files — older Android WebViews, desktop Safari.
+const shareStreak = async (streak, tonightSteps) => {
+  if (shareStreakBusy) return
+  setShareStreakBusy(true)
+
+  try {
+    const blob = await generateStreakImage({
+      streak,
+      routineLabel: 'Night Routine',
+      dateLabel: new Date().toLocaleDateString('en-GB', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      }),
+      products: tonightSteps.map((step) => ({
+        name: step.name,
+        category: step.category,
+      })),
+    })
+
+    const file = new File([blob], 'tracka-streak.png', { type: 'image/png' })
+    const caption = isMilestoneStreak(streak)
+      ? `🔥 ${streak} day streak unlocked`
+      : 'I showed up for my skin today'
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Tracka+', text: caption })
+    } else {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'tracka-streak.png'
+      a.click()
+      URL.revokeObjectURL(url)
+      notify('Image saved — share it from your photos.', 'success')
+    }
+  } catch (err) {
+    // AbortError just means they closed the share sheet without picking
+    // anything — not a failure worth surfacing.
+    if (err?.name !== 'AbortError') {
+      console.error('SHARE STREAK ERROR:', err)
+      notify('Could not create the image. Try again in a moment.')
+    }
+  } finally {
+    setShareStreakBusy(false)
+  }
+}
+
+const inviteFriend = async () => {
+  const shareData = {
+    title: 'Tracka+',
+    text: 'I track my skincare routine with Tracka+ — join me.',
+    url: window.location.origin,
+  }
+
+  if (navigator.share) {
+    try {
+      await navigator.share(shareData)
+    } catch (err) {
+      if (err?.name !== 'AbortError') console.error('INVITE SHARE ERROR:', err)
+    }
+    return
+  }
+
+  if (navigator.clipboard) {
+    await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`)
+    notify('Invite link copied — paste it anywhere.', 'success')
+  } else {
+    notify(shareData.url, 'success')
+  }
 }
 
   const loadRoutines = async () => {
@@ -4853,25 +4930,52 @@ if (screen === 'routineDetails') {
   )
 }
 if (screen === 'completed') {
+  const isPm = lastCompletedSlot === 'PM'
+  const milestone = isPm && isMilestoneStreak(currentStreak)
+  const tonightSteps = nightPlan.steps.filter((step) => completedSteps.includes(step.id))
+
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-7 text-center">
 
         <span className={`flex h-14 w-14 items-center justify-center rounded-full text-2xl ${t.chip}`}>
-          ✓
+          {milestone ? '🔥' : '✓'}
         </span>
 
         <h1 className="mt-6 font-display text-[44px] font-light leading-[1.02] tracking-tight">
-          {lastCompletedSlot === 'PM' ? 'Routine complete' : 'All done for the morning'}
+          {milestone
+            ? `${currentStreak} Day Streak`
+            : isPm ? 'Routine complete' : 'All done for the morning'}
         </h1>
 
         <p className={`mt-3 max-w-[280px] text-[15px] leading-relaxed ${t.muted}`}>
-          Great job taking care of your skin. See you {lastCompletedSlot === 'PM' ? 'in the morning' : 'tonight'} 👋
+          {milestone
+            ? 'Look at you go. That kind of consistency shows.'
+            : <>Great job taking care of your skin. See you {isPm ? 'in the morning' : 'tonight'} 👋</>}
         </p>
+
+        {isPm && (
+          <button
+            disabled={shareStreakBusy}
+            onClick={() => shareStreak(currentStreak, tonightSteps)}
+            className={`mt-8 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
+          >
+            {shareStreakBusy ? 'Preparing…' : 'Share my streak'}
+          </button>
+        )}
+
+        {isPm && (
+          <button
+            onClick={inviteFriend}
+            className={`mt-3 w-full rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
+          >
+            Invite a friend
+          </button>
+        )}
 
         <button
           onClick={() => setScreen('progress')}
-          className={`mt-8 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+          className={`mt-3 w-full rounded-2xl py-[18px] text-base font-bold ${isPm ? `border ${t.hair} ${t.muted}` : t.btn}`}
         >
           View my streak
         </button>
