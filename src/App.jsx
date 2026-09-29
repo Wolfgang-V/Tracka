@@ -868,6 +868,7 @@ const shareStreak = async (streak, tonightSteps) => {
         name: step.name,
         category: step.category,
       })),
+      isNight,
     })
 
     const file = new File([blob], 'tracka-streak.png', { type: 'image/png' })
@@ -4167,7 +4168,7 @@ if (screen === 'today') {
   return (
     <main className="min-h-screen">
 
-      <div className={`${dayPalette.page} transition-colors duration-500`}>
+      <div className={`${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex w-full max-w-md flex-col px-6 pt-7">
 
         <div className="relative">
@@ -4175,7 +4176,7 @@ if (screen === 'today') {
             type="button"
             aria-label="Open menu"
             onClick={() => setMenuOpen(!menuOpen)}
-            className={`absolute right-0 top-1 flex h-14 w-14 items-center justify-center rounded-full ${dayPalette.chip}`}
+            className={`absolute right-0 top-1 flex h-14 w-14 items-center justify-center rounded-full ${t.chip}`}
           >
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -4191,7 +4192,7 @@ if (screen === 'today') {
                 onClick={() => setMenuOpen(false)}
               />
 
-              <div className={`absolute right-0 top-16 z-10 w-52 overflow-hidden rounded-2xl ${dayPalette.surface} shadow-xl`}>
+              <div className={`absolute right-0 top-16 z-10 w-52 overflow-hidden rounded-2xl ${t.surface} shadow-xl`}>
                 {[
                   ['My routine', 'routinePlanner'],
                   ['My progress', 'progress'],
@@ -4204,7 +4205,7 @@ if (screen === 'today') {
                       setMenuOpen(false)
                       setScreen(target)
                     }}
-                    className={`block w-full px-5 py-3.5 text-left text-[15px] ${dayPalette.muted}`}
+                    className={`block w-full px-5 py-3.5 text-left text-[15px] ${t.muted}`}
                   >
                     {label}
                   </button>
@@ -4214,27 +4215,28 @@ if (screen === 'today') {
           )}
 
           <div className="mt-1 pr-16">
-            <p className={`text-[15px] ${dayPalette.muted}`}>
-              Hello, {displayName}
-              {onboardingCompleted && (
-                <span className={`ml-1.5 ${dayPalette.mark}`}>✓</span>
-              )}
+            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+              Today
             </p>
+
+            <h1 className="mt-1.5 font-display text-[44px] font-light leading-[1.02] tracking-tight">
+              Hello, {displayName}
+            </h1>
 
             {!onboardingCompleted && (
               <button
                 onClick={() => setScreen('routinePlanner')}
-                className={`mt-2 inline-block rounded-full px-2.5 py-1 text-[11px] font-semibold ${dayPalette.chip}`}
+                className={`mt-2 inline-block rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}
               >
                 Complete your profile →
               </button>
             )}
 
-            <h1 className="mt-1.5 font-display text-[50px] font-light leading-[0.95] tracking-tight">
-              Today
-            </h1>
+          <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>
+            Here's your skincare routine for today
+          </p>
 
-          <p className={`mt-2.5 text-sm ${dayPalette.muted}`}>
+          <p className={`mt-2.5 text-sm ${t.muted}`}>
             {new Date().toLocaleDateString('en-GB', {
               weekday: 'long',
               day: 'numeric',
@@ -4245,7 +4247,7 @@ if (screen === 'today') {
         </div>
 
         <div className="mt-10">
-          <p className={`text-[13px] font-semibold uppercase tracking-wide ${dayPalette.mark}`}>
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
             Morning
           </p>
 
@@ -4255,35 +4257,35 @@ if (screen === 'today') {
 
           <div className="mt-6">
             {routinesLoading ? (
-              <p className={`text-sm ${dayPalette.muted}`}>Getting your routine…</p>
+              <p className={`text-sm ${t.muted}`}>Getting your routine…</p>
             ) : !todayAmRoutine ? (
               <div>
-                <p className={`text-[15px] leading-relaxed ${dayPalette.muted}`}>
+                <p className={`text-[15px] leading-relaxed ${t.muted}`}>
                   You haven't set up a morning routine yet.
                 </p>
                 <button
                   onClick={() => setScreen('routinePlanner')}
-                  className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${dayPalette.btn}`}
+                  className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${t.btn}`}
                 >
                   Build my routine
                 </button>
               </div>
             ) : (
-              renderSteps(amSteps, dayPalette)
+              renderSteps(amSteps, t)
             )}
           </div>
 
           {amIngredientWarnings.length > 0 && (
-            <div className={`mt-4 flex flex-col gap-2.5 rounded-2xl border ${dayPalette.hair} p-4`}>
+            <div className={`mt-4 flex flex-col gap-2.5 rounded-2xl border ${t.hair} p-4`}>
               {amIngredientWarnings.map((w, i) => (
                 <div key={i}>
                   <p className="text-[13px] font-semibold">
                     {w.ingredientA} + {w.ingredientB}
-                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${dayPalette.chip}`}>
+                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
                       {w.relationship}
                     </span>
                   </p>
-                  <p className={`mt-0.5 text-[13px] leading-relaxed ${dayPalette.muted}`}>{w.message}</p>
+                  <p className={`mt-0.5 text-[13px] leading-relaxed ${t.muted}`}>{w.message}</p>
                 </div>
               ))}
             </div>
@@ -4291,7 +4293,7 @@ if (screen === 'today') {
 
           {todayAmRoutine && !routinesLoading && (
             <div className="mt-7 flex flex-col gap-3.5">
-              <p className={`text-[13px] ${dayPalette.faint}`}>
+              <p className={`text-[13px] ${t.faint}`}>
                 {amDone} of {amSteps.length} done
               </p>
 
@@ -4303,7 +4305,7 @@ if (screen === 'today') {
                   }
                   finishRoutine('AM')
                 }}
-                className={`w-full rounded-2xl py-[18px] text-base font-bold ${dayPalette.btn}`}
+                className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
               >
                 Complete morning routine
               </button>
@@ -4314,17 +4316,9 @@ if (screen === 'today') {
       </div>
       </div>
 
-      <div
-        aria-hidden="true"
-        style={{
-          height: 110,
-          backgroundImage: `linear-gradient(to bottom, ${dayPalette.bgHex}, ${nightPalette.bgHex})`,
-        }}
-      />
-
-      <div className={`${nightPalette.page} transition-colors duration-500`}>
+      <div className={`${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex w-full max-w-md flex-col px-6 pb-28">
-          <p className={`text-[13px] font-semibold uppercase tracking-wide ${nightPalette.mark}`}>
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
             Night
           </p>
 
@@ -4350,37 +4344,37 @@ if (screen === 'today') {
 
           <div className="mt-6">
             {routinesLoading ? (
-              <p className={`text-sm ${nightPalette.muted}`}>Getting your routine…</p>
+              <p className={`text-sm ${t.muted}`}>Getting your routine…</p>
             ) : !todayPmRoutine ? (
               <div>
-                <p className={`text-[15px] leading-relaxed ${nightPalette.muted}`}>
+                <p className={`text-[15px] leading-relaxed ${t.muted}`}>
                   You haven't set up a night routine yet.
                 </p>
                 <button
                   onClick={() => setScreen('routinePlanner')}
-                  className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${nightPalette.btn}`}
+                  className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${t.btn}`}
                 >
                   Build my routine
                 </button>
               </div>
             ) : (
               <>
-                {renderSteps(pmSteps, nightPalette)}
+                {renderSteps(pmSteps, t)}
               </>
             )}
           </div>
 
           {pmIngredientWarnings.length > 0 && (
-            <div className={`mt-4 flex flex-col gap-2.5 rounded-2xl border ${nightPalette.hair} p-4`}>
+            <div className={`mt-4 flex flex-col gap-2.5 rounded-2xl border ${t.hair} p-4`}>
               {pmIngredientWarnings.map((w, i) => (
                 <div key={i}>
                   <p className="text-[13px] font-semibold">
                     {w.ingredientA} + {w.ingredientB}
-                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${nightPalette.chip}`}>
+                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
                       {w.relationship}
                     </span>
                   </p>
-                  <p className={`mt-0.5 text-[13px] leading-relaxed ${nightPalette.muted}`}>{w.message}</p>
+                  <p className={`mt-0.5 text-[13px] leading-relaxed ${t.muted}`}>{w.message}</p>
                 </div>
               ))}
             </div>
@@ -4388,7 +4382,7 @@ if (screen === 'today') {
 
           {todayPmRoutine && !routinesLoading && (
             <div className="mt-7 flex flex-col gap-3.5">
-              <p className={`text-[13px] ${nightPalette.faint}`}>
+              <p className={`text-[13px] ${t.faint}`}>
                 {pmDone} of {pmSteps.length} done
               </p>
 
@@ -4400,7 +4394,7 @@ if (screen === 'today') {
                   }
                   finishRoutine('PM')
                 }}
-                className={`w-full rounded-2xl py-[18px] text-base font-bold ${nightPalette.btn}`}
+                className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
               >
                 Complete night routine
               </button>
@@ -4408,8 +4402,8 @@ if (screen === 'today') {
           )}
 
         {(todayAmRoutine || todayPmRoutine) && !routinesLoading && (
-          <div className={`mt-8 rounded-3xl ${nightPalette.surface} p-5`}>
-            <h2 className={`text-[15px] font-semibold ${nightPalette.text}`}>
+          <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+            <h2 className={`text-[15px] font-semibold ${t.text}`}>
               Log today's skin condition
             </h2>
 
@@ -4422,8 +4416,8 @@ if (screen === 'today') {
               ].map(([key, label, color]) => (
                 <div key={key}>
                   <div className="flex items-center justify-between">
-                    <span className={`text-[13px] font-medium ${nightPalette.muted}`}>{label}</span>
-                    <span className={`text-[13px] font-semibold tabular-nums ${nightPalette.text}`}>
+                    <span className={`text-[13px] font-medium ${t.muted}`}>{label}</span>
+                    <span className={`text-[13px] font-semibold tabular-nums ${t.text}`}>
                       {todaySkinLog[key]}
                     </span>
                   </div>
@@ -4432,12 +4426,12 @@ if (screen === 'today') {
                     <button
                       type="button"
                       onClick={() => updateSkinMetric(key, -1)}
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-base leading-none ${nightPalette.hair} ${nightPalette.muted}`}
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-base leading-none ${t.hair} ${t.muted}`}
                     >
                       −
                     </button>
 
-                    <div className={`h-2.5 flex-1 overflow-hidden rounded-full ${nightPalette.rail}`}>
+                    <div className={`h-2.5 flex-1 overflow-hidden rounded-full ${t.rail}`}>
                       <div
                         className="h-full rounded-full transition-all duration-300"
                         style={{
@@ -4450,7 +4444,7 @@ if (screen === 'today') {
                     <button
                       type="button"
                       onClick={() => updateSkinMetric(key, 1)}
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-base leading-none ${nightPalette.btn}`}
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-base leading-none ${t.btn}`}
                     >
                       +
                     </button>
@@ -4464,7 +4458,7 @@ if (screen === 'today') {
       </div>
       </div>
 
-      {renderBottomTabs('today', dayPalette)}
+      {renderBottomTabs('today', t)}
     </main>
   )
 }
@@ -4953,7 +4947,7 @@ if (screen === 'completed') {
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-7 text-center">
 
-        <span className={`flex h-14 w-14 items-center justify-center rounded-full text-2xl ${t.chip}`}>
+        <span className={`animate-pop-in flex h-14 w-14 items-center justify-center rounded-full text-2xl ${t.chip}`}>
           {milestone ? (
             <svg width="26" height="26" viewBox="0 0 24 24" fill={flameColorForStreak(currentStreak)}>
               <path d={FLAME_PATH} />
@@ -4961,13 +4955,13 @@ if (screen === 'completed') {
           ) : '✓'}
         </span>
 
-        <h1 className="mt-6 font-display text-[44px] font-light leading-[1.02] tracking-tight">
+        <h1 className="animate-rise-in mt-6 font-display text-[44px] font-light leading-[1.02] tracking-tight">
           {milestone
             ? `${currentStreak} Day Streak`
             : isPm ? 'Routine complete' : 'All done for the morning'}
         </h1>
 
-        <p className={`mt-3 max-w-[280px] text-[15px] leading-relaxed ${t.muted}`}>
+        <p className={`animate-rise-in mt-3 max-w-[280px] text-[15px] leading-relaxed ${t.muted}`}>
           {milestone
             ? 'Look at you go. That kind of consistency shows.'
             : <>Great job taking care of your skin. See you {isPm ? 'in the morning' : 'tonight'} 👋</>}
