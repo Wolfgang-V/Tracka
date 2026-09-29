@@ -144,7 +144,7 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
   ctx.font = '500 76px "Cormorant Garamond"'
   const dailyLines = milestone ? [] : wrapText(ctx, 'I showed up for my skin today', 820)
 
-  const HEADLINE_H = milestone ? 600 : 300 + dailyLines.length * 92
+  const HEADLINE_H = milestone ? 640 : 380 + dailyLines.length * 92
   const CARD_GAP = 120
 
   const cardX = 72
@@ -164,39 +164,39 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
   const flameColor = flameColorForStreak(streak)
 
   if (milestone) {
-    drawFlame(ctx, WIDTH / 2, startY + 70, 120, flameColor)
+    drawFlame(ctx, WIDTH / 2, startY + 90, 160, flameColor)
 
-    hairline(ctx, WIDTH / 2, startY + 150, 100)
+    hairline(ctx, WIDTH / 2, startY + 190, 100)
 
     ctx.fillStyle = ACCENT
     ctx.font = '500 30px Inter'
     ctx.letterSpacing = '6px'
-    ctx.fillText('MILESTONE', WIDTH / 2, startY + 210)
+    ctx.fillText('MILESTONE', WIDTH / 2, startY + 250)
     ctx.letterSpacing = '0px'
 
     ctx.fillStyle = INK
     ctx.font = '600 220px "Cormorant Garamond"'
-    ctx.fillText(String(streak), WIDTH / 2, startY + 430)
+    ctx.fillText(String(streak), WIDTH / 2, startY + 470)
 
     ctx.fillStyle = MUTED
     ctx.font = '500 40px Inter'
     ctx.letterSpacing = '4px'
-    ctx.fillText('DAY STREAK', WIDTH / 2, startY + 510)
+    ctx.fillText('DAY STREAK', WIDTH / 2, startY + 550)
     ctx.letterSpacing = '0px'
 
-    hairline(ctx, WIDTH / 2, startY + 560, 100)
+    hairline(ctx, WIDTH / 2, startY + 600, 100)
   } else {
-    drawFlame(ctx, WIDTH / 2, startY + 50, 80, flameColor)
+    drawFlame(ctx, WIDTH / 2, startY + 80, 140, flameColor)
 
     ctx.fillStyle = ACCENT
-    ctx.font = '500 28px Inter'
-    ctx.letterSpacing = '6px'
-    ctx.fillText(`DAY ${streak}`, WIDTH / 2, startY + 140)
+    ctx.font = '600 48px Inter'
+    ctx.letterSpacing = '4px'
+    ctx.fillText(`DAY ${streak}`, WIDTH / 2, startY + 200)
     ctx.letterSpacing = '0px'
 
     ctx.fillStyle = INK
     ctx.font = '500 76px "Cormorant Garamond"'
-    let hy = startY + 240
+    let hy = startY + 300
     for (const line of dailyLines) {
       ctx.fillText(line, WIDTH / 2, hy)
       hy += 92
