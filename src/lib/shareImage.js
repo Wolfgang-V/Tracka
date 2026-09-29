@@ -2,18 +2,18 @@
 // Stories (1080x1920 = 9:16). Pure canvas — no dependency, since this only
 // needs to run once per share tap, not on every render.
 //
-// Deliberately its own palette rather than the app's navy/blue chrome —
+// Its own dark, editorial layout rather than the app's own light chrome —
 // this is the one surface meant to be looked at as an image on its own,
-// outside the app, so it leans into a quieter editorial-skincare feel
-// (serif type, a champagne accent, hairline rules) instead of the
-// product-UI blue. The app itself is unaffected.
+// outside the app — but the accent is the same brand blue the app itself
+// uses in dark mode (nightPalette.mark), so it still reads as Tracka+.
 
 import { flameColorForStreak, FLAME_PATH } from './core/flameColor'
 
 const WIDTH = 1080
 const HEIGHT = 1920
 
-const GOLD = '#C9A876'
+const ACCENT = '#8FB8E8'
+const ACCENT_RGB = '143,184,232'
 const INK = '#F3EFE8'
 const MUTED = '#9AA3AD'
 const FAINT = '#5B6570'
@@ -43,7 +43,7 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath()
 }
 
-function hairline(ctx, centerX, y, width, color = GOLD) {
+function hairline(ctx, centerX, y, width, color = ACCENT) {
   ctx.strokeStyle = color
   ctx.lineWidth = 2
   ctx.beginPath()
@@ -103,14 +103,15 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
   canvas.height = HEIGHT
   const ctx = canvas.getContext('2d')
 
-  // Background — deep ink rather than flat navy, with a soft warm glow
-  // rising behind where the headline sits instead of a hard gradient band.
+  // Background — deep ink rather than flat navy, with a soft glow in the
+  // brand blue rising behind where the headline sits, instead of a hard
+  // gradient band.
   ctx.fillStyle = '#0C1116'
   ctx.fillRect(0, 0, WIDTH, HEIGHT)
 
   const glow = ctx.createRadialGradient(WIDTH / 2, 620, 40, WIDTH / 2, 620, 640)
-  glow.addColorStop(0, 'rgba(201,168,118,0.16)')
-  glow.addColorStop(1, 'rgba(201,168,118,0)')
+  glow.addColorStop(0, `rgba(${ACCENT_RGB},0.16)`)
+  glow.addColorStop(1, `rgba(${ACCENT_RGB},0)`)
   ctx.fillStyle = glow
   ctx.fillRect(0, 0, WIDTH, HEIGHT)
 
@@ -167,7 +168,7 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
 
     hairline(ctx, WIDTH / 2, startY + 150, 100)
 
-    ctx.fillStyle = GOLD
+    ctx.fillStyle = ACCENT
     ctx.font = '500 30px Inter'
     ctx.letterSpacing = '6px'
     ctx.fillText('MILESTONE', WIDTH / 2, startY + 210)
@@ -187,7 +188,7 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
   } else {
     drawFlame(ctx, WIDTH / 2, startY + 50, 80, flameColor)
 
-    ctx.fillStyle = GOLD
+    ctx.fillStyle = ACCENT
     ctx.font = '500 28px Inter'
     ctx.letterSpacing = '6px'
     ctx.fillText(`DAY ${streak}`, WIDTH / 2, startY + 140)
@@ -200,8 +201,6 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
       ctx.fillText(line, WIDTH / 2, hy)
       hy += 92
     }
-
-    hairline(ctx, WIDTH / 2, hy + 20, 80)
   }
 
   // --- routine card ---
@@ -210,13 +209,13 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
   ctx.fillStyle = 'rgba(243,239,232,0.04)'
   roundRect(ctx, cardX, cardY, cardW, cardH, 8)
   ctx.fill()
-  ctx.strokeStyle = 'rgba(201,168,118,0.35)'
+  ctx.strokeStyle = `rgba(${ACCENT_RGB},0.35)`
   ctx.lineWidth = 1.5
   roundRect(ctx, cardX, cardY, cardW, cardH, 8)
   ctx.stroke()
 
   ctx.textAlign = 'left'
-  ctx.fillStyle = GOLD
+  ctx.fillStyle = ACCENT
   ctx.font = '500 26px Inter'
   ctx.letterSpacing = '3px'
   ctx.fillText(routineLabel.toUpperCase(), cardX + 56, cardY + 74)
@@ -226,7 +225,7 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
   ctx.font = '500 32px Inter'
   ctx.fillText(dateLabel, cardX + 56, cardY + 128)
 
-  hairline(ctx, cardX + cardW / 2, cardY + 175, cardW - 112, 'rgba(201,168,118,0.25)')
+  hairline(ctx, cardX + cardW / 2, cardY + 175, cardW - 112, `rgba(${ACCENT_RGB},0.25)`)
 
   let rowY = cardY + 230
   for (const product of listedProducts) {
@@ -248,14 +247,14 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
   }
 
   if (overflow > 0) {
-    ctx.fillStyle = GOLD
+    ctx.fillStyle = ACCENT
     ctx.font = '500 30px Inter'
     ctx.fillText(`+ ${overflow} more`, cardX + 56, rowY)
   }
 
   // --- footer ---
   ctx.textAlign = 'center'
-  hairline(ctx, WIDTH / 2, HEIGHT - 150, 60, 'rgba(201,168,118,0.4)')
+  hairline(ctx, WIDTH / 2, HEIGHT - 150, 60, `rgba(${ACCENT_RGB},0.4)`)
 
   ctx.fillStyle = FAINT
   ctx.font = '500 30px Inter'
