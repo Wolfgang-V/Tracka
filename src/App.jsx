@@ -2382,7 +2382,10 @@ const saveReminderSettings = async () => {
             </button>
 
             <button
-              onClick={() => setScreen('routinePlanner')}
+              onClick={() => {
+                showLocalNotification('New product alert 👀', 'Remember: introduce slowly.')
+                setScreen('routinePlanner')
+              }}
               className={`mt-3 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
             >
               Build my routine
@@ -2746,15 +2749,6 @@ const saveReminderSettings = async () => {
                   console.error(updatedProductsError)
                 } else {
                   setProducts(updatedProducts || [])
-                }
-
-                // products still holds the pre-add list here — only nudge
-                // when this isn't their very first product.
-                if (products.length > 0) {
-                  showLocalNotification(
-                    'New product alert 👀',
-                    'Remember: introduce slowly.'
-                  )
                 }
 
                 setProductBrand('')
@@ -4286,7 +4280,10 @@ if (screen === 'today') {
                   You haven't set up a morning routine yet.
                 </p>
                 <button
-                  onClick={() => setScreen('routinePlanner')}
+                  onClick={() => {
+                    showLocalNotification('New product alert 👀', 'Remember: introduce slowly.')
+                    setScreen('routinePlanner')
+                  }}
                   className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${t.btn}`}
                 >
                   Build my routine
@@ -4373,7 +4370,10 @@ if (screen === 'today') {
                   You haven't set up a night routine yet.
                 </p>
                 <button
-                  onClick={() => setScreen('routinePlanner')}
+                  onClick={() => {
+                    showLocalNotification('New product alert 👀', 'Remember: introduce slowly.')
+                    setScreen('routinePlanner')
+                  }}
                   className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${t.btn}`}
                 >
                   Build my routine
