@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from './lib/supabase'
-import { planNight, localDateString, addDays, addMonths, PREGNANCY_NOTE } from './lib/core/planNight'
+import { planNight, localDateString, addDays, addMonths, dayOfWeek, PREGNANCY_NOTE } from './lib/core/planNight'
 import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
 import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
 import { generateStreakImage, isMilestoneStreak } from './lib/shareImage'
-import { flameColorForStreak, FLAME_PATH } from './lib/core/flameColor'
+import { flameColorForStreak, FLAME_PATH, lighten, darken } from './lib/core/flameColor'
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
 
@@ -4942,18 +4942,60 @@ if (screen === 'completed') {
   const isPm = lastCompletedSlot === 'PM'
   const milestone = isPm && isMilestoneStreak(currentStreak)
   const tonightSteps = nightPlan.steps.filter((step) => completedSteps.includes(step.id))
+  const badgeColor = milestone ? flameColorForStreak(currentStreak) : (isNight ? '#8FB8E8' : '#2554EB')
+
+  // Monday-start week, same convention the Progress calendar uses, so
+  // "today" here lines up with what the calendar shows there.
+  const weekDates = (() => {
+    const dow = dayOfWeek(todayString)
+    const monday = addDays(todayString, dow === 0 ? -6 : 1 - dow)
+    return Array.from({ length: 7 }, (_, i) => addDays(monday, i))
+  })()
 
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-7 text-center">
 
-        <span className={`animate-pop-in flex h-14 w-14 items-center justify-center rounded-full text-2xl ${t.chip}`}>
-          {milestone ? (
-            <svg width="26" height="26" viewBox="0 0 24 24" fill={flameColorForStreak(currentStreak)}>
-              <path d={FLAME_PATH} />
+        {milestone ? (
+          <div className="relative flex h-36 w-36 items-center justify-center">
+            <span
+              className="animate-glow-burst absolute inset-0 rounded-full blur-2xl"
+              style={{ backgroundColor: badgeColor }}
+              aria-hidden="true"
+            />
+
+            <svg className="animate-pop-in relative" width="136" height="136" viewBox="0 0 24 24">
+              <defs>
+                <radialGradient id="flame-body-grad" cx="50%" cy="62%" r="65%">
+                  <stop offset="0%" stopColor={lighten(badgeColor, 0.5)} />
+                  <stop offset="60%" stopColor={badgeColor} />
+                  <stop offset="100%" stopColor={darken(badgeColor, 0.15)} />
+                </radialGradient>
+                <radialGradient id="flame-core-grad" cx="50%" cy="60%" r="60%">
+                  <stop offset="0%" stopColor={lighten(badgeColor, 0.85)} />
+                  <stop offset="100%" stopColor={lighten(badgeColor, 0.4)} />
+                </radialGradient>
+              </defs>
+
+              <path d={FLAME_PATH} transform="translate(12 12) scale(1.08) translate(-12 -12)" fill={darken(badgeColor, 0.35)} />
+              <path d={FLAME_PATH} fill="url(#flame-body-grad)" />
+              <path d={FLAME_PATH} transform="translate(12.4 15.5) scale(0.42 0.5) translate(-12 -12)" fill="url(#flame-core-grad)" />
+              <ellipse cx="9.3" cy="7.5" rx="1.6" ry="2.4" transform="rotate(-28 9.3 7.5)" fill="rgba(255,255,255,0.55)" />
             </svg>
-          ) : '✓'}
-        </span>
+          </div>
+        ) : (
+          <div className="relative flex h-14 w-14 items-center justify-center">
+            <span
+              className="animate-glow-burst absolute inset-0 rounded-full blur-xl"
+              style={{ backgroundColor: badgeColor }}
+              aria-hidden="true"
+            />
+
+            <span className={`animate-pop-in relative flex h-14 w-14 items-center justify-center rounded-full text-2xl ${t.chip}`}>
+              ✓
+            </span>
+          </div>
+        )}
 
         <h1 className="animate-rise-in mt-6 font-display text-[44px] font-light leading-[1.02] tracking-tight">
           {milestone
@@ -4966,6 +5008,44 @@ if (screen === 'completed') {
             ? 'Look at you go. That kind of consistency shows.'
             : <>Great job taking care of your skin. See you {isPm ? 'in the morning' : 'tonight'} 👋</>}
         </p>
+
+        {isPm && (
+          <div className="animate-rise-in mt-6 flex items-center gap-2.5">
+            {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((label, i) => {
+              const date = weekDates[i]
+              const isToday = date === todayString
+              const finished = completedDates.has(date)
+
+              return (
+                <div key={date} className="flex flex-col items-center gap-1.5">
+                  <span
+                    className={`flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold ${
+                      isToday && finished
+                        ? ''
+                        : finished
+                          ? t.chip
+                          : `${t.rail} ${t.faint}`
+                    }`}
+                    style={isToday && finished ? { backgroundColor: `${badgeColor}26` } : undefined}
+                  >
+                    {isToday && finished ? (
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill={badgeColor}>
+                        <path d={FLAME_PATH} />
+                      </svg>
+                    ) : finished ? (
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2.6"
+                        strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 12.5l5.2 5.2L20 7" />
+                      </svg>
+                    ) : null}
+                  </span>
+                  <span className={`text-[10px] font-semibold ${t.faint}`}>{label}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         {isPm ? (
           <>

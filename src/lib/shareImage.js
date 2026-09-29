@@ -6,7 +6,7 @@
 // fixed look — someone who prefers the app in light mode gets a light
 // share card too, not a surprise dark one.
 
-import { flameColorForStreak, FLAME_PATH } from './core/flameColor'
+import { flameColorForStreak, FLAME_PATH, lighten, darken } from './core/flameColor'
 
 const WIDTH = 1080
 const HEIGHT = 1920
@@ -64,23 +64,6 @@ function hairline(ctx, centerX, y, width, color) {
   ctx.moveTo(centerX - width / 2, y)
   ctx.lineTo(centerX + width / 2, y)
   ctx.stroke()
-}
-
-function lighten(hex, amount) {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  const lr = Math.round(r + (255 - r) * amount)
-  const lg = Math.round(g + (255 - g) * amount)
-  const lb = Math.round(b + (255 - b) * amount)
-  return `rgb(${lr},${lg},${lb})`
-}
-
-function darken(hex, amount) {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return `rgb(${Math.round(r * (1 - amount))},${Math.round(g * (1 - amount))},${Math.round(b * (1 - amount))})`
 }
 
 // Same 24x24 flame the in-app icons use, drawn as a path rather than the
