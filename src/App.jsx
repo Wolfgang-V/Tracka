@@ -520,9 +520,26 @@ setRoutineHistory(groupedRoutines)
     }
 
     if (window.location.search.includes('confirmed=true')) {
-      setScreen('login')
       window.history.replaceState({}, '', window.location.pathname)
-      setAuthReady(true)
+
+      // Confirming email doesn't always mean this browser is signed in.
+      // Clicking the link from an email app's in-app browser (Gmail's,
+      // most often) creates the session there, not in whatever browser
+      // Tracka+ itself is running in — different origin, different
+      // storage. getSession() checks this browser's actual state instead
+      // of assuming the confirmation implies a session here too, which is
+      // what unconditionally forcing the login screen used to do — even
+      // for someone who confirmed in the same browser and already had a
+      // valid session the app was ignoring.
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user) {
+          init()
+        } else {
+          notify('Your email is confirmed. Log in to finish setting up.', 'success')
+          setScreen('login')
+          setAuthReady(true)
+        }
+      })
     } else {
       init()
     }
@@ -703,17 +720,23 @@ const uploadProgressPhoto = async (file, localDate) => {
   setPhotoError(null)
   setPhotoUploading(true)
 
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-  if (!currentUser) {
+  if (sessionError) {
+    setPhotoError("Couldn't reach the server. Check your connection and try again.")
     setPhotoUploading(false)
     return
   }
 
+  if (!session?.user) {
+    setPhotoError('Your session ended. Please log in again.')
+    setPhotoUploading(false)
+    setScreen('login')
+    return
+  }
+
   const ext = file.name.split('.').pop() || 'jpg'
-  const path = `${currentUser.id}/${Date.now()}.${ext}`
+  const path = `${session.user.id}/${Date.now()}.${ext}`
 
   const { error: uploadError } = await supabase.storage
     .from('progress-photos')
@@ -727,7 +750,7 @@ const uploadProgressPhoto = async (file, localDate) => {
   }
 
   const { error: insertError } = await supabase.from('progress_photos').insert({
-    user_id: currentUser.id,
+    user_id: session.user.id,
     path,
     local_date: localDate || localDateString(),
   })
@@ -1842,12 +1865,16 @@ const loadReminderSettings = async () => {
 }
 
 const saveReminderSettings = async () => {
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-  if (!currentUser) {
-    notify('Please log in again.')
+  if (sessionError) {
+    notify("Couldn't reach the server. Check your connection and try again.")
+    return
+  }
+
+  if (!session?.user) {
+    notify('Your session ended. Please log in again.')
+    setScreen('login')
     return
   }
 
@@ -1855,7 +1882,7 @@ const saveReminderSettings = async () => {
     .from('reminder_settings')
     .upsert(
       {
-        user_id: currentUser.id,
+        user_id: session.user.id,
         morning_enabled: morningReminderEnabled,
         morning_time: morningReminderTime,
         night_enabled: nightReminderEnabled,
@@ -2170,12 +2197,22 @@ const saveReminderSettings = async () => {
 
             <button
               onClick={async () => {
-                const {
-                  data: { user: currentUser },
-                } = await supabase.auth.getUser()
+                // getSession() reads the persisted session (no network
+                // round trip in the normal case) instead of getUser(),
+                // which validates the token against the auth server every
+                // time — a signed-in person on a slow connection used to
+                // get bounced with "Please create an account first," which
+                // was exactly backwards from what actually happened.
+                const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-                if (!currentUser) {
-                  notify('Please create an account first.')
+                if (sessionError) {
+                  notify("Couldn't reach the server. Check your connection and try again.")
+                  return
+                }
+
+                if (!session?.user) {
+                  notify('Your session ended. Please log in again.')
+                  setScreen('login')
                   return
                 }
 
@@ -2183,7 +2220,7 @@ const saveReminderSettings = async () => {
                   .from('skin_profiles')
                   .upsert(
                     {
-                      user_id: currentUser.id,
+                      user_id: session.user.id,
                       gender: gender,
                       pregnant_or_breastfeeding: pregnantOrBreastfeeding ?? null,
                       skin_type: skinType,
@@ -2675,13 +2712,18 @@ const saveReminderSettings = async () => {
 
                 setProductSaving(true)
 
-                const {
-                  data: { user: currentUser },
-                } = await supabase.auth.getUser()
+                const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-                if (!currentUser) {
-                  notify('Please log in first.')
+                if (sessionError) {
+                  notify("Couldn't reach the server. Check your connection and try again.")
                   setProductSaving(false)
+                  return
+                }
+
+                if (!session?.user) {
+                  notify('Your session ended. Please log in again.')
+                  setProductSaving(false)
+                  setScreen('login')
                   return
                 }
 
@@ -2709,7 +2751,7 @@ const saveReminderSettings = async () => {
                   await supabase
                     .from('user_products')
                     .insert({
-                      user_id: currentUser.id,
+                      user_id: session.user.id,
                       product_id: product.id,
                       is_active: true,
                       opened_date: productOpenedDate || null,
@@ -2742,7 +2784,7 @@ const saveReminderSettings = async () => {
                       ingredients
                     )
                   `)
-                  .eq('user_id', currentUser.id)
+                  .eq('user_id', session.user.id)
                   .eq('is_active', true)
 
                 if (updatedProductsError) {
@@ -3726,19 +3768,23 @@ if (screen === 'settingsUsername') {
                 return
               }
 
-              const {
-                data: { user: currentUser },
-              } = await supabase.auth.getUser()
+              const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-              if (!currentUser) {
-                notify('Please log in again.')
+              if (sessionError) {
+                notify("Couldn't reach the server. Check your connection and try again.")
+                return
+              }
+
+              if (!session?.user) {
+                notify('Your session ended. Please log in again.')
+                setScreen('login')
                 return
               }
 
               const { error } = await supabase
                 .from('profiles')
                 .upsert(
-                  { id: currentUser.id, username: settingsUsername.trim() },
+                  { id: session.user.id, username: settingsUsername.trim() },
                   { onConflict: 'id' }
                 )
 
