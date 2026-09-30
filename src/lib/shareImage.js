@@ -315,3 +315,124 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
 
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
 }
+
+/**
+ * A "Wrapped"-style month-to-date stat sheet, same card visually as the
+ * streak share — same palette, same wordmark, same theme-awareness — just
+ * a list of numbers instead of a routine.
+ *
+ * @param report  { monthLabel, routineCompletionPct, sunscreenDays,
+ *                  productsUsed, currentStreak, longestStreak, amVsPm,
+ *                  photosAdded }
+ * @param isNight whether the app itself is currently in dark mode
+ * @returns Promise<Blob> PNG
+ */
+export async function generateSkinReportImage({ report, isNight = true }) {
+  await document.fonts.load('600 64px Inter')
+  await document.fonts.load('500 96px "Cormorant Garamond"')
+  await document.fonts.ready
+
+  const p = isNight ? PALETTES.dark : PALETTES.light
+
+  const canvas = document.createElement('canvas')
+  canvas.width = WIDTH
+  canvas.height = HEIGHT
+  const ctx = canvas.getContext('2d')
+
+  ctx.fillStyle = p.bg
+  ctx.fillRect(0, 0, WIDTH, HEIGHT)
+
+  const glow = ctx.createRadialGradient(WIDTH / 2, 480, 40, WIDTH / 2, 480, 640)
+  glow.addColorStop(0, `rgba(${p.accentRgb},0.16)`)
+  glow.addColorStop(1, `rgba(${p.accentRgb},0)`)
+  ctx.fillStyle = glow
+  ctx.fillRect(0, 0, WIDTH, HEIGHT)
+
+  // --- wordmark, top ---
+  try {
+    const icon = await loadImage('/icons/icon-192.png')
+    ctx.save()
+    roundRect(ctx, 72, 96, 56, 56, 14)
+    ctx.clip()
+    ctx.drawImage(icon, 72, 96, 56, 56)
+    ctx.restore()
+  } catch {
+    // Icon failing to load shouldn't block the share.
+  }
+
+  ctx.fillStyle = p.ink
+  ctx.font = '600 34px Inter'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText('TRACKA+', 148, 124)
+
+  // --- headline ---
+  ctx.textAlign = 'center'
+  ctx.fillStyle = p.accent
+  ctx.font = '500 30px Inter'
+  ctx.letterSpacing = '6px'
+  ctx.fillText('SKIN REPORT', WIDTH / 2, 260)
+  ctx.letterSpacing = '0px'
+
+  ctx.fillStyle = p.ink
+  ctx.font = '600 84px "Cormorant Garamond"'
+  ctx.fillText(report.monthLabel.toUpperCase(), WIDTH / 2, 350)
+
+  // --- stat card ---
+  const stats = [
+    ['Routine completion', `${report.routineCompletionPct}%`],
+    ['Sunscreen days', String(report.sunscreenDays)],
+    ['Products used', String(report.productsUsed)],
+    ['Current streak', `${report.currentStreak} ${report.currentStreak === 1 ? 'day' : 'days'}`],
+    ['Longest streak', `${report.longestStreak} ${report.longestStreak === 1 ? 'day' : 'days'}`],
+    ['AM vs PM consistency', report.amVsPm],
+    ['Progress photos added', String(report.photosAdded)],
+  ]
+
+  const cardX = 72
+  const cardW = WIDTH - 144
+  const rowH = 130
+  const cardY = 460
+  const cardH = 60 + stats.length * rowH
+
+  ctx.fillStyle = p.cardFill
+  roundRect(ctx, cardX, cardY, cardW, cardH, 8)
+  ctx.fill()
+  ctx.strokeStyle = `rgba(${p.accentRgb},0.35)`
+  ctx.lineWidth = 1.5
+  roundRect(ctx, cardX, cardY, cardW, cardH, 8)
+  ctx.stroke()
+
+  let rowY = cardY + 74
+  stats.forEach(([label, value], i) => {
+    ctx.textAlign = 'left'
+    ctx.fillStyle = p.muted
+    ctx.font = '500 28px Inter'
+    ctx.letterSpacing = '1px'
+    ctx.fillText(label.toUpperCase(), cardX + 56, rowY)
+    ctx.letterSpacing = '0px'
+
+    ctx.textAlign = 'right'
+    ctx.fillStyle = p.ink
+    ctx.font = '600 52px "Cormorant Garamond"'
+    ctx.fillText(value, cardX + cardW - 56, rowY + 56)
+
+    if (i < stats.length - 1) {
+      hairline(ctx, cardX + cardW / 2, rowY + 92, cardW - 112, `rgba(${p.accentRgb},0.15)`)
+    }
+
+    rowY += rowH
+  })
+
+  // --- footer ---
+  ctx.textAlign = 'center'
+  hairline(ctx, WIDTH / 2, HEIGHT - 150, 60, `rgba(${p.accentRgb},0.4)`)
+
+  ctx.fillStyle = p.faint
+  ctx.font = '500 30px Inter'
+  ctx.letterSpacing = '2px'
+  ctx.fillText('TRACKAPLUS.APP', WIDTH / 2, HEIGHT - 96)
+  ctx.letterSpacing = '0px'
+
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+}

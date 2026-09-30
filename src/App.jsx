@@ -5,7 +5,7 @@ import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
 import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
-import { generateStreakImage, isMilestoneStreak } from './lib/shareImage'
+import { generateStreakImage, generateSkinReportImage, isMilestoneStreak } from './lib/shareImage'
 import { flameColorForStreak, FLAME_PATH, lighten, darken } from './lib/core/flameColor'
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
@@ -263,6 +263,7 @@ function App() {
   const [nightReminderEnabled, setNightReminderEnabled] = useState(true)
   const [nightReminderTime, setNightReminderTime] = useState('21:00')
   const [spfReapplyEnabled, setSpfReapplyEnabled] = useState(false)
+  const [diaryNudgeEnabled, setDiaryNudgeEnabled] = useState(false)
   const [productBrand, setProductBrand] = useState('')
   const [productName, setProductName] = useState('')
   const [productCategory, setProductCategory] = useState('')
@@ -369,6 +370,7 @@ setRoutineHistory(groupedRoutines)
   const [completedSteps, setCompletedSteps] = useState([])
   const [lastCompletedSlot, setLastCompletedSlot] = useState(null)
   const [shareStreakBusy, setShareStreakBusy] = useState(false)
+  const [reportSharing, setReportSharing] = useState(false)
   const [stepHistory, setStepHistory] = useState([])
   const [menuOpen, setMenuOpen] = useState(false)
   const [pushStatus, setPushStatus] = useState(null)
@@ -377,7 +379,9 @@ setRoutineHistory(groupedRoutines)
   const [dayDetailSteps, setDayDetailSteps] = useState(null)
   const [dayDetailLoading, setDayDetailLoading] = useState(false)
   const [skinLogs, setSkinLogs] = useState([])
-  const [selectedTrendDate, setSelectedTrendDate] = useState(null)
+  const todayNoteRef = useRef(null)
+  const [monthlyReport, setMonthlyReport] = useState(null)
+  const [monthlyReportLoading, setMonthlyReportLoading] = useState(false)
   const [progressPhotos, setProgressPhotos] = useState([])
   const [photoUrls, setPhotoUrls] = useState({})
   const [photoUploading, setPhotoUploading] = useState(false)
@@ -669,11 +673,13 @@ const loadDayDetails = async (date) => {
 const loadSkinLogs = async () => {
   if (!user) return
 
+  // No date floor — notes now live here too, and the Progress Photos
+  // timeline shows them the same way it shows photos, which also aren't
+  // capped to the last 30 days.
   const { data, error } = await supabase
     .from('skin_logs')
-    .select('local_date, breakouts, dryness, oiliness, redness')
+    .select('local_date, breakouts, dryness, oiliness, redness, note')
     .eq('user_id', user.id)
-    .gte('local_date', addDays(localDateString(), -30))
 
   if (error) {
     console.error('SKIN LOG HISTORY ERROR:', error)
@@ -681,6 +687,109 @@ const loadSkinLogs = async () => {
   }
 
   setSkinLogs(data || [])
+}
+
+// Month-to-date stats for the "Skin reports" screen — always reflects the
+// current month so far (check it on the 10th, get 10 days of data), rather
+// than waiting for month-end to generate a fixed recap.
+const loadMonthlyReport = async () => {
+  if (!user) return
+  setMonthlyReportLoading(true)
+
+  const now = new Date()
+  const firstOfMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+
+  // Independent queries for completions and photos, rather than reading
+  // the progressCompletions/progressPhotos state — those only get loaded
+  // once their own screens have been visited this session, so relying on
+  // them here would show 0s for anyone who opens Skin reports (or Today,
+  // where the report also loads) before ever visiting Progress Photos.
+  const [{ data, error }, { data: completions, error: completionsError }, { count: photosAdded, error: photosError }] =
+    await Promise.all([
+      supabase
+        .from('routine_step_completions')
+        .select(`
+          local_date,
+          routine_steps (
+            routines ( time_of_day ),
+            user_products ( product_id, products ( category ) )
+          )
+        `)
+        .eq('user_id', user.id)
+        .gte('local_date', firstOfMonth),
+      supabase
+        .from('routine_completions')
+        .select('completed_date')
+        .eq('user_id', user.id),
+      supabase
+        .from('progress_photos')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gte('local_date', firstOfMonth),
+    ])
+
+  if (error || completionsError || photosError) {
+    console.error('MONTHLY REPORT ERROR:', error || completionsError || photosError)
+    setMonthlyReportLoading(false)
+    return
+  }
+
+  const rows = (data || []).filter((r) => r.routine_steps)
+
+  const sunscreenDays = new Set(
+    rows
+      .filter((r) => (r.routine_steps.user_products?.products?.category || '').toLowerCase() === 'sunscreen')
+      .map((r) => r.local_date)
+  ).size
+
+  const productIds = new Set(
+    rows.map((r) => r.routine_steps.user_products?.product_id).filter(Boolean)
+  )
+
+  const amDays = new Set(
+    rows.filter((r) => r.routine_steps.routines?.time_of_day === 'AM').map((r) => r.local_date)
+  )
+  const pmDays = new Set(
+    rows.filter((r) => r.routine_steps.routines?.time_of_day === 'PM').map((r) => r.local_date)
+  )
+
+  const amVsPm =
+    amDays.size === 0 && pmDays.size === 0
+      ? '—'
+      : Math.abs(amDays.size - pmDays.size) <= 2
+        ? 'Both'
+        : amDays.size > pmDays.size
+          ? 'AM'
+          : 'PM'
+
+  const daysElapsed = now.getDate()
+  const completionsThisMonth = (completions || []).filter((c) => c.completed_date >= firstOfMonth).length
+  const routineCompletionPct = daysElapsed > 0 ? Math.round((completionsThisMonth / daysElapsed) * 100) : 0
+
+  // Longest streak is all-time, not scoped to this month — the point is
+  // "your record", not "your record so far in September".
+  const allDates = new Set((completions || []).map((c) => c.completed_date))
+  const sortedDates = [...allDates].sort()
+  let longest = 0
+  let run = 0
+  let prevDate = null
+  for (const d of sortedDates) {
+    run = prevDate && addDays(prevDate, 1) === d ? run + 1 : 1
+    longest = Math.max(longest, run)
+    prevDate = d
+  }
+
+  setMonthlyReport({
+    monthLabel: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
+    routineCompletionPct,
+    sunscreenDays,
+    productsUsed: productIds.size,
+    currentStreak,
+    longestStreak: longest,
+    amVsPm,
+    photosAdded: photosAdded || 0,
+  })
+  setMonthlyReportLoading(false)
 }
 
 const loadProgressPhotos = async () => {
@@ -807,56 +916,41 @@ const saveProgressPhotoNote = async (photo, note) => {
   setViewingPhoto((v) => (v ? { ...v, note } : v))
 }
 
-const updateSkinMetric = async (metric, delta) => {
-  const today = localDateString()
-
-  // previousRow/updatedRow are captured from inside the functional updater,
-  // not read from the outer skinLogs closure — tapping +/- rapidly on two
-  // metrics (or the same one twice) before the first request resolves
-  // would otherwise have both calls compute their "current" value from the
-  // same stale snapshot, silently dropping one of the increments.
-  let previousRow = null
-  let updatedRow = null
-
-  setSkinLogs((logs) => {
-    const existing = logs.find((log) => log.local_date === today) || {
-      local_date: today,
-      breakouts: 0,
-      dryness: 0,
-      oiliness: 0,
-      redness: 0,
-    }
-    previousRow = existing
-
-    const nextValue = Math.max(0, Math.min(20, existing[metric] + delta))
-    updatedRow = { ...existing, [metric]: nextValue }
-
-    return logs.some((log) => log.local_date === today)
-      ? logs.map((log) => (log.local_date === today ? updatedRow : log))
-      : [...logs, updatedRow]
-  })
+// Shared by the Today page's "Daily notes" box (always today's date) and
+// the Progress Photos journey viewer (an arbitrary past date, since a
+// note-only entry there can be edited or cleared after the fact).
+const saveNoteForDate = async (date, note) => {
+  if (!user) {
+    notify('Please log in again.')
+    return
+  }
 
   const { error } = await supabase.from('skin_logs').upsert(
     {
       user_id: user.id,
-      local_date: today,
-      breakouts: updatedRow.breakouts,
-      dryness: updatedRow.dryness,
-      oiliness: updatedRow.oiliness,
-      redness: updatedRow.redness,
+      local_date: date,
+      note,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id,local_date' }
   )
 
   if (error) {
-    console.error('SKIN LOG SAVE ERROR:', error)
-    notify("That didn't save. Check your connection and try again.")
-    // The optimistic bump above was never actually persisted — revert it
-    // rather than leave the UI showing a value the database doesn't have.
-    setSkinLogs((logs) => logs.map((log) => (log.local_date === today ? previousRow : log)))
+    console.error('SKIN NOTE SAVE ERROR:', error)
+    notify("That note didn't save. Try again.")
+    return
   }
+
+  setSkinLogs((logs) =>
+    logs.some((log) => log.local_date === date)
+      ? logs.map((log) => (log.local_date === date ? { ...log, note } : log))
+      : [...logs, { local_date: date, note, breakouts: 0, dryness: 0, oiliness: 0, redness: 0 }]
+  )
+
+  notify('Note saved.', 'success')
 }
+
+const saveTodayNote = (note) => saveNoteForDate(localDateString(), note)
 
 // Only the night routine counts toward the streak and lights up the
 // calendar — the morning button just confirms and moves on, since a
@@ -893,20 +987,20 @@ const finishRoutine = async (slot) => {
 // the OS share sheet (Instagram/WhatsApp/etc pick it up from there, same
 // as any native app). Falls back to a plain download where the Web Share
 // API can't take files — older Android WebViews, desktop Safari.
-const shareStreak = async (streak, tonightSteps) => {
+const shareStreak = async (streak, steps, routineLabel = 'Night Routine') => {
   if (shareStreakBusy) return
   setShareStreakBusy(true)
 
   try {
     const blob = await generateStreakImage({
       streak,
-      routineLabel: 'Night Routine',
+      routineLabel,
       dateLabel: new Date().toLocaleDateString('en-GB', {
         weekday: 'long',
         day: 'numeric',
         month: 'long',
       }),
-      products: tonightSteps.map((step) => ({
+      products: steps.map((step) => ({
         name: step.name,
         category: step.category,
       })),
@@ -976,6 +1070,42 @@ const inviteFriend = async () => {
     notify('Invite link copied — paste it anywhere.', 'success')
   } else {
     notify(shareData.url, 'success')
+  }
+}
+
+// Same generate-then-share shape as shareStreak, just a different image
+// generator and no separate fallback file name collision — a Skin Report
+// and a streak card saved in the same session shouldn't overwrite each
+// other in the user's downloads.
+const shareSkinReport = async () => {
+  if (reportSharing || !monthlyReport) return
+  setReportSharing(true)
+
+  try {
+    const blob = await generateSkinReportImage({ report: monthlyReport, isNight })
+    const file = new File([blob], 'tracka-skin-report.png', { type: 'image/png' })
+    const caption = `My ${monthlyReport.monthLabel} skin report on Tracka+`
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Tracka+', text: caption })
+    } else if (navigator.share) {
+      await navigator.share({ title: 'Tracka+', text: `${caption} ${SITE_URL}` })
+    } else {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'tracka-skin-report.png'
+      a.click()
+      URL.revokeObjectURL(url)
+      notify('Report saved — share it from your photos.', 'success')
+    }
+  } catch (err) {
+    if (err?.name !== 'AbortError') {
+      console.error('SHARE SKIN REPORT ERROR:', err)
+      notify('Could not create the report. Try again in a moment.')
+    }
+  } finally {
+    setReportSharing(false)
   }
 }
 
@@ -1399,14 +1529,17 @@ useEffect(() => {
     loadRoutines()
     loadStepHistory()
     loadSkinLogs()
+    loadMonthlyReport()
   }
 
   if (screen === 'skinTrends') {
     loadSkinLogs()
+    loadMonthlyReport()
   }
 
   if (screen === 'progressPhotos') {
     loadProgressPhotos()
+    loadSkinLogs()
   }
 
   if (screen === 'admin') {
@@ -1845,7 +1978,7 @@ const loadReminderSettings = async () => {
   const { data, error } = await supabase
     .from('reminder_settings')
     .select(
-      'morning_enabled, morning_time, night_enabled, night_time, spf_reapply_enabled'
+      'morning_enabled, morning_time, night_enabled, night_time, spf_reapply_enabled, diary_nudge_enabled'
     )
     .eq('user_id', currentUser.id)
     .maybeSingle()
@@ -1861,6 +1994,7 @@ const loadReminderSettings = async () => {
     setNightReminderEnabled(data.night_enabled)
     setNightReminderTime(data.night_time?.slice(0, 5) || '21:00')
     setSpfReapplyEnabled(data.spf_reapply_enabled ?? false)
+    setDiaryNudgeEnabled(data.diary_nudge_enabled ?? false)
   }
 }
 
@@ -1888,6 +2022,7 @@ const saveReminderSettings = async () => {
         night_enabled: nightReminderEnabled,
         night_time: nightReminderTime,
         spf_reapply_enabled: spfReapplyEnabled,
+        diary_nudge_enabled: diaryNudgeEnabled,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         updated_at: new Date().toISOString(),
       },
@@ -1926,7 +2061,7 @@ const saveReminderSettings = async () => {
             <div className="mt-4 grid grid-cols-3 gap-2">
               {[
                 ['My progress', 'progress'],
-                ['Skin insights', 'skinTrends'],
+                ['Skin reports', 'skinTrends'],
                 ['Progress photos', 'progressPhotos'],
               ].map(([label, target]) => (
                 <button
@@ -4104,6 +4239,47 @@ if (screen === 'reminders') {
             </div>
           </div>
 
+          {/* DIARY NUDGE */}
+          <div className={`rounded-3xl ${t.surface} p-5`}>
+            <div className="flex items-center justify-between gap-4">
+
+              <div>
+                <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.mark}`}>
+                  Skin diary
+                </p>
+
+                <h2 className="mt-1 text-[17px] font-semibold">
+                  Diary reminders
+                </h2>
+
+                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                  A nudge around midday if you haven't logged a note yet. Off by default.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setDiaryNudgeEnabled(
+                    !diaryNudgeEnabled
+                  )
+                }
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                  diaryNudgeEnabled ? t.btn : t.rail
+                }`}
+              >
+                <span
+                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
+                    diaryNudgeEnabled
+                      ? 'left-6'
+                      : 'left-1'
+                  }`}
+                />
+              </button>
+
+            </div>
+          </div>
+
         </div>
 
         <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
@@ -4258,7 +4434,7 @@ if (screen === 'today') {
                 {[
                   ['My routine', 'routinePlanner'],
                   ['My progress', 'progress'],
-                  ['Skin insights', 'skinTrends'],
+                  ['Skin reports', 'skinTrends'],
                   ['Progress photos', 'progressPhotos'],
                 ].map(([label, target]) => (
                   <button
@@ -4383,7 +4559,9 @@ if (screen === 'today') {
 
       <div className={`${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex w-full max-w-md flex-col px-6 pb-28">
-          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+          <div className={`mt-10 border-t ${t.hair}`} aria-hidden="true" />
+
+          <p className={`mt-10 text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
             Night
           </p>
 
@@ -4469,57 +4647,87 @@ if (screen === 'today') {
             </div>
           )}
 
-        {(todayAmRoutine || todayPmRoutine) && !routinesLoading && (
-          <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-            <h2 className={`text-[15px] font-semibold ${t.text}`}>
-              Log today's skin condition
-            </h2>
+        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+          <h2 className={`text-[15px] font-semibold ${t.text}`}>
+            Daily notes
+          </h2>
 
-            <div className="mt-5 flex flex-col gap-4">
-              {[
-                ['breakouts', 'Breakouts', '#f43f5e'],
-                ['dryness', 'Dryness', '#f59e0b'],
-                ['oiliness', 'Oiliness', '#10b981'],
-                ['redness', 'Redness', '#8b5cf6'],
-              ].map(([key, label, color]) => (
-                <div key={key}>
-                  <div className="flex items-center justify-between">
-                    <span className={`text-[13px] font-medium ${t.muted}`}>{label}</span>
-                    <span className={`text-[13px] font-semibold tabular-nums ${t.text}`}>
-                      {todaySkinLog[key]}
-                    </span>
-                  </div>
+          <p className={`mt-1 text-[13px] ${t.muted}`}>
+            How's your skin today? Jot anything worth remembering.
+          </p>
 
-                  <div className="mt-1.5 flex items-center gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => updateSkinMetric(key, -1)}
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-base leading-none ${t.hair} ${t.muted}`}
-                    >
-                      −
-                    </button>
+          <textarea
+            key={todayString}
+            ref={todayNoteRef}
+            defaultValue={todaySkinLog.note || ''}
+            placeholder="You can talk about your day, skin, product or anything else"
+            rows={3}
+            className={`mt-4 w-full rounded-xl border ${t.hair} p-3 text-[14px] outline-none`}
+          />
 
-                    <div className={`h-2.5 flex-1 overflow-hidden rounded-full ${t.rail}`}>
-                      <div
-                        className="h-full rounded-full transition-all duration-300"
-                        style={{
-                          width: `${Math.min(100, (todaySkinLog[key] / 10) * 100)}%`,
-                          backgroundColor: color,
-                        }}
-                      />
-                    </div>
+          <button
+            onClick={() => saveTodayNote(todayNoteRef.current?.value || '')}
+            className={`mt-3 w-full rounded-2xl py-3 text-[14px] font-bold ${t.btn}`}
+          >
+            Save note
+          </button>
 
-                    <button
-                      type="button"
-                      onClick={() => updateSkinMetric(key, 1)}
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-base leading-none ${t.btn}`}
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              ))}
+          <button
+            onClick={() => setScreen('progressPhotos')}
+            className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted}`}
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 8a2 2 0 0 1 2-2h1.2l.8-1.6A1 1 0 0 1 8.9 4h6.2a1 1 0 0 1 .9.6L16.8 6H18a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" />
+              <circle cx="12" cy="13" r="3.5" />
+            </svg>
+            Selfie check-in
+          </button>
+        </div>
+
+        {monthlyReport && (
+          <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+            <div className="flex items-center justify-between">
+              <h2 className={`text-[15px] font-semibold ${t.text}`}>
+                {monthlyReport.monthLabel} report
+              </h2>
+              <button
+                onClick={() => setScreen('skinTrends')}
+                className={`text-[12px] font-semibold ${t.mark}`}
+              >
+                View full report
+              </button>
             </div>
+
+            <div className="mt-4 flex gap-5">
+              <div>
+                <p className="font-display text-[26px] font-light">
+                  {monthlyReport.routineCompletionPct}%
+                </p>
+                <p className={`text-[11px] ${t.faint}`}>Routine completion</p>
+              </div>
+              <div>
+                <p className="font-display text-[26px] font-light">
+                  {monthlyReport.currentStreak}
+                </p>
+                <p className={`text-[11px] ${t.faint}`}>Current streak</p>
+              </div>
+              <div>
+                <p className="font-display text-[26px] font-light">
+                  {monthlyReport.photosAdded}
+                </p>
+                <p className={`text-[11px] ${t.faint}`}>Photos added</p>
+              </div>
+            </div>
+
+            <button
+              disabled={reportSharing}
+              onClick={shareSkinReport}
+              className={`mt-4 w-full rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-60`}
+            >
+              {reportSharing ? 'Preparing…' : 'Save report'}
+            </button>
           </div>
         )}
 
@@ -5010,6 +5218,9 @@ if (screen === 'completed') {
   const isPm = lastCompletedSlot === 'PM'
   const milestone = isPm && isMilestoneStreak(currentStreak)
   const tonightSteps = nightPlan.steps.filter((step) => completedSteps.includes(step.id))
+  const morningSteps = amPlan.steps.filter((step) => completedSteps.includes(step.id))
+  const slotSteps = isPm ? tonightSteps : morningSteps
+  const slotLabel = isPm ? 'Night Routine' : 'Morning Routine'
   const badgeColor = milestone ? flameColorForStreak(currentStreak) : (isNight ? '#8FB8E8' : '#2554EB')
 
   // Monday-start week, same convention the Progress calendar uses, so
@@ -5115,56 +5326,45 @@ if (screen === 'completed') {
           </div>
         )}
 
-        {isPm ? (
-          <>
-            <button
-              disabled={shareStreakBusy}
-              onClick={() => shareStreak(currentStreak, tonightSteps)}
-              className={`mt-8 flex w-full items-center justify-center gap-2 rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2"
-                strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 15V4M12 4l-4 4M12 4l4 4" />
-                <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" />
-              </svg>
-              {shareStreakBusy ? 'Preparing…' : 'Share my streak'}
-            </button>
+        <button
+          disabled={shareStreakBusy}
+          onClick={() => shareStreak(currentStreak, slotSteps, slotLabel)}
+          className={`mt-8 flex w-full items-center justify-center gap-2 rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 15V4M12 4l-4 4M12 4l4 4" />
+            <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" />
+          </svg>
+          {shareStreakBusy ? 'Preparing…' : 'Share my streak'}
+        </button>
 
-            <div className="mt-3 grid w-full grid-cols-2 gap-3">
-              <button
-                onClick={inviteFriend}
-                className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} ${t.muted}`}
-              >
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2"
-                  strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="9" cy="8" r="3.5" />
-                  <path d="M3.5 20v-1a5.5 5.5 0 0 1 5.5-5.5h0" />
-                  <path d="M18 8v6M15 11h6" />
-                </svg>
-                Invite
-              </button>
+        <div className="mt-3 grid w-full grid-cols-2 gap-3">
+          <button
+            onClick={inviteFriend}
+            className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} ${t.muted}`}
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2"
+              strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="9" cy="8" r="3.5" />
+              <path d="M3.5 20v-1a5.5 5.5 0 0 1 5.5-5.5h0" />
+              <path d="M18 8v6M15 11h6" />
+            </svg>
+            Invite
+          </button>
 
-              <button
-                onClick={() => setScreen('progress')}
-                className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} ${t.muted}`}
-              >
-                <svg width="17" height="17" viewBox="0 0 24 24" fill={flameColorForStreak(currentStreak)}>
-                  <path d={FLAME_PATH} />
-                </svg>
-                Streak
-              </button>
-            </div>
-          </>
-        ) : (
           <button
             onClick={() => setScreen('progress')}
-            className={`mt-8 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+            className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} ${t.muted}`}
           >
-            View my streak
+            <svg width="17" height="17" viewBox="0 0 24 24" fill={flameColorForStreak(currentStreak)}>
+              <path d={FLAME_PATH} />
+            </svg>
+            Streak
           </button>
-        )}
+        </div>
 
       </div>
     </main>
@@ -5408,52 +5608,18 @@ if (screen === 'progress') {
   )
 }
 if (screen === 'skinTrends') {
-  const METRICS = [
-    ['breakouts', 'Breakouts', '#f43f5e'],
-    ['dryness', 'Dryness', '#f59e0b'],
-    ['oiliness', 'Oiliness', '#10b981'],
-    ['redness', 'Redness', '#8b5cf6'],
-  ]
-
-  const chartDays = Array.from({ length: 30 }, (_, i) => addDays(todayString, i - 29))
-  const logsByDay = new Map(skinLogs.map((entry) => [entry.local_date, entry]))
-  const loggedDays = chartDays.filter((date) => logsByDay.has(date))
-  const hasEnoughData = loggedDays.length >= 3
-
-  const chartW = 328
-  const chartH = 140
-  const columnW = chartW / (chartDays.length - 1)
-  const maxValue = Math.max(
-    4,
-    ...loggedDays.flatMap((date) => {
-      const log = logsByDay.get(date)
-      return [log.breakouts, log.dryness, log.oiliness, log.redness]
-    })
-  )
-  const xFor = (i) => (i / (chartDays.length - 1)) * chartW
-  const yFor = (v) => chartH - (v / maxValue) * chartH
-
-  const segmentsFor = (key) => {
-    const segments = []
-    let current = []
-    chartDays.forEach((date, i) => {
-      const log = logsByDay.get(date)
-      if (!log) {
-        if (current.length) segments.push(current)
-        current = []
-        return
-      }
-      current.push([xFor(i), yFor(log[key])])
-    })
-    if (current.length) segments.push(current)
-    return segments
-  }
-
-  const lastLoggedDay = [...loggedDays].pop()
-
-  const selectedLog = selectedTrendDate
-    ? skinLogs.find((entry) => entry.local_date === selectedTrendDate)
-    : null
+  const report = monthlyReport
+  const STAT_ROWS = report
+    ? [
+        ['Routine completion', `${report.routineCompletionPct}%`],
+        ['Sunscreen days', String(report.sunscreenDays)],
+        ['Products used', String(report.productsUsed)],
+        ['Current streak', `${report.currentStreak} ${report.currentStreak === 1 ? 'day' : 'days'}`],
+        ['Longest streak', `${report.longestStreak} ${report.longestStreak === 1 ? 'day' : 'days'}`],
+        ['AM vs PM consistency', report.amVsPm],
+        ['Progress photos added', String(report.photosAdded)],
+      ]
+    : []
 
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -5472,107 +5638,49 @@ if (screen === 'skinTrends') {
         </button>
 
         <div className="mt-5">
-          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Skin insights
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            {report?.monthLabel || 'This month'}
+          </p>
+
+          <h1 className="mt-1.5 font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Skin reports
           </h1>
 
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Your skin journey over the last 30 days.
+            Your month at a glance, updated as it goes.
           </p>
         </div>
 
-        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-          <h2 className="text-[15px] font-semibold">Skin condition</h2>
+        {monthlyReportLoading && !report ? (
+          <p className={`mt-8 text-[13px] ${t.muted}`}>Getting your report…</p>
+        ) : !report ? (
+          <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
+            Nothing to report yet — complete a routine or two to see numbers here.
+          </p>
+        ) : (
+          <>
+            <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+              {STAT_ROWS.map(([label, value], i) => (
+                <div
+                  key={label}
+                  className={`flex items-center justify-between py-3.5 ${
+                    i < STAT_ROWS.length - 1 ? `border-b ${t.hair}` : ''
+                  }`}
+                >
+                  <span className={`text-[13px] ${t.muted}`}>{label}</span>
+                  <span className="font-display text-[22px] font-light">{value}</span>
+                </div>
+              ))}
+            </div>
 
-          {!hasEnoughData ? (
-            <p className={`mt-3 text-[13px] leading-relaxed ${t.muted}`}>
-              Log your skin on a few more days on the Today screen to see a chart here.
-            </p>
-          ) : (
-            <>
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} className="mt-4 w-full" style={{ height: 150 }}>
-                <g className={t.hair}>
-                  <line x1="0" y1={yFor(maxValue)} x2={chartW} y2={yFor(maxValue)} stroke="currentColor" strokeWidth="1" />
-                  <line x1="0" y1={yFor(maxValue / 2)} x2={chartW} y2={yFor(maxValue / 2)} stroke="currentColor" strokeWidth="1" />
-                  <line x1="0" y1={chartH} x2={chartW} y2={chartH} stroke="currentColor" strokeWidth="1" />
-                </g>
-
-                <g className={t.faint}>
-                  <text x="2" y={yFor(maxValue) - 3} fontSize="10" fontWeight="600">{maxValue}</text>
-                  <text x="2" y={yFor(maxValue / 2) - 3} fontSize="10" fontWeight="600">{Math.round(maxValue / 2)}</text>
-                </g>
-
-                {METRICS.map(([key, , color]) => (
-                  <g key={key}>
-                    {segmentsFor(key).map((seg, i) => (
-                      <path
-                        key={i}
-                        d={'M' + seg.map(([x, y]) => `${x},${y}`).join(' L')}
-                        fill="none" stroke={color} strokeWidth="2"
-                        strokeLinecap="round" strokeLinejoin="round"
-                      />
-                    ))}
-
-                    {lastLoggedDay && (
-                      <circle
-                        cx={xFor(chartDays.indexOf(lastLoggedDay))}
-                        cy={yFor(logsByDay.get(lastLoggedDay)[key])}
-                        r="3.5" fill={color}
-                      />
-                    )}
-                  </g>
-                ))}
-
-                {chartDays.map((date, i) => (
-                  <rect
-                    key={date}
-                    x={xFor(i) - columnW / 2} y="0" width={columnW} height={chartH}
-                    fill="transparent"
-                    onClick={() => setSelectedTrendDate(date)}
-                  />
-                ))}
-              </svg>
-
-              <div className={`mt-1 flex justify-between text-[11px] ${t.faint}`}>
-                <span>
-                  {new Date(chartDays[0] + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                </span>
-                <span>
-                  {new Date(todayString + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                </span>
-              </div>
-
-              <div className={`mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t pt-4 ${t.hair}`}>
-                {METRICS.map(([key, label, color]) => (
-                  <span key={key} className="flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
-                    <span className={`text-xs ${t.muted}`}>{label}</span>
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        {selectedTrendDate && (
-          <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-            <p className="text-[14px] font-semibold">
-              {new Date(selectedTrendDate + 'T00:00:00').toLocaleDateString('en-GB', {
-                weekday: 'long', day: 'numeric', month: 'long',
-              })}
-            </p>
-
-            {selectedLog ? (
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                <span className={`text-[13px] ${t.muted}`}>Breakouts {selectedLog.breakouts}</span>
-                <span className={`text-[13px] ${t.muted}`}>Dryness {selectedLog.dryness}</span>
-                <span className={`text-[13px] ${t.muted}`}>Oiliness {selectedLog.oiliness}</span>
-                <span className={`text-[13px] ${t.muted}`}>Redness {selectedLog.redness}</span>
-              </div>
-            ) : (
-              <p className={`mt-1 text-[13px] ${t.muted}`}>Nothing logged this day.</p>
-            )}
-          </div>
+            <button
+              disabled={reportSharing}
+              onClick={shareSkinReport}
+              className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
+            >
+              {reportSharing ? 'Preparing…' : 'Save report'}
+            </button>
+          </>
         )}
 
       </div>
@@ -5592,6 +5700,33 @@ if (screen === 'progressPhotos') {
     .map((id) => progressPhotos.find((p) => p.id === id))
     .filter(Boolean)
     .sort((a, b) => a.local_date.localeCompare(b.local_date))
+
+  // One combined, date-sorted timeline — a day can have a photo, a diary
+  // note, or both. Keyed by date so a day with both merges into one entry
+  // instead of showing twice.
+  const journeyByDate = new Map()
+
+  for (const photo of progressPhotos) {
+    journeyByDate.set(photo.local_date, { ...photo, local_date: photo.local_date, hasPhoto: true })
+  }
+
+  for (const log of skinLogs) {
+    if (!log.note?.trim()) continue
+    const existing = journeyByDate.get(log.local_date)
+    if (existing) {
+      existing.diaryNote = log.note
+    } else {
+      journeyByDate.set(log.local_date, {
+        local_date: log.local_date,
+        hasPhoto: false,
+        diaryNote: log.note,
+      })
+    }
+  }
+
+  const journeyEntries = [...journeyByDate.values()].sort((a, b) =>
+    b.local_date.localeCompare(a.local_date)
+  )
 
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -5736,48 +5871,71 @@ if (screen === 'progressPhotos') {
           <div className="flex items-center justify-between">
             <h2 className="text-[15px] font-semibold">Your journey</h2>
             {progressPhotos.length > 0 && (
-              <p className={`text-[12px] ${t.faint}`}>Tap to compare</p>
+              <p className={`text-[12px] ${t.faint}`}>Tap a photo to compare</p>
             )}
           </div>
 
-          {progressPhotos.length === 0 ? (
+          {journeyEntries.length === 0 ? (
             <p className={`mt-3 text-[13px] leading-relaxed ${t.muted}`}>
-              No photos yet. Take your first one to start tracking your skin's journey.
+              Nothing yet. Take a photo or add a note from Today to start tracking your skin's journey.
             </p>
           ) : (
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              {progressPhotos.map((photo) => (
-                <div key={photo.id}>
-                  <div className={`relative aspect-square overflow-hidden rounded-xl ${t.chip}`}>
-                    <button
-                      onClick={() => {
-                        setPhotoError(null)
-                        setViewingPhoto(photo)
-                      }}
-                      className="h-full w-full"
-                    >
-                      {photoUrls[photo.path] && (
-                        <img src={photoUrls[photo.path]} alt="" className="h-full w-full object-cover" />
-                      )}
-                    </button>
+            <div className="mt-3 flex flex-col gap-2.5">
+              {journeyEntries.map((entry) => (
+                <button
+                  key={entry.local_date}
+                  onClick={() => {
+                    setPhotoError(null)
+                    setViewingPhoto(entry)
+                  }}
+                  className={`flex w-full items-start gap-3 rounded-2xl border ${t.hair} p-3 text-left`}
+                >
+                  <div className="relative shrink-0">
+                    {entry.hasPhoto ? (
+                      <div className={`h-14 w-14 overflow-hidden rounded-xl ${t.chip}`}>
+                        {photoUrls[entry.path] && (
+                          <img src={photoUrls[entry.path]} alt="" className="h-full w-full object-cover" />
+                        )}
+                      </div>
+                    ) : (
+                      <div className={`flex h-14 w-14 items-center justify-center rounded-xl ${t.chip}`}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="1.8"
+                          strokeLinecap="round" strokeLinejoin="round" className={t.mark}>
+                          <path d="M4 6h16M4 12h10M4 18h7" />
+                        </svg>
+                      </div>
+                    )}
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        toggleCompare(photo.id)
-                      }}
-                      className={`absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ${
-                        comparePhotos.includes(photo.id) ? t.nodeDone : 'bg-black/30 text-white'
-                      }`}
-                    >
-                      {comparePhotos.includes(photo.id) ? comparePhotos.indexOf(photo.id) + 1 : ''}
-                    </button>
+                    {entry.hasPhoto && (
+                      <span
+                        role="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleCompare(entry.id)
+                        }}
+                        className={`absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                          comparePhotos.includes(entry.id) ? t.nodeDone : 'bg-black/30 text-white'
+                        }`}
+                      >
+                        {comparePhotos.includes(entry.id) ? comparePhotos.indexOf(entry.id) + 1 : ''}
+                      </span>
+                    )}
                   </div>
 
-                  <p className={`mt-1 text-center text-[11px] ${t.faint}`}>
-                    {new Date(photo.local_date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                  </p>
-                </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-[12px] font-semibold ${t.faint}`}>
+                      {new Date(entry.local_date + 'T00:00:00').toLocaleDateString('en-GB', {
+                        weekday: 'short', day: 'numeric', month: 'short',
+                      })}
+                    </p>
+                    {entry.diaryNote && (
+                      <p className="mt-0.5 truncate text-[13px] leading-snug">
+                        {entry.diaryNote}
+                      </p>
+                    )}
+                  </div>
+                </button>
               ))}
             </div>
           )}
@@ -5792,7 +5950,7 @@ if (screen === 'progressPhotos') {
               Close
             </button>
 
-            {photoUrls[viewingPhoto.path] && (
+            {viewingPhoto.hasPhoto && photoUrls[viewingPhoto.path] && (
               <img src={photoUrls[viewingPhoto.path]} alt="" className="mt-4 max-h-[60vh] w-full rounded-2xl object-contain" />
             )}
 
@@ -5803,20 +5961,36 @@ if (screen === 'progressPhotos') {
             </p>
 
             <textarea
-              key={viewingPhoto.id}
-              defaultValue={viewingPhoto.note || ''}
-              onBlur={(e) => saveProgressPhotoNote(viewingPhoto, e.target.value)}
+              key={viewingPhoto.local_date}
+              defaultValue={(viewingPhoto.hasPhoto ? viewingPhoto.note : viewingPhoto.diaryNote) || ''}
+              onBlur={(e) =>
+                viewingPhoto.hasPhoto
+                  ? saveProgressPhotoNote(viewingPhoto, e.target.value)
+                  : saveNoteForDate(viewingPhoto.local_date, e.target.value)
+              }
               placeholder="Add a note about your skin..."
               rows={2}
               className="mt-4 w-full rounded-xl border border-white/20 bg-white/10 p-3 text-[13px] text-white placeholder-white/50"
             />
 
-            <button
-              onClick={() => deleteProgressPhoto(viewingPhoto)}
-              className="mt-6 text-[14px] font-semibold text-rose-400"
-            >
-              Delete photo
-            </button>
+            {viewingPhoto.hasPhoto ? (
+              <button
+                onClick={() => deleteProgressPhoto(viewingPhoto)}
+                className="mt-6 text-[14px] font-semibold text-rose-400"
+              >
+                Delete photo
+              </button>
+            ) : (
+              <button
+                onClick={async () => {
+                  await saveNoteForDate(viewingPhoto.local_date, '')
+                  setViewingPhoto(null)
+                }}
+                className="mt-6 text-[14px] font-semibold text-rose-400"
+              >
+                Delete note
+              </button>
+            )}
 
             {photoError && (
               <p className="mt-3 text-center text-[13px] text-rose-400">{photoError}</p>

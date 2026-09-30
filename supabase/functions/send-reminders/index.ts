@@ -273,6 +273,32 @@ Deno.serve(async (req) => {
     }
   }
 
+  // --- Diary nudge, once a day around 14:00 local, if nothing's logged yet ---
+
+  const { data: diaryNudges, error: diaryError } = await supabase.rpc('due_diary_nudges', { window_minutes: 6 })
+
+  if (diaryError) {
+    diag.diaryError = diaryError.message
+  } else {
+    diag.diaryDueCount = diaryNudges?.length ?? 0
+
+    for (const row of diaryNudges ?? []) {
+      const payload = {
+        title: 'How\'s your skin today? 📝',
+        body: "You haven't logged a note yet — takes a second.",
+        url: '/',
+        tag: 'diary-nudge',
+      }
+
+      await sendPush(row.subscription, payload, row.user_id, dryRun, result, async () => {
+        await supabase.from('diary_nudge_log').insert({
+          user_id: row.user_id,
+          local_date: row.local_date,
+        })
+      })
+    }
+  }
+
   return new Response(JSON.stringify({ ...result, diag }), {
     headers: { 'Content-Type': 'application/json' },
   })
