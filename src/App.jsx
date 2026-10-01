@@ -207,6 +207,9 @@ function App() {
   const [adminTab, setAdminTab] = useState('signups')
   const [pendingPractitioners, setPendingPractitioners] = useState([])
   const [pendingPractitionersLoading, setPendingPractitionersLoading] = useState(true)
+  const [verifiedPractitionersAdmin, setVerifiedPractitionersAdmin] = useState([])
+  const [verifiedPractitionersAdminLoading, setVerifiedPractitionersAdminLoading] = useState(true)
+  const [adminSignupsQuery, setAdminSignupsQuery] = useState('')
   const notify = (message, tone = 'error') => setToast({ message, tone })
 
   useEffect(() => {
@@ -303,6 +306,8 @@ function App() {
   const [applyWhatsapp, setApplyWhatsapp] = useState('')
   const [applySaving, setApplySaving] = useState(false)
   const [hasPendingInvite, setHasPendingInvite] = useState(false)
+  const [invitePreview, setInvitePreview] = useState(null) // { token, display_name, title, bio }
+  const [invitePreviewBusy, setInvitePreviewBusy] = useState(false)
   const [practitionerClients, setPractitionerClients] = useState([])
   const [practitionerClientsLoading, setPractitionerClientsLoading] = useState(false)
   const [selectedClientId, setSelectedClientId] = useState(null)
@@ -550,12 +555,16 @@ setRoutineHistory(groupedRoutines)
       }
       if (!token) return
 
-      const { error } = await supabase.rpc('accept_invitation', { p_token: token })
+      // No longer auto-redeems. A token is the only credential this link
+      // ever had — nothing stopped it from granting scopes to whoever
+      // happened to tap it first, sight unseen, which matters most for an
+      // unlisted practitioner nobody's heard of. This shows who's inviting
+      // before anything is granted; accept_invitation only ever runs now
+      // from an explicit tap on that preview.
+      const { data, error } = await supabase.rpc('get_invitation_preview', { p_token: token })
 
       if (!error) {
-        try { localStorage.removeItem('pendingInviteToken') } catch {}
-        setHasPendingInvite(false)
-        notify("You're now connected with your professional.", 'success')
+        setInvitePreview({ token, ...data?.[0] })
         return
       }
 
@@ -571,7 +580,7 @@ setRoutineHistory(groupedRoutines)
 
       // Network blip or similar — leave it in storage, we'll retry on the
       // next auth state change instead of losing the invite silently.
-      console.error('INVITE REDEEM ERROR:', error)
+      console.error('INVITE PREVIEW ERROR:', error)
     }
 
     const checkUser = async (user) => {
@@ -1693,6 +1702,7 @@ useEffect(() => {
   if (screen === 'admin') {
     loadAdminUsers()
     loadPendingPractitioners()
+    loadVerifiedPractitionersAdmin()
   }
 
   if (screen === 'careTeam') {
@@ -1876,7 +1886,7 @@ const loadCareTeam = async () => {
   const [{ data: relationships, error: relError }, { data: log, error: logError }, { data: ended, error: endedError }] = await Promise.all([
     supabase
       .from('care_relationships')
-      .select('id, status, scopes, invited_at, accepted_at, practitioners (display_name, title, bio, whatsapp)')
+      .select('id, status, scopes, invited_at, accepted_at, practitioners (display_name, title, bio, whatsapp, verified_at)')
       .eq('client_id', user.id)
       .in('status', ['invited', 'active'])
       .order('invited_at', { ascending: false }),
@@ -2104,6 +2114,59 @@ const reviewPractitioner = async (targetId, approve) => {
   setPendingPractitioners((current) => current.filter((p) => p.user_id !== targetId))
 }
 
+const loadVerifiedPractitionersAdmin = async () => {
+  setVerifiedPractitionersAdminLoading(true)
+
+  const { data, error } = await supabase.rpc('admin_list_verified_practitioners')
+
+  if (error) {
+    console.error('ADMIN LIST VERIFIED PRACTITIONERS ERROR:', error)
+    setVerifiedPractitionersAdminLoading(false)
+    return
+  }
+
+  setVerifiedPractitionersAdmin(data || [])
+  setVerifiedPractitionersAdminLoading(false)
+}
+
+const revokePractitioner = async (targetId, name) => {
+  const confirmed = await confirmAction(
+    `Revoke ${name || 'this practitioner'}'s verification? They'll immediately lose access to every client's data, though the history stays on record. They'd need to apply again to be reconsidered.`
+  )
+  if (!confirmed) return
+
+  const { error } = await supabase.rpc('admin_revoke_practitioner', { target_id: targetId })
+
+  if (error) {
+    console.error('ADMIN REVOKE PRACTITIONER ERROR:', error)
+    notify(error.message)
+    return
+  }
+
+  notify('Verification revoked.', 'success')
+  setVerifiedPractitionersAdmin((current) => current.filter((p) => p.user_id !== targetId))
+}
+
+// "Verified" (can invite clients, self-service) and "listed" (shows up in
+// the public Find a Professional directory) are deliberately separate —
+// auto-verify means anyone who filled in the form can operate, but only an
+// admin-reviewed practitioner should be presented to a client browsing as
+// if they're a known professional.
+const togglePractitionerListed = async (targetId, listed) => {
+  const { error } = await supabase.rpc('admin_set_practitioner_listed', { target_id: targetId, listed })
+
+  if (error) {
+    console.error('ADMIN SET PRACTITIONER LISTED ERROR:', error)
+    notify(error.message)
+    return
+  }
+
+  notify(listed ? 'Listed in the directory.' : 'Removed from the directory.', 'success')
+  setVerifiedPractitionersAdmin((current) =>
+    current.map((p) => (p.user_id === targetId ? { ...p, listed_at: listed ? new Date().toISOString() : null } : p))
+  )
+}
+
 const exportAdminUsersCsv = (users) => {
   const headers = ['Email', 'Username', 'Onboarded', 'Signed up', 'Last active', 'Email confirmed', 'Suspended']
 
@@ -2176,6 +2239,42 @@ const deleteUserAccount = async (targetUser) => {
 
   notify('Account deleted.', 'success')
   loadAdminUsers()
+}
+
+const acceptPreviewedInvite = async () => {
+  if (!invitePreview || invitePreviewBusy) return
+  setInvitePreviewBusy(true)
+
+  const { error } = await supabase.rpc('accept_invitation', { p_token: invitePreview.token })
+
+  setInvitePreviewBusy(false)
+
+  if (error) {
+    console.error('INVITE REDEEM ERROR:', error)
+    const permanent = /already used|not found|expired/i.test(error.message || '')
+    if (permanent) {
+      try { localStorage.removeItem('pendingInviteToken') } catch {}
+      setHasPendingInvite(false)
+      setInvitePreview(null)
+      notify(/expired/i.test(error.message || '')
+        ? 'That invite link has expired. Ask your professional to send a new one.'
+        : "That invite link isn't valid anymore.")
+      return
+    }
+    notify("Couldn't connect you right now. Try again in a moment.")
+    return
+  }
+
+  try { localStorage.removeItem('pendingInviteToken') } catch {}
+  setHasPendingInvite(false)
+  setInvitePreview(null)
+  notify("You're now connected with your professional.", 'success')
+}
+
+const declinePreviewedInvite = () => {
+  try { localStorage.removeItem('pendingInviteToken') } catch {}
+  setHasPendingInvite(false)
+  setInvitePreview(null)
 }
 
 // Wrapped in an IIFE so the toast/confirm overlay below can render once,
@@ -2603,21 +2702,22 @@ const submitPractitionerApplication = async () => {
 
   setApplySaving(true)
 
-  const { error } = await supabase.from('practitioners').upsert(
-    {
-      user_id: user.id,
-      display_name: applyDisplayName.trim(),
-      title: applyTitle.trim() || null,
-      bio: applyBio.trim() || null,
-      specialisms: applySpecialisms
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      instagram: applyInstagram.trim() || null,
-      whatsapp: applyWhatsapp.trim() || null,
-    },
-    { onConflict: 'user_id' }
-  )
+  // A first-time application verifies instantly (no admin gate); a
+  // previously-revoked practitioner resubmitting this same form stays
+  // unverified until an admin re-approves them — see the RPC for why that
+  // split is safe. The server decides which one happened; it's not
+  // something the client can determine from practitionerStatus alone.
+  const { data: result, error } = await supabase.rpc('submit_practitioner_application', {
+    p_display_name: applyDisplayName.trim(),
+    p_title: applyTitle.trim() || null,
+    p_bio: applyBio.trim() || null,
+    p_specialisms: applySpecialisms
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    p_instagram: applyInstagram.trim() || null,
+    p_whatsapp: applyWhatsapp.trim() || null,
+  })
 
   setApplySaving(false)
 
@@ -2627,8 +2727,12 @@ const submitPractitionerApplication = async () => {
     return
   }
 
-  notify("Application sent — we'll review it and let you know.", 'success')
-  setPractitionerStatus('pending')
+  if (result === 'verified') {
+    notify("You're all set — check out your dashboard.", 'success')
+  } else {
+    notify('Submitted — your access needs to be reviewed again before you can continue.', 'success')
+  }
+  setPractitionerStatus(result)
 }
 
 // practitioner_get_client_profile logs the access (the client sees "your
@@ -2707,17 +2811,14 @@ const inviteClientByEmail = async () => {
     return
   }
 
-  if (data?.kind === 'relationship') {
-    notify("Invite sent — they'll see it in their Care team once they accept.", 'success')
-    setAddClientEmail('')
-    loadPractitionerClients()
-    setScreen('practitionerDashboard')
-    return
-  }
-
-  // Not an existing account yet — hand back a shareable link instead of
-  // silently failing, same as the PDF's "client receives a link" step.
-  setAddClientResult({ token: data.token, link: `${SITE_URL}/?invite=${data.token}` })
+  // Always a token now, whether or not the email had an account — the
+  // function deliberately no longer tells the caller which branch fired
+  // (closes an email-enumeration path that was only ever acceptable for a
+  // small, manually-vetted practitioner set, a premise auto-verify removed).
+  // If the account existed, the direct connection was already made
+  // server-side; this link still works as a backup either way.
+  setAddClientEmail('')
+  setAddClientResult({ token: data, link: `${SITE_URL}/?invite=${data}` })
 }
 
 // For when the practitioner doesn't know (or can't be sure of) the
@@ -3074,6 +3175,30 @@ const submitRecommendation = async () => {
                 ? "Skin changes — update this any time it does."
                 : 'This helps Tracka+ organize your skincare journey around you.'}
             </p>
+
+            {!onboardingCompleted && (
+              <button
+                onClick={async () => {
+                  if (!user) return
+                  setOnboardingCompleted(true)
+                  // The login/checkUser routing decides "already onboarded"
+                  // by whether a skin_profiles row exists at all, not by
+                  // onboarding_completed — so flipping only that flag would
+                  // still bounce them straight back into this screen next
+                  // time they log in. A blank row (everything but user_id
+                  // left null) satisfies that check without claiming any
+                  // skin data that was never actually given.
+                  await Promise.all([
+                    supabase.from('profiles').update({ onboarding_completed: true }).eq('id', user.id),
+                    supabase.from('skin_profiles').upsert({ user_id: user.id }, { onConflict: 'user_id' }),
+                  ])
+                  setScreen('applyPractitioner')
+                }}
+                className={`mt-3 text-[13px] font-semibold ${t.mark}`}
+              >
+                Signing up as a professional, not a client? Skip this →
+              </button>
+            )}
           </div>
 
           <div className="mt-8 flex flex-col gap-8">
@@ -4125,6 +4250,13 @@ if (screen === 'checkEmail') {
 }
 
 if (screen === 'admin') {
+  const adminQuery = adminSignupsQuery.trim().toLowerCase()
+  const filteredAdminUsers = !adminQuery
+    ? adminUsers
+    : adminUsers.filter((u) =>
+        [u.email, u.username].filter(Boolean).some((v) => v.toLowerCase().includes(adminQuery))
+      )
+
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
@@ -4135,7 +4267,7 @@ if (screen === 'admin') {
               Admin
             </p>
             <h1 className="mt-1 font-display text-[32px] font-light leading-[1.05] tracking-tight">
-              {adminTab === 'signups' ? 'Signups' : 'Professional approvals'}
+              {adminTab === 'signups' ? 'Signups' : adminTab === 'practitioners' ? 'Revoked — awaiting restoration' : 'Verified practitioners'}
             </h1>
           </div>
 
@@ -4154,16 +4286,32 @@ if (screen === 'admin') {
           </button>
         </div>
 
+        <div className="mt-4 grid grid-cols-3 gap-2.5">
+          <div className={`rounded-2xl ${t.surface} p-3`}>
+            <p className="text-[20px] font-semibold">{adminUsers.length}</p>
+            <p className={`text-[11px] ${t.muted}`}>Total users</p>
+          </div>
+          <div className={`rounded-2xl ${t.surface} p-3`}>
+            <p className="text-[20px] font-semibold">{verifiedPractitionersAdmin.length}</p>
+            <p className={`text-[11px] ${t.muted}`}>Verified pros</p>
+          </div>
+          <div className={`rounded-2xl ${t.surface} p-3`}>
+            <p className="text-[20px] font-semibold">{pendingPractitioners.length}</p>
+            <p className={`text-[11px] ${t.muted}`}>Pending apps</p>
+          </div>
+        </div>
+
         <div className={`mt-4 flex gap-2 rounded-2xl border ${t.hair} p-1`}>
           {[
             ['signups', 'Signups'],
-            ['practitioners', `Approvals${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`],
+            ['practitioners', `Revoked${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`],
+            ['verified', 'Practitioners'],
           ].map(([key, label]) => (
             <button
               key={key}
               type="button"
               onClick={() => setAdminTab(key)}
-              className={`flex-1 rounded-xl py-2 text-[13px] font-semibold transition ${
+              className={`flex-1 rounded-xl py-2 text-[12px] font-semibold transition ${
                 adminTab === key ? t.chip : t.muted
               }`}
             >
@@ -4173,20 +4321,31 @@ if (screen === 'admin') {
         </div>
 
         {adminTab === 'signups' && !adminLoading && !adminError && (
-          <div className="mt-3 flex items-center justify-between">
-            <p className={`text-[13px] ${t.faint}`}>
-              {adminUsers.length} {adminUsers.length === 1 ? 'user' : 'users'}
-            </p>
+          <>
+            <input
+              type="text"
+              placeholder="Search by email or username…"
+              value={adminSignupsQuery}
+              onChange={(e) => setAdminSignupsQuery(e.target.value)}
+              className={`mt-3 w-full rounded-2xl border ${t.hair} px-4 py-3 text-[14px] outline-none`}
+            />
 
-            <button
-              type="button"
-              disabled={adminUsers.length === 0}
-              onClick={() => exportAdminUsersCsv(adminUsers)}
-              className={`rounded-xl border px-3 py-1.5 text-[12px] font-semibold ${t.hair} ${t.muted} disabled:opacity-40`}
-            >
-              Export CSV
-            </button>
-          </div>
+            <div className="mt-3 flex items-center justify-between">
+              <p className={`text-[13px] ${t.faint}`}>
+                {filteredAdminUsers.length} {filteredAdminUsers.length === 1 ? 'user' : 'users'}
+                {adminQuery && ` of ${adminUsers.length}`}
+              </p>
+
+              <button
+                type="button"
+                disabled={adminUsers.length === 0}
+                onClick={() => exportAdminUsersCsv(adminUsers)}
+                className={`rounded-xl border px-3 py-1.5 text-[12px] font-semibold ${t.hair} ${t.muted} disabled:opacity-40`}
+              >
+                Export CSV
+              </button>
+            </div>
+          </>
         )}
 
         {adminTab === 'signups' && adminLoading && (
@@ -4201,7 +4360,10 @@ if (screen === 'admin') {
 
         {adminTab === 'signups' && !adminLoading && !adminError && (
           <div className="mt-5 flex flex-col gap-3">
-            {adminUsers.map((u) => (
+            {filteredAdminUsers.length === 0 && (
+              <p className={`text-[13px] leading-relaxed ${t.muted}`}>No matches.</p>
+            )}
+            {filteredAdminUsers.map((u) => (
               <div key={u.id} className={`rounded-2xl border ${t.hair} p-4`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -4274,7 +4436,7 @@ if (screen === 'admin') {
               <p className={`text-[15px] ${t.muted}`}>Loading…</p>
             ) : pendingPractitioners.length === 0 ? (
               <p className={`text-[13px] leading-relaxed ${t.muted}`}>
-                No pending applications.
+                No one's currently waiting on restoration.
               </p>
             ) : (
               <div className="flex flex-col gap-3">
@@ -4306,29 +4468,119 @@ if (screen === 'admin') {
                       </span>
                     </div>
 
+                    {p.revoked_at && (
+                      <p className={`mt-2 text-[12px] font-semibold ${t.danger}`}>
+                        Previously revoked {new Date(p.revoked_at).toLocaleDateString('en-GB', {
+                          day: 'numeric', month: 'short', year: 'numeric',
+                        })} — this is a reapplication, not a first-time applicant.
+                      </p>
+                    )}
+
                     {p.title && (
                       <p className={`mt-2 text-[11px] leading-relaxed ${t.faint}`}>
                         Shown to clients next to their name — check it against their Instagram/WhatsApp before approving.
                       </p>
                     )}
 
+                    {/* Reject is deliberately not offered here — every entry in
+                        this list is now a previously-revoked reapplicant (first-
+                        time applicants auto-verify and never land in this tab
+                        at all), and admin_review_practitioner's reject branch
+                        explicitly refuses anyone with revoked_at set, to
+                        protect their real client history from deletion. The
+                        only way to keep someone out permanently is to leave
+                        them unapproved. */}
+                    <button
+                      type="button"
+                      disabled={!!busyAction}
+                      onClick={() => runBusy(`reviewPractitioner-${p.user_id}`, () => reviewPractitioner(p.user_id, true))}
+                      className={`mt-3 w-full rounded-xl px-3 py-2 text-[12px] font-bold ${t.btn} disabled:opacity-50`}
+                    >
+                      {busyAction === `reviewPractitioner-${p.user_id}` ? 'Restoring…' : 'Restore access'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {adminTab === 'verified' && (
+          <div className="mt-5">
+            {verifiedPractitionersAdminLoading ? (
+              <p className={`text-[15px] ${t.muted}`}>Loading…</p>
+            ) : verifiedPractitionersAdmin.length === 0 ? (
+              <p className={`text-[13px] leading-relaxed ${t.muted}`}>
+                No verified practitioners yet.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {verifiedPractitionersAdmin.map((p) => (
+                  <div key={p.user_id} className={`rounded-2xl border ${t.hair} p-4`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-[15px] font-semibold">{p.display_name}</p>
+                        {p.title && (
+                          <p className={`text-[12px] font-medium ${t.mark}`}>{p.title}</p>
+                        )}
+                        <p className={`truncate text-[13px] ${t.muted}`}>{p.email}</p>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1.5">
+                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
+                          {p.client_count} {p.client_count === 1 ? 'client' : 'clients'}
+                        </span>
+                        {p.listed_at ? (
+                          <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-500">
+                            Listed
+                          </span>
+                        ) : (
+                          <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${t.hair} ${t.faint}`}>
+                            Not listed
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {p.bio && (
+                      <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>{p.bio}</p>
+                    )}
+
+                    {p.specialisms?.length > 0 && (
+                      <p className={`mt-2 text-[12px] ${t.faint}`}>
+                        {p.specialisms.join(' · ')}
+                      </p>
+                    )}
+
+                    <div className={`mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] ${t.faint}`}>
+                      {p.instagram && <span>IG: {p.instagram}</span>}
+                      {p.whatsapp && <span>WhatsApp: {p.whatsapp}</span>}
+                      <span>
+                        Verified {new Date(p.verified_at).toLocaleDateString('en-GB', {
+                          day: 'numeric', month: 'short', year: 'numeric',
+                        })}
+                      </span>
+                    </div>
+
                     <div className="mt-3 flex gap-2">
                       <button
                         type="button"
                         disabled={!!busyAction}
-                        onClick={() => runBusy(`reviewPractitioner-${p.user_id}`, () => reviewPractitioner(p.user_id, false))}
-                        className={`flex-1 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-[12px] font-semibold ${t.danger} disabled:opacity-50`}
+                        onClick={() =>
+                          runBusy(`toggleListed-${p.user_id}`, () => togglePractitionerListed(p.user_id, !p.listed_at))
+                        }
+                        className={`flex-1 rounded-xl border px-3 py-2 text-[12px] font-semibold ${t.hair} ${t.muted} disabled:opacity-50`}
                       >
-                        {busyAction === `reviewPractitioner-${p.user_id}` ? 'Rejecting…' : 'Reject'}
+                        {busyAction === `toggleListed-${p.user_id}`
+                          ? '…'
+                          : p.listed_at ? 'Remove from directory' : 'List in directory'}
                       </button>
-
                       <button
                         type="button"
                         disabled={!!busyAction}
-                        onClick={() => runBusy(`reviewPractitioner-${p.user_id}`, () => reviewPractitioner(p.user_id, true))}
-                        className={`flex-1 rounded-xl px-3 py-2 text-[12px] font-bold ${t.btn} disabled:opacity-50`}
+                        onClick={() => runBusy(`revokePractitioner-${p.user_id}`, () => revokePractitioner(p.user_id, p.display_name))}
+                        className={`flex-1 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-[12px] font-semibold ${t.danger} disabled:opacity-50`}
                       >
-                        {busyAction === `reviewPractitioner-${p.user_id}` ? 'Approving…' : 'Approve'}
+                        {busyAction === `revokePractitioner-${p.user_id}` ? 'Revoking…' : 'Revoke'}
                       </button>
                     </div>
                   </div>
@@ -5613,6 +5865,11 @@ if (screen === 'careTeam') {
                       Pending
                     </span>
                   )}
+                  {rel.status === 'active' && !rel.practitioners?.verified_at && (
+                    <span className="shrink-0 rounded-full border border-rose-400/30 bg-rose-400/10 px-2.5 py-1 text-[11px] font-semibold">
+                      <span className={t.danger}>No longer verified</span>
+                    </span>
+                  )}
                 </div>
 
                 {rel.status === 'invited' ? (
@@ -6007,8 +6264,8 @@ if (screen === 'applyPractitioner') {
             {practitionerStatus === 'verified'
               ? 'Clients see this when you invite them. You can update it any time.'
               : practitionerStatus === 'pending'
-              ? "Your application is under review — we'll let you know once it's approved."
-              : 'Tell us a bit about your practice. We review applications by hand before you can invite clients.'}
+              ? 'Your access was revoked and needs to be reviewed again before you can continue.'
+              : "Tell us a bit about your practice. You'll get instant access to invite clients."}
           </p>
         </div>
 
@@ -6032,7 +6289,7 @@ if (screen === 'applyPractitioner') {
             </label>
             <input
               type="text"
-              placeholder="e.g. Esthetician, Licensed Dermatologist, Skincare Consultant"
+              placeholder="e.g. Esthetician, Dermatologist, Skincare Brand, Clinic"
               value={applyTitle}
               onChange={(e) => setApplyTitle(e.target.value)}
               className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
@@ -8793,6 +9050,61 @@ if (screen === 'progressPhotos') {
   return (
     <>
       {screenContent}
+
+      {invitePreview && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/45 px-6">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="invite-preview-title"
+            className={`w-full max-w-sm rounded-3xl p-6 ${t.surface}`}
+          >
+            <p className={`text-[12px] font-semibold uppercase ${t.mark}`}>Professional invitation</p>
+            <h2 id="invite-preview-title" className="mt-2 text-[22px] font-semibold">
+              {invitePreview.display_name || 'A skincare professional'}
+            </h2>
+            {invitePreview.title && <p className={`mt-1 text-[14px] ${t.muted}`}>{invitePreview.title}</p>}
+            {invitePreview.bio && <p className={`mt-3 text-[14px] leading-relaxed ${t.muted}`}>{invitePreview.bio}</p>}
+
+            <p className="mt-5 text-[13px] font-semibold">They are requesting access to:</p>
+            {invitePreview.scopes?.length ? (
+              <ul className={`mt-2 flex flex-col gap-2 text-[13px] ${t.muted}`}>
+                {invitePreview.scopes.map((scope) => (
+                  <li key={scope} className="flex gap-2">
+                    <span aria-hidden="true">•</span>
+                    <span>{{
+                      skin_profile: 'Your skin profile',
+                      routine: 'Your skincare routine',
+                      daily_logs: 'Your daily logs',
+                      photos: 'Your progress photos',
+                      pregnancy_status: 'Your pregnancy or breastfeeding status',
+                    }[scope] || scope}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className={`mt-2 text-[13px] ${t.muted}`}>Access details are unavailable.</p>
+            )}
+
+            <button
+              type="button"
+              disabled={invitePreviewBusy}
+              onClick={acceptPreviewedInvite}
+              className={`mt-6 w-full rounded-2xl px-4 py-3 text-[14px] font-bold ${t.btn} disabled:opacity-50`}
+            >
+              {invitePreviewBusy ? 'Connecting…' : 'Accept invitation'}
+            </button>
+            <button
+              type="button"
+              disabled={invitePreviewBusy}
+              onClick={declinePreviewedInvite}
+              className={`mt-2 w-full rounded-2xl border px-4 py-3 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-50`}
+            >
+              Not now
+            </button>
+          </section>
+        </div>
+      )}
 
       {toast && (
         <div className="fixed inset-x-0 bottom-28 z-50 flex justify-center px-6">
