@@ -285,8 +285,14 @@ function App() {
   const [diaryNudgeEnabled, setDiaryNudgeEnabled] = useState(false)
   const [pendingRecommendations, setPendingRecommendations] = useState([])
   const [pendingRecommendationsLoading, setPendingRecommendationsLoading] = useState(false)
+  const [recommendationHistory, setRecommendationHistory] = useState([])
+  const [recommendationHistoryLoading, setRecommendationHistoryLoading] = useState(false)
+  const [verifiedPractitioners, setVerifiedPractitioners] = useState([])
+  const [verifiedPractitionersLoading, setVerifiedPractitionersLoading] = useState(false)
+  const [findProfessionalQuery, setFindProfessionalQuery] = useState('')
   const [careRelationships, setCareRelationships] = useState([])
   const [careAccessLog, setCareAccessLog] = useState([])
+  const [endedRelationships, setEndedRelationships] = useState([])
   const [careTeamLoading, setCareTeamLoading] = useState(false)
   const [practitionerStatus, setPractitionerStatus] = useState(null) // null | 'pending' | 'verified'
   const [applyDisplayName, setApplyDisplayName] = useState('')
@@ -307,6 +313,10 @@ function App() {
   const [addClientEmail, setAddClientEmail] = useState('')
   const [addClientSaving, setAddClientSaving] = useState(false)
   const [addClientResult, setAddClientResult] = useState(null)
+  const [addLinkLabel, setAddLinkLabel] = useState('')
+  const [addLinkSaving, setAddLinkSaving] = useState(false)
+  const [pendingInvitations, setPendingInvitations] = useState([])
+  const [pendingInvitationsLoading, setPendingInvitationsLoading] = useState(false)
   const [composeIncludeSkinProfile, setComposeIncludeSkinProfile] = useState(false)
   const [composeGender, setComposeGender] = useState('')
   const [composePregnant, setComposePregnant] = useState(undefined)
@@ -1657,6 +1667,14 @@ useEffect(() => {
     loadCareTeam()
   }
 
+  if (screen === 'recommendationHistory') {
+    loadRecommendationHistory()
+  }
+
+  if (screen === 'findProfessional') {
+    loadVerifiedPractitioners()
+  }
+
   if (screen === 'skinTrends') {
     loadSkinLogs()
     setReportMonthOffset(0)
@@ -1690,6 +1708,7 @@ useEffect(() => {
   if (screen === 'practitionerDashboard') {
     loadPractitionerClients()
     loadPractitionerRecommendations()
+    loadPendingInvitations()
   }
 
   if (screen === 'practitionerRoutines') {
@@ -1854,7 +1873,7 @@ const loadCareTeam = async () => {
   if (!user) return
   setCareTeamLoading(true)
 
-  const [{ data: relationships, error: relError }, { data: log, error: logError }] = await Promise.all([
+  const [{ data: relationships, error: relError }, { data: log, error: logError }, { data: ended, error: endedError }] = await Promise.all([
     supabase
       .from('care_relationships')
       .select('id, status, scopes, invited_at, accepted_at, practitioners (display_name, title, bio, whatsapp)')
@@ -1867,10 +1886,23 @@ const loadCareTeam = async () => {
       .eq('client_id', user.id)
       .order('at', { ascending: false })
       .limit(20),
+    // Quiet, not pushed — a client whose practitioner ended things sees it
+    // here if they look, not as a notification landing with no context.
+    // Self-initiated revokes are excluded (revoked_by = client's own id) —
+    // they already know, nothing to tell them.
+    supabase
+      .from('care_relationships')
+      .select('id, revoked_at, practitioners (display_name)')
+      .eq('client_id', user.id)
+      .eq('status', 'revoked')
+      .neq('revoked_by', user.id)
+      .order('revoked_at', { ascending: false })
+      .limit(5),
   ])
 
   if (relError) console.error('CARE RELATIONSHIPS ERROR:', relError)
   if (logError) console.error('CARE ACCESS LOG ERROR:', logError)
+  if (endedError) console.error('ENDED RELATIONSHIPS ERROR:', endedError)
 
   // A failed load otherwise renders identically to "nobody's connected
   // yet" — and this feeds the pending-invite badge/banner elsewhere, so a
@@ -1882,6 +1914,7 @@ const loadCareTeam = async () => {
 
   setCareRelationships(relationships || [])
   setCareAccessLog(log || [])
+  setEndedRelationships(ended || [])
   setCareTeamLoading(false)
 }
 
@@ -1910,6 +1943,53 @@ const loadPendingRecommendations = async () => {
   }
 
   setPendingRecommendations(data || [])
+}
+
+// Everything that's been resolved — accepted, declined or withdrawn — so a
+// client has some record of what a practitioner has proposed for them over
+// time, instead of it disappearing the moment it's acted on. Lighter
+// select than the pending one (no items/skin-profile detail) since this is
+// a glance-back list, not something to act on.
+const loadRecommendationHistory = async () => {
+  if (!user) return
+  setRecommendationHistoryLoading(true)
+
+  const { data, error } = await supabase
+    .from('recommendations')
+    .select('id, note, status, created_at, responded_at, practitioners:practitioner_id (display_name, title)')
+    .eq('client_id', user.id)
+    .neq('status', 'proposed')
+    .order('responded_at', { ascending: false })
+
+  setRecommendationHistoryLoading(false)
+
+  if (error) {
+    console.error('RECOMMENDATION HISTORY ERROR:', error)
+    notify("Couldn't load your recommendation history. Try again in a moment.")
+    return
+  }
+
+  setRecommendationHistory(data || [])
+}
+
+const loadVerifiedPractitioners = async () => {
+  setVerifiedPractitionersLoading(true)
+
+  const { data, error } = await supabase
+    .from('practitioners')
+    .select('user_id, display_name, title, bio, specialisms, instagram, whatsapp')
+    .not('verified_at', 'is', null)
+    .order('display_name')
+
+  setVerifiedPractitionersLoading(false)
+
+  if (error) {
+    console.error('VERIFIED PRACTITIONERS ERROR:', error)
+    notify("Couldn't load professionals. Try again in a moment.")
+    return
+  }
+
+  setVerifiedPractitioners(data || [])
 }
 
 const loadPractitionerStatus = async () => {
@@ -2389,9 +2469,9 @@ const respondToCareInvite = async (relationshipId, accept) => {
   await loadCareTeam()
 }
 
-const revokeCareAccess = async (relationshipId) => {
+const revokeCareAccess = async (relationshipId, practitionerName) => {
   const confirmed = await confirmAction(
-    "Revoke this practitioner's access? They'll no longer be able to see anything you've shared."
+    `Stop sharing with ${practitionerName || 'this practitioner'}? They'll no longer be able to see anything you've shared.`
   )
   if (!confirmed) return
 
@@ -2617,6 +2697,69 @@ const inviteClientByEmail = async () => {
   setAddClientResult({ token: data.token, link: `${SITE_URL}/?invite=${data.token}` })
 }
 
+// For when the practitioner doesn't know (or can't be sure of) the
+// client's registered email — accept_invitation() never checks the email
+// against whoever redeems it anyway, so the link never needed one. The
+// label is just the practitioner's own memory aid, not used for anything
+// else.
+const createInviteLink = async () => {
+  setAddLinkSaving(true)
+
+  const { data: token, error } = await supabase.rpc('practitioner_create_invite_link', {
+    p_label: addLinkLabel,
+    p_scopes: ['skin_profile', 'routine', 'daily_logs'],
+  })
+
+  setAddLinkSaving(false)
+
+  if (error) {
+    notify(error.message)
+    return
+  }
+
+  setAddLinkLabel('')
+  setAddClientResult({ token, link: `${SITE_URL}/?invite=${token}` })
+}
+
+const loadPendingInvitations = async () => {
+  if (!user) return
+  setPendingInvitationsLoading(true)
+
+  const { data, error } = await supabase
+    .from('invitations')
+    .select('token, invited_email, label, created_at, expires_at')
+    .eq('practitioner_id', user.id)
+    .is('used_at', null)
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false })
+
+  setPendingInvitationsLoading(false)
+
+  if (error) {
+    console.error('PENDING INVITATIONS ERROR:', error)
+    notify("Couldn't load pending invites. Try again in a moment.")
+    return
+  }
+
+  setPendingInvitations(data || [])
+}
+
+const cancelInvitation = async (token) => {
+  const confirmed = await confirmAction('Cancel this invite link? It will stop working.')
+  if (!confirmed) return
+
+  const { error } = await supabase.from('invitations').delete().eq('token', token)
+
+  if (error) {
+    console.error('CANCEL INVITATION ERROR:', error)
+    notify('Could not cancel that invite. Try again.')
+    return
+  }
+
+  notify('Invite cancelled.', 'success')
+  setPendingInvitations((current) => current.filter((inv) => inv.token !== token))
+}
+
 // Same tiered share pattern as inviteFriend — native share sheet first
 // (which surfaces WhatsApp directly, matching the "no chat, share a link"
 // v1 decision), clipboard as the fallback.
@@ -2651,6 +2794,29 @@ const shareClientInviteLink = async (link) => {
 const whatsappLink = (rawNumber, message) => {
   const digits = (rawNumber || '').replace(/[^0-9]/g, '')
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`
+}
+
+// The practitioner-side mirror of the client's own revokeCareAccess —
+// same RPC, now usable from either side since a practitioner who finds
+// the wrong person claimed their invite link (a real risk with
+// label-only, no-email links) needs a way to undo it themselves.
+const removeClient = async (relationshipId, clientName) => {
+  const confirmed = await confirmAction(
+    `Remove ${clientName || 'this client'}? They'll stop appearing in your client list and lose any access you've shared.`
+  )
+  if (!confirmed) return
+
+  const { error } = await supabase.rpc('revoke_care_access', { p_relationship_id: relationshipId })
+
+  if (error) {
+    console.error('REMOVE CLIENT ERROR:', error)
+    notify('Could not remove this client. Try again.')
+    return
+  }
+
+  notify('Client removed.', 'success')
+  await loadPractitionerClients()
+  setScreen('practitionerDashboard')
 }
 
 const openComposer = () => {
@@ -4614,7 +4780,10 @@ if (screen === 'settings') {
           </p>
         </div>
 
-        <div className={`mt-8 flex flex-col divide-y overflow-hidden rounded-3xl ${t.surface} ${t.hair}`}>
+        <p className={`mb-2 mt-8 px-1 text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
+          Account
+        </p>
+        <div className={`flex flex-col divide-y overflow-hidden rounded-3xl ${t.surface} ${t.hair}`}>
           <button
             onClick={() => {
               setSettingsUsername(displayName)
@@ -4641,6 +4810,41 @@ if (screen === 'settings') {
             className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
           >
             Update your password
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
+          <button
+            disabled={busyAction === 'remindersNav'}
+            onClick={() =>
+              runBusy('remindersNav', async () => {
+                await loadReminderSettings()
+                setScreen('reminders')
+              })
+            }
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold disabled:opacity-50"
+          >
+            {busyAction === 'remindersNav' ? 'Loading…' : 'Reminders'}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+
+        <p className={`mb-2 mt-6 px-1 text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
+          Professional care
+        </p>
+        <div className={`flex flex-col divide-y overflow-hidden rounded-3xl ${t.surface} ${t.hair}`}>
+          <button
+            onClick={() => setScreen('findProfessional')}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            Find a professional
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="1.8"
               strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
@@ -4713,27 +4917,12 @@ if (screen === 'settings') {
               </svg>
             </button>
           )}
-
-          <button
-            disabled={busyAction === 'remindersNav'}
-            onClick={() =>
-              runBusy('remindersNav', async () => {
-                await loadReminderSettings()
-                setScreen('reminders')
-              })
-            }
-            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold disabled:opacity-50"
-          >
-            {busyAction === 'remindersNav' ? 'Loading…' : 'Reminders'}
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
-              <path d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
         </div>
 
-        <div className={`mt-4 flex items-center justify-between rounded-3xl ${t.surface} p-5`}>
+        <p className={`mb-2 mt-6 px-1 text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
+          Preferences
+        </p>
+        <div className={`flex items-center justify-between rounded-3xl ${t.surface} p-5`}>
           <div className="pr-4">
             <p className="text-[15px] font-semibold">Dark mode</p>
             <p className={`mt-0.5 text-[13px] ${t.muted}`}>
@@ -4790,6 +4979,101 @@ if (screen === 'settings') {
       </div>
 
       {renderBottomTabs('settings', t)}
+    </main>
+  )
+}
+
+if (screen === 'findProfessional') {
+  const q = findProfessionalQuery.trim().toLowerCase()
+  const filtered = !q
+    ? verifiedPractitioners
+    : verifiedPractitioners.filter((p) => {
+        const haystack = [p.display_name, p.title, p.bio, ...(p.specialisms || [])]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        return haystack.includes(q)
+      })
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('settings')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Settings
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Find a professional
+          </h1>
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Browse verified aestheticians and reach out directly.
+          </p>
+        </div>
+
+        <input
+          type="text"
+          placeholder="Search by name, specialism…"
+          value={findProfessionalQuery}
+          onChange={(e) => setFindProfessionalQuery(e.target.value)}
+          className={`mt-6 w-full rounded-2xl border ${t.hair} ${t.surface} px-4 py-3.5 text-[15px] outline-none`}
+        />
+
+        {verifiedPractitionersLoading ? (
+          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
+        ) : filtered.length === 0 ? (
+          <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
+            {verifiedPractitioners.length === 0
+              ? 'No verified professionals yet — check back soon.'
+              : 'No matches. Try a different search.'}
+          </p>
+        ) : (
+          <div className="mt-6 flex flex-col gap-4">
+            {filtered.map((p) => (
+              <div key={p.user_id} className={`rounded-3xl ${t.surface} p-5`}>
+                <p className="text-[16px] font-semibold">{p.display_name}</p>
+                {p.title && (
+                  <p className={`mt-0.5 text-[13px] font-medium ${t.mark}`}>{p.title}</p>
+                )}
+                {p.bio && (
+                  <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>{p.bio}</p>
+                )}
+                {p.specialisms?.length > 0 && (
+                  <p className={`mt-2 text-[12px] ${t.faint}`}>{p.specialisms.join(' · ')}</p>
+                )}
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {p.whatsapp && (
+                    <a
+                      href={whatsappLink(p.whatsapp, `Hi ${p.display_name}, I found your profile on Tracka+ — `)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`rounded-xl px-3.5 py-2 text-[13px] font-semibold ${t.btn}`}
+                    >
+                      Message on WhatsApp
+                    </a>
+                  )}
+                  {p.instagram && (
+                    <span className={`flex items-center rounded-xl border px-3.5 py-2 text-[13px] font-semibold ${t.hair} ${t.muted}`}>
+                      IG: {p.instagram}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+      </div>
     </main>
   )
 }
@@ -5399,7 +5683,7 @@ if (screen === 'careTeam') {
 
                       <button
                         disabled={!!busyAction}
-                        onClick={() => runBusy(`revokeCare-${rel.id}`, () => revokeCareAccess(rel.id))}
+                        onClick={() => runBusy(`revokeCare-${rel.id}`, () => revokeCareAccess(rel.id, rel.practitioners?.display_name))}
                         className={`text-[13px] font-semibold ${t.danger} disabled:opacity-50`}
                       >
                         {busyAction === `revokeCare-${rel.id}` ? 'Revoking…' : 'Revoke access'}
@@ -5409,6 +5693,20 @@ if (screen === 'careTeam') {
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {endedRelationships.length > 0 && (
+          <div className="mt-8">
+            <div className="flex flex-col gap-2.5">
+              {endedRelationships.map((rel) => (
+                <p key={rel.id} className={`text-[13px] ${t.faint}`}>
+                  {rel.practitioners?.display_name || 'A professional'} ended your care relationship
+                  {' — '}
+                  {new Date(rel.revoked_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                </p>
+              ))}
+            </div>
           </div>
         )}
 
@@ -5597,6 +5895,85 @@ if (screen === 'notifications') {
                 </div>
               )
             })}
+          </div>
+        )}
+
+        <button
+          onClick={() => setScreen('recommendationHistory')}
+          className={`mt-8 text-center text-[13px] font-semibold ${t.mark}`}
+        >
+          Past recommendations →
+        </button>
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'recommendationHistory') {
+  const STATUS_LABEL = {
+    accepted: 'Accepted',
+    declined: 'Declined',
+    superseded: 'Withdrawn by practitioner',
+  }
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('notifications')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Notifications
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[34px] font-light leading-[1.05] tracking-tight">
+            Past recommendations
+          </h1>
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Everything a professional has proposed for you, resolved or not.
+          </p>
+        </div>
+
+        {recommendationHistoryLoading ? (
+          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
+        ) : recommendationHistory.length === 0 ? (
+          <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
+            Nothing here yet.
+          </p>
+        ) : (
+          <div className="mt-8 flex flex-col gap-3">
+            {recommendationHistory.map((rec) => (
+              <div key={rec.id} className={`rounded-2xl ${t.surface} p-4`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[15px] font-semibold">
+                      {rec.practitioners?.display_name || 'A professional'}
+                    </p>
+                    {rec.practitioners?.title && (
+                      <p className={`mt-0.5 text-[12px] font-medium ${t.mark}`}>{rec.practitioners.title}</p>
+                    )}
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
+                    {STATUS_LABEL[rec.status] || rec.status}
+                  </span>
+                </div>
+                <p className={`mt-2 text-[12px] ${t.muted}`}>
+                  {new Date(rec.responded_at || rec.created_at).toLocaleDateString('en-GB', {
+                    day: 'numeric', month: 'short', year: 'numeric',
+                  })}
+                </p>
+                {rec.note && (
+                  <p className={`mt-2 text-[13px] italic ${t.faint}`}>"{rec.note}"</p>
+                )}
+              </div>
+            ))}
           </div>
         )}
 
@@ -5802,6 +6179,46 @@ if (screen === 'practitionerDashboard') {
           </svg>
         </button>
 
+        {!pendingInvitationsLoading && pendingInvitations.length > 0 && (
+          <div className="mt-8">
+            <h2 className="text-[15px] font-semibold">Pending invites</h2>
+            <p className={`mt-1 text-[13px] ${t.muted}`}>
+              Links you've sent that haven't been opened yet.
+            </p>
+            <div className="mt-4 flex flex-col gap-2.5">
+              {pendingInvitations.map((inv) => (
+                <div key={inv.token} className={`flex items-center justify-between rounded-2xl ${t.surface} p-4`}>
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-semibold">
+                      {inv.label || inv.invited_email || 'Shared link'}
+                    </p>
+                    <p className={`mt-0.5 text-[12px] ${t.muted}`}>
+                      Sent {new Date(inv.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => shareClientInviteLink(`${SITE_URL}/?invite=${inv.token}`)}
+                      className={`text-[13px] font-semibold ${t.mark}`}
+                    >
+                      Share
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!!busyAction}
+                      onClick={() => runBusy(`cancelInvite-${inv.token}`, () => cancelInvitation(inv.token))}
+                      className={`text-[13px] font-semibold ${t.danger} disabled:opacity-50`}
+                    >
+                      {busyAction === `cancelInvite-${inv.token}` ? '…' : 'Cancel'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="mt-8">
           <h2 className="text-[15px] font-semibold">Clients</h2>
 
@@ -5809,18 +6226,36 @@ if (screen === 'practitionerDashboard') {
             <p className={`mt-4 text-[13px] ${t.muted}`}>Loading…</p>
           ) : practitionerClients.length === 0 ? (
             <p className={`mt-4 text-[13px] leading-relaxed ${t.muted}`}>
-              No clients yet. Once "Add Client" is ready, they'll show up here.
+              No clients yet. Tap "Add Client" above to invite your first one.
             </p>
           ) : (
             <div className="mt-4 flex flex-col gap-3">
-              {practitionerClients.map((c) => (
+              {practitionerClients.map((c) => {
+                // Flags a connection accepted in the last 24h — surfaces who
+                // just claimed a link, since that's otherwise invisible
+                // until the practitioner happens to check back. Relies on
+                // practitioner_list_clients() already sorting most-recently-
+                // accepted first, so these naturally land at the top.
+                const isRecent =
+                  c.status === 'active' &&
+                  c.accepted_at &&
+                  Date.now() - new Date(c.accepted_at).getTime() < 24 * 60 * 60 * 1000
+
+                return (
                 <button
                   key={c.relationship_id}
                   onClick={() => c.status === 'active' && openClientDetail(c.client_id)}
                   className={`flex items-center justify-between rounded-2xl ${t.surface} p-4 text-left`}
                 >
                   <div>
-                    <p className="text-[15px] font-semibold">{c.username || 'Client'}</p>
+                    <p className="text-[15px] font-semibold">
+                      {c.username || 'Client'}
+                      {isRecent && (
+                        <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
+                          New
+                        </span>
+                      )}
+                    </p>
                     <p className={`mt-0.5 text-[13px] ${t.muted}`}>
                       {c.status === 'invited' ? 'Waiting for acceptance' : 'Active'}
                     </p>
@@ -5837,7 +6272,8 @@ if (screen === 'practitionerDashboard') {
                     </svg>
                   )}
                 </button>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -5965,6 +6401,14 @@ if (screen === 'practitionerClientDetail') {
             >
               Propose a routine
             </button>
+
+            <button
+              disabled={!!busyAction}
+              onClick={() => runBusy(`removeClient-${client?.relationship_id}`, () => removeClient(client?.relationship_id, client?.username))}
+              className={`mt-3 w-full text-center text-[13px] font-semibold ${t.danger} disabled:opacity-50`}
+            >
+              {busyAction === `removeClient-${client?.relationship_id}` ? 'Removing…' : 'Remove client'}
+            </button>
           </>
         )}
 
@@ -6024,11 +6468,38 @@ if (screen === 'addClient') {
               {addClientSaving ? 'Sending…' : 'Continue'}
             </button>
           </div>
-        ) : (
+        ) : null}
+
+        {!addClientResult && (
+          <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+            <p className="text-[15px] font-semibold">Don't know their email?</p>
+            <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+              Generate a link instead — it works whether or not they already have an account, no email needed.
+            </p>
+
+            <input
+              type="text"
+              placeholder="A name to remind you who this is for (optional)"
+              value={addLinkLabel}
+              onChange={(e) => setAddLinkLabel(e.target.value)}
+              className={`mt-3 w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+
+            <button
+              onClick={createInviteLink}
+              disabled={addLinkSaving}
+              className={`mt-3 w-full rounded-2xl border py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted} disabled:opacity-60`}
+            >
+              {addLinkSaving ? 'Creating…' : 'Generate invite link'}
+            </button>
+          </div>
+        )}
+
+        {addClientResult && (
           <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-            <p className="text-[15px] font-semibold">No Tracka+ account yet</p>
+            <p className="text-[15px] font-semibold">Ready to share</p>
             <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>
-              Share this link with them — opening it walks them through creating an account and connecting with you.
+              Share this link with them — opening it connects them with you, whether they already have a Tracka+ account or not.
             </p>
 
             <div className={`mt-4 rounded-2xl border ${t.hair} px-4 py-3`}>
