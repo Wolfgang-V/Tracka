@@ -308,6 +308,10 @@ function App() {
   const [hasPendingInvite, setHasPendingInvite] = useState(false)
   const [invitePreview, setInvitePreview] = useState(null) // { token, display_name, title, bio }
   const [invitePreviewBusy, setInvitePreviewBusy] = useState(false)
+  // Parked feature: defaults to hidden (matches the flag's own default) so
+  // a failed/slow fetch fails safe — never briefly shows "Become a
+  // professional" to everyone before flipping it back off.
+  const [practitionersLaunched, setPractitionersLaunched] = useState(false)
   const [practitionerClients, setPractitionerClients] = useState([])
   const [practitionerClientsLoading, setPractitionerClientsLoading] = useState(false)
   const [selectedClientId, setSelectedClientId] = useState(null)
@@ -652,6 +656,17 @@ setRoutineHistory(groupedRoutines)
       loadCompletedSteps(user.id)
       loadProgressCompletions(user.id)
     }
+
+    // Unconditional on auth state — this only gates which buttons render,
+    // not any actual access, so there's no reason to wait for login.
+    supabase
+      .from('feature_flags')
+      .select('enabled')
+      .eq('key', 'practitioners_launch')
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.enabled) setPractitionersLaunched(true)
+      })
 
     const inviteMatch = window.location.search.match(/[?&]invite=([0-9a-fA-F-]{36})/)
     if (inviteMatch) {
@@ -2156,6 +2171,30 @@ const revokePractitioner = async (targetId, name) => {
   setVerifiedPractitionersAdmin((current) => current.filter((p) => p.user_id !== targetId))
 }
 
+const togglePractitionersLaunch = async () => {
+  const launching = !practitionersLaunched
+  const confirmed = await confirmAction(
+    launching
+      ? 'Open practitioner applications to everyone? Any of the 109 live users will be able to apply and instantly see client data they have access to.'
+      : 'Park the practitioner feature again? New applications will be blocked; practitioners who are already set up keep working as normal.'
+  )
+  if (!confirmed) return
+
+  const { error } = await supabase.rpc('admin_set_feature_flag', {
+    flag_key: 'practitioners_launch',
+    enabled: launching,
+  })
+
+  if (error) {
+    console.error('ADMIN SET FEATURE FLAG ERROR:', error)
+    notify(error.message)
+    return
+  }
+
+  setPractitionersLaunched(launching)
+  notify(launching ? 'Practitioners launched.' : 'Practitioner feature parked.', 'success')
+}
+
 // "Verified" (can invite clients, self-service) and "listed" (shows up in
 // the public Find a Professional directory) are deliberately separate —
 // auto-verify means anyone who filled in the form can operate, but only an
@@ -3185,7 +3224,7 @@ const submitRecommendation = async () => {
                 : 'This helps Tracka+ organize your skincare journey around you.'}
             </p>
 
-            {!onboardingCompleted && (
+            {!onboardingCompleted && practitionersLaunched && (
               <button
                 onClick={async () => {
                   if (!user) return
@@ -4311,6 +4350,27 @@ if (screen === 'admin') {
           </div>
         </div>
 
+        <div className={`mt-3 flex items-center justify-between rounded-2xl ${t.surface} p-4`}>
+          <div>
+            <p className="text-[14px] font-semibold">
+              Practitioners {practitionersLaunched ? 'launched' : 'parked'}
+            </p>
+            <p className={`mt-0.5 text-[12px] ${t.muted}`}>
+              {practitionersLaunched
+                ? 'Anyone can apply and go live instantly.'
+                : 'New applications are blocked. Existing practitioners still work.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={busyAction === 'togglePractitionersLaunch'}
+            onClick={() => runBusy('togglePractitionersLaunch', togglePractitionersLaunch)}
+            className={`shrink-0 rounded-xl border px-3.5 py-2 text-[13px] font-semibold disabled:opacity-50 ${t.hair} ${t.muted}`}
+          >
+            {busyAction === 'togglePractitionersLaunch' ? '…' : practitionersLaunched ? 'Park it' : 'Launch'}
+          </button>
+        </div>
+
         <div className={`mt-4 flex gap-2 rounded-2xl border ${t.hair} p-1`}>
           {[
             ['signups', 'Signups'],
@@ -5105,17 +5165,19 @@ if (screen === 'settings') {
           Professional care
         </p>
         <div className={`flex flex-col divide-y overflow-hidden rounded-3xl ${t.surface} ${t.hair}`}>
-          <button
-            onClick={() => setScreen('findProfessional')}
-            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
-          >
-            Find a professional
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
-              <path d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
+          {practitionersLaunched && (
+            <button
+              onClick={() => setScreen('findProfessional')}
+              className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+            >
+              Find a professional
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
 
           <button
             onClick={() => setScreen('careTeam')}
@@ -5148,7 +5210,7 @@ if (screen === 'settings') {
             </svg>
           </button>
 
-          {practitionerStatus !== 'verified' && (
+          {practitionerStatus !== 'verified' && (practitionersLaunched || practitionerStatus === 'pending') && (
             <button
               onClick={() => setScreen('applyPractitioner')}
               className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
