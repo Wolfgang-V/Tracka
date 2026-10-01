@@ -2058,6 +2058,29 @@ const loadPractitionerRecommendations = async () => {
   setPractitionerRecommendations(data || [])
 }
 
+const loadPendingInvitations = async () => {
+  if (!user) return
+  setPendingInvitationsLoading(true)
+
+  const { data, error } = await supabase
+    .from('invitations')
+    .select('token, invited_email, label, created_at, expires_at')
+    .eq('practitioner_id', user.id)
+    .is('used_at', null)
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false })
+
+  setPendingInvitationsLoading(false)
+
+  if (error) {
+    console.error('PENDING INVITATIONS ERROR:', error)
+    notify("Couldn't load pending invites. Try again in a moment.")
+    return
+  }
+
+  setPendingInvitations(data || [])
+}
+
 const reviewPractitioner = async (targetId, approve) => {
   if (!approve) {
     const confirmed = await confirmAction(
@@ -2719,29 +2742,6 @@ const createInviteLink = async () => {
 
   setAddLinkLabel('')
   setAddClientResult({ token, link: `${SITE_URL}/?invite=${token}` })
-}
-
-const loadPendingInvitations = async () => {
-  if (!user) return
-  setPendingInvitationsLoading(true)
-
-  const { data, error } = await supabase
-    .from('invitations')
-    .select('token, invited_email, label, created_at, expires_at')
-    .eq('practitioner_id', user.id)
-    .is('used_at', null)
-    .gt('expires_at', new Date().toISOString())
-    .order('created_at', { ascending: false })
-
-  setPendingInvitationsLoading(false)
-
-  if (error) {
-    console.error('PENDING INVITATIONS ERROR:', error)
-    notify("Couldn't load pending invites. Try again in a moment.")
-    return
-  }
-
-  setPendingInvitations(data || [])
 }
 
 const cancelInvitation = async (token) => {
@@ -6143,6 +6143,13 @@ if (screen === 'practitionerDashboard') {
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
             Help your clients stay consistent with their skincare routines.
           </p>
+
+          <button
+            onClick={() => setScreen('applyPractitioner')}
+            className={`mt-2 text-[13px] font-semibold ${t.mark}`}
+          >
+            Edit your profile
+          </button>
         </div>
 
         <button
