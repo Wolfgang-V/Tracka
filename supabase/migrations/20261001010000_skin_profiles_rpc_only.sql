@@ -1,0 +1,26 @@
+-- Pulls a live-only fix back into the repo. The reviewer caught this right
+-- after applying the pregnancy_status split: RLS is row-level, not
+-- column-level, so the Phase 0 policy below let a practitioner with only
+-- skin_profile access read pregnant_or_breastfeeding directly via
+-- PostgREST, bypassing both the new scope gate and the access-log entry —
+-- both of which only exist inside practitioner_get_client_profile().
+--
+-- The removed policy, for reference:
+--   create policy "Practitioners with skin_profile scope can view"
+--     on skin_profiles for select
+--     using ((select has_client_access(user_id, 'skin_profile')));
+--
+-- Closed by removing the direct-read policy — practitioners now only ever
+-- reach skin_profiles through practitioner_get_client_profile(), where the
+-- pregnancy gate and the audit log both actually apply. Safe to do with
+-- zero cost: zero practitioners and zero care_relationships exist yet, so
+-- nothing that currently depends on direct access breaks. The practitioner
+-- client-detail screen already calls the RPC, not a direct .from() select,
+-- so no app-code change was needed alongside this.
+--
+-- The same direct-read tradeoff still exists on routines, routine_steps,
+-- user_products, routine_step_completions and routine_completions —
+-- deliberately left as-is. Those aren't comparably sensitive, and removing
+-- them would mean rebuilding the practitioner dashboard's routine/product
+-- views as RPCs instead of plain queries for no proportionate privacy gain.
+drop policy if exists "Practitioners with skin_profile scope can view" on skin_profiles;

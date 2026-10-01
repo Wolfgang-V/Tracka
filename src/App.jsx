@@ -137,6 +137,22 @@ function App() {
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
 
+  // Shared busy-tracker for buttons that kick off an async action with no
+  // dedicated loading state of their own. An impatient user re-tapping a
+  // button mid-request used to fire the same signup/login/mutation twice;
+  // this makes a second tap on the SAME action a no-op, and every wired-up
+  // button dims + disables itself while its own key is busy.
+  const [busyAction, setBusyAction] = useState(null)
+  const runBusy = async (key, fn) => {
+    if (busyAction) return
+    setBusyAction(key)
+    try {
+      await fn()
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
   // There's no router, so nothing was ever pushed onto browser history when
   // screen changed — every screen sat on the same single entry. On Android,
   // the system/gesture back button acts on that history, so with nothing to
@@ -188,6 +204,9 @@ function App() {
   const [adminUsers, setAdminUsers] = useState([])
   const [adminLoading, setAdminLoading] = useState(true)
   const [adminError, setAdminError] = useState(null)
+  const [adminTab, setAdminTab] = useState('signups')
+  const [pendingPractitioners, setPendingPractitioners] = useState([])
+  const [pendingPractitionersLoading, setPendingPractitionersLoading] = useState(true)
   const notify = (message, tone = 'error') => setToast({ message, tone })
 
   useEffect(() => {
@@ -264,6 +283,49 @@ function App() {
   const [nightReminderTime, setNightReminderTime] = useState('21:00')
   const [spfReapplyEnabled, setSpfReapplyEnabled] = useState(false)
   const [diaryNudgeEnabled, setDiaryNudgeEnabled] = useState(false)
+  const [pendingRecommendations, setPendingRecommendations] = useState([])
+  const [pendingRecommendationsLoading, setPendingRecommendationsLoading] = useState(false)
+  const [careRelationships, setCareRelationships] = useState([])
+  const [careAccessLog, setCareAccessLog] = useState([])
+  const [careTeamLoading, setCareTeamLoading] = useState(false)
+  const [practitionerStatus, setPractitionerStatus] = useState(null) // null | 'pending' | 'verified'
+  const [applyDisplayName, setApplyDisplayName] = useState('')
+  const [applyTitle, setApplyTitle] = useState('')
+  const [applyBio, setApplyBio] = useState('')
+  const [applySpecialisms, setApplySpecialisms] = useState('')
+  const [applyInstagram, setApplyInstagram] = useState('')
+  const [applyWhatsapp, setApplyWhatsapp] = useState('')
+  const [applySaving, setApplySaving] = useState(false)
+  const [hasPendingInvite, setHasPendingInvite] = useState(false)
+  const [practitionerClients, setPractitionerClients] = useState([])
+  const [practitionerClientsLoading, setPractitionerClientsLoading] = useState(false)
+  const [selectedClientId, setSelectedClientId] = useState(null)
+  const [clientDetail, setClientDetail] = useState(null)
+  const [clientDetailLoading, setClientDetailLoading] = useState(false)
+  const [clientRoutineSteps, setClientRoutineSteps] = useState({ am: [], pm: [] })
+  const [clientProducts, setClientProducts] = useState([])
+  const [addClientEmail, setAddClientEmail] = useState('')
+  const [addClientSaving, setAddClientSaving] = useState(false)
+  const [addClientResult, setAddClientResult] = useState(null)
+  const [composeIncludeSkinProfile, setComposeIncludeSkinProfile] = useState(false)
+  const [composeGender, setComposeGender] = useState('')
+  const [composePregnant, setComposePregnant] = useState(undefined)
+  const [composeSkinType, setComposeSkinType] = useState('')
+  const [composeConcerns, setComposeConcerns] = useState([])
+  const [composeGoals, setComposeGoals] = useState([])
+  const [composeSensitivity, setComposeSensitivity] = useState('')
+  const [composeItems, setComposeItems] = useState([])
+  const [composeItemBrand, setComposeItemBrand] = useState('')
+  const [composeItemName, setComposeItemName] = useState('')
+  const [composeItemCategory, setComposeItemCategory] = useState('')
+  const [composeItemSlot, setComposeItemSlot] = useState('AM')
+  const [composeItemDays, setComposeItemDays] = useState([0, 1, 2, 3, 4, 5, 6])
+  const [composeItemReason, setComposeItemReason] = useState('')
+  const [composeNote, setComposeNote] = useState('')
+  const [composeSaving, setComposeSaving] = useState(false)
+  const [practitionerRecommendations, setPractitionerRecommendations] = useState([])
+  const [practitionerRecommendationsLoading, setPractitionerRecommendationsLoading] = useState(false)
+  const [recommendationsFilter, setRecommendationsFilter] = useState('all')
   const [productBrand, setProductBrand] = useState('')
   const [productName, setProductName] = useState('')
   const [productCategory, setProductCategory] = useState('')
@@ -288,17 +350,13 @@ function App() {
   const [routineSaving, setRoutineSaving] = useState(false)
   const [selectedRoutine, setSelectedRoutine] = useState(null)
   const loadRoutineHistory = async () => {
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
-
-  if (!currentUser) return
+  if (!user) return
 
   const { data: routines, error: routinesError } =
     await supabase
       .from('routines')
       .select('*')
-      .eq('user_id', currentUser.id)
+      .eq('user_id', user.id)
       .eq('is_active', false)
       .order('created_at', { ascending: false })
 
@@ -378,10 +436,12 @@ setRoutineHistory(groupedRoutines)
   const [selectedProgressDate, setSelectedProgressDate] = useState(null)
   const [dayDetailSteps, setDayDetailSteps] = useState(null)
   const [dayDetailLoading, setDayDetailLoading] = useState(false)
+  const [progressMonthOffset, setProgressMonthOffset] = useState(0)
   const [skinLogs, setSkinLogs] = useState([])
   const todayNoteRef = useRef(null)
   const [monthlyReport, setMonthlyReport] = useState(null)
   const [monthlyReportLoading, setMonthlyReportLoading] = useState(false)
+  const [reportMonthOffset, setReportMonthOffset] = useState(0)
   const [progressPhotos, setProgressPhotos] = useState([])
   const [photoUrls, setPhotoUrls] = useState({})
   const [photoUploading, setPhotoUploading] = useState(false)
@@ -463,9 +523,51 @@ setRoutineHistory(groupedRoutines)
       setProgressCompletions(data || [])
     }
 
+    // Redeems a pending professional invite once a real session exists in
+    // THIS browser. Invite links are shared over WhatsApp, so the click can
+    // land in an in-app browser that's a different storage context than the
+    // installed PWA — same root cause as the confirmed=true bug above. We
+    // can't fix that cross-browser gap, but stashing the token in
+    // localStorage means it survives login/signup INSIDE whichever browser
+    // it was opened in, instead of being lost the moment the URL param is
+    // stripped.
+    const redeemPendingInvite = async () => {
+      let token
+      try {
+        token = localStorage.getItem('pendingInviteToken')
+      } catch {
+        return
+      }
+      if (!token) return
+
+      const { error } = await supabase.rpc('accept_invitation', { p_token: token })
+
+      if (!error) {
+        try { localStorage.removeItem('pendingInviteToken') } catch {}
+        setHasPendingInvite(false)
+        notify("You're now connected with your professional.", 'success')
+        return
+      }
+
+      const permanent = /already used|not found|expired/i.test(error.message || '')
+      if (permanent) {
+        try { localStorage.removeItem('pendingInviteToken') } catch {}
+        setHasPendingInvite(false)
+        if (/expired/i.test(error.message || '')) {
+          notify('That invite link has expired. Ask your professional to send a new one.')
+        }
+        return
+      }
+
+      // Network blip or similar — leave it in storage, we'll retry on the
+      // next auth state change instead of losing the invite silently.
+      console.error('INVITE REDEEM ERROR:', error)
+    }
+
     const checkUser = async (user) => {
       try {
         setUser(user)
+        redeemPendingInvite()
 
         if (user.email === ADMIN_EMAIL) {
           setScreen('admin')
@@ -523,6 +625,15 @@ setRoutineHistory(groupedRoutines)
       loadProgressCompletions(user.id)
     }
 
+    const inviteMatch = window.location.search.match(/[?&]invite=([0-9a-fA-F-]{36})/)
+    if (inviteMatch) {
+      try { localStorage.setItem('pendingInviteToken', inviteMatch[1]) } catch {}
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+    try {
+      if (localStorage.getItem('pendingInviteToken')) setHasPendingInvite(true)
+    } catch {}
+
     if (window.location.search.includes('confirmed=true')) {
       window.history.replaceState({}, '', window.location.pathname)
 
@@ -567,6 +678,7 @@ setRoutineHistory(groupedRoutines)
         loadProducts(session.user.id)
         loadCompletedSteps(session.user.id)
         loadProgressCompletions(session.user.id)
+        redeemPendingInvite()
       }
     })
 
@@ -595,11 +707,7 @@ setRoutineHistory(groupedRoutines)
 const loadDayDetails = async (date) => {
   setDayDetailLoading(true)
 
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
-
-  if (!currentUser) {
+  if (!user) {
     setDayDetailLoading(false)
     return
   }
@@ -617,7 +725,7 @@ const loadDayDetails = async (date) => {
         )
       )
     `)
-    .eq('user_id', currentUser.id)
+    .eq('user_id', user.id)
     .eq('local_date', date)
 
   if (error) {
@@ -692,18 +800,27 @@ const loadSkinLogs = async () => {
 // Month-to-date stats for the "Skin reports" screen — always reflects the
 // current month so far (check it on the 10th, get 10 days of data), rather
 // than waiting for month-end to generate a fixed recap.
-const loadMonthlyReport = async () => {
+const loadMonthlyReport = async (monthOffset = 0) => {
   if (!user) return
   setMonthlyReportLoading(true)
 
   const now = new Date()
-  const firstOfMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+  const displayed = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1)
+  const isCurrentMonth = monthOffset === 0
+  const firstOfMonth = `${displayed.getFullYear()}-${String(displayed.getMonth() + 1).padStart(2, '0')}-01`
+  const firstOfNextMonth = `${displayed.getFullYear()}-${String(displayed.getMonth() + 2).padStart(2, '0')}-01`
+  const daysInDisplayedMonth = new Date(displayed.getFullYear(), displayed.getMonth() + 1, 0).getDate()
 
   // Independent queries for completions and photos, rather than reading
   // the progressCompletions/progressPhotos state — those only get loaded
   // once their own screens have been visited this session, so relying on
   // them here would show 0s for anyone who opens Skin reports (or Today,
   // where the report also loads) before ever visiting Progress Photos.
+  // Upper-bounded with firstOfNextMonth too (not just gte firstOfMonth) —
+  // viewing a past month otherwise swept in everything from that month
+  // through today, since there was previously no reason to cap it (the
+  // report only ever showed the current month, where "today" already is
+  // the cap).
   const [{ data, error }, { data: completions, error: completionsError }, { count: photosAdded, error: photosError }] =
     await Promise.all([
       supabase
@@ -716,7 +833,8 @@ const loadMonthlyReport = async () => {
           )
         `)
         .eq('user_id', user.id)
-        .gte('local_date', firstOfMonth),
+        .gte('local_date', firstOfMonth)
+        .lt('local_date', firstOfNextMonth),
       supabase
         .from('routine_completions')
         .select('completed_date')
@@ -725,7 +843,8 @@ const loadMonthlyReport = async () => {
         .from('progress_photos')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .gte('local_date', firstOfMonth),
+        .gte('local_date', firstOfMonth)
+        .lt('local_date', firstOfNextMonth),
     ])
 
   if (error || completionsError || photosError) {
@@ -762,8 +881,10 @@ const loadMonthlyReport = async () => {
           ? 'AM'
           : 'PM'
 
-  const daysElapsed = now.getDate()
-  const completionsThisMonth = (completions || []).filter((c) => c.completed_date >= firstOfMonth).length
+  const daysElapsed = isCurrentMonth ? now.getDate() : daysInDisplayedMonth
+  const completionsThisMonth = (completions || []).filter(
+    (c) => c.completed_date >= firstOfMonth && c.completed_date < firstOfNextMonth
+  ).length
   const routineCompletionPct = daysElapsed > 0 ? Math.round((completionsThisMonth / daysElapsed) * 100) : 0
 
   // Longest streak is all-time, not scoped to this month — the point is
@@ -780,7 +901,8 @@ const loadMonthlyReport = async () => {
   }
 
   setMonthlyReport({
-    monthLabel: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
+    monthLabel: displayed.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
+    isCurrentMonth,
     routineCompletionPct,
     sunscreenDays,
     productsUsed: productIds.size,
@@ -793,16 +915,12 @@ const loadMonthlyReport = async () => {
 }
 
 const loadProgressPhotos = async () => {
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
-
-  if (!currentUser) return
+  if (!user) return
 
   const { data, error } = await supabase
     .from('progress_photos')
     .select('id, path, local_date, note, created_at')
-    .eq('user_id', currentUser.id)
+    .eq('user_id', user.id)
     .order('local_date', { ascending: false })
 
   if (error) {
@@ -1530,11 +1648,23 @@ useEffect(() => {
     loadStepHistory()
     loadSkinLogs()
     loadMonthlyReport()
+    loadPendingRecommendations()
+    loadCareTeam()
+  }
+
+  if (screen === 'notifications') {
+    loadPendingRecommendations()
+    loadCareTeam()
   }
 
   if (screen === 'skinTrends') {
     loadSkinLogs()
-    loadMonthlyReport()
+    setReportMonthOffset(0)
+    loadMonthlyReport(0)
+  }
+
+  if (screen === 'progress') {
+    setProgressMonthOffset(0)
   }
 
   if (screen === 'progressPhotos') {
@@ -1544,6 +1674,26 @@ useEffect(() => {
 
   if (screen === 'admin') {
     loadAdminUsers()
+    loadPendingPractitioners()
+  }
+
+  if (screen === 'careTeam') {
+    loadCareTeam()
+  }
+
+  if (screen === 'settings' || screen === 'applyPractitioner') {
+    loadPractitionerStatus()
+    loadPendingRecommendations()
+    loadCareTeam()
+  }
+
+  if (screen === 'practitionerDashboard') {
+    loadPractitionerClients()
+    loadPractitionerRecommendations()
+  }
+
+  if (screen === 'practitionerRoutines') {
+    loadPractitionerRecommendations()
   }
 
 }, [screen])
@@ -1598,12 +1748,15 @@ useEffect(() => {
   return () => clearTimeout(timer)
 }, [screen, productBrand, productName])
 
-const toggleOption = (value, current, setter) => {
-  if (current.includes(value)) {
-    setter(current.filter((item) => item !== value))
-  } else {
-    setter([...current, value])
-  }
+// Functional update — tapping two different chips in quick succession used
+// to read `current` from the render that was active when each click fired,
+// so the second tap could silently overwrite the first's update instead of
+// building on it. Same stale-closure class as the earlier toggleStepCompletion
+// fix.
+const toggleOption = (value, setter) => {
+  setter((current) =>
+    current.includes(value) ? current.filter((item) => item !== value) : [...current, value]
+  )
 }
 
 // Loads just the fields planNight needs to enforce clinical restrictions.
@@ -1623,16 +1776,12 @@ const loadRestrictions = async (userId) => {
 }
 
 const loadSkinProfile = async () => {
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
-
-  if (!currentUser) return
+  if (!user) return
 
   const { data, error } = await supabase
     .from('skin_profiles')
     .select('gender, skin_type, concerns, goals, sensitivity, pregnant_or_breastfeeding')
-    .eq('user_id', currentUser.id)
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -1678,6 +1827,178 @@ const loadAdminUsers = async () => {
 
   setAdminUsers(data || [])
   setAdminLoading(false)
+}
+
+const loadPendingPractitioners = async () => {
+  setPendingPractitionersLoading(true)
+
+  const { data, error } = await supabase.rpc('admin_list_pending_practitioners')
+
+  if (error) {
+    console.error('ADMIN LIST PENDING PRACTITIONERS ERROR:', error)
+    setPendingPractitionersLoading(false)
+    return
+  }
+
+  setPendingPractitioners(data || [])
+  setPendingPractitionersLoading(false)
+}
+
+// Moved here (out of the render IIFE below) because the screen-trigger
+// effect calls it directly — a function only defined inside that IIFE is
+// invisible to code outside it, even though both run in the same component.
+// That mismatch was the root cause of "loadCareTeam is not defined" (and
+// the same bug for every other loader below) the first time this screen's
+// effect actually fired in a fresh, non-hot-reloaded session.
+const loadCareTeam = async () => {
+  if (!user) return
+  setCareTeamLoading(true)
+
+  const [{ data: relationships, error: relError }, { data: log, error: logError }] = await Promise.all([
+    supabase
+      .from('care_relationships')
+      .select('id, status, scopes, invited_at, accepted_at, practitioners (display_name, title, bio, whatsapp)')
+      .eq('client_id', user.id)
+      .in('status', ['invited', 'active'])
+      .order('invited_at', { ascending: false }),
+    supabase
+      .from('practitioner_access_log')
+      .select('what, at, practitioners:practitioner_id (display_name)')
+      .eq('client_id', user.id)
+      .order('at', { ascending: false })
+      .limit(20),
+  ])
+
+  if (relError) console.error('CARE RELATIONSHIPS ERROR:', relError)
+  if (logError) console.error('CARE ACCESS LOG ERROR:', logError)
+
+  // A failed load otherwise renders identically to "nobody's connected
+  // yet" — and this feeds the pending-invite badge/banner elsewhere, so a
+  // silent failure here can hide a real pending invite with no indication
+  // anything went wrong.
+  if (relError) {
+    notify("Couldn't load your care team. Try again in a moment.")
+  }
+
+  setCareRelationships(relationships || [])
+  setCareAccessLog(log || [])
+  setCareTeamLoading(false)
+}
+
+const loadPendingRecommendations = async () => {
+  if (!user) return
+  setPendingRecommendationsLoading(true)
+
+  const { data, error } = await supabase
+    .from('recommendations')
+    .select(`
+      id, note, created_at, proposes_skin_profile,
+      gender, pregnant_or_breastfeeding, skin_type, concerns, goals, sensitivity,
+      practitioners:practitioner_id (display_name, title, bio, whatsapp),
+      recommendation_items (id, slot, frequency, days_of_week, reason, products (brand, name, category))
+    `)
+    .eq('client_id', user.id)
+    .eq('status', 'proposed')
+    .order('created_at', { ascending: false })
+
+  setPendingRecommendationsLoading(false)
+
+  if (error) {
+    console.error('PENDING RECOMMENDATIONS ERROR:', error)
+    notify("Couldn't check for new recommendations. Try again in a moment.")
+    return
+  }
+
+  setPendingRecommendations(data || [])
+}
+
+const loadPractitionerStatus = async () => {
+  if (!user) return
+
+  const { data, error } = await supabase
+    .from('practitioners')
+    .select('verified_at, display_name, title, bio, specialisms, instagram, whatsapp')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (error) {
+    console.error('PRACTITIONER STATUS ERROR:', error)
+    return
+  }
+
+  if (!data) {
+    setPractitionerStatus(null)
+    return
+  }
+
+  setPractitionerStatus(data.verified_at ? 'verified' : 'pending')
+  setApplyDisplayName(data.display_name || '')
+  setApplyTitle(data.title || '')
+  setApplyBio(data.bio || '')
+  setApplySpecialisms((data.specialisms || []).join(', '))
+  setApplyInstagram(data.instagram || '')
+  setApplyWhatsapp(data.whatsapp || '')
+}
+
+const loadPractitionerClients = async () => {
+  setPractitionerClientsLoading(true)
+
+  const { data, error } = await supabase.rpc('practitioner_list_clients')
+
+  setPractitionerClientsLoading(false)
+
+  if (error) {
+    console.error('PRACTITIONER CLIENTS ERROR:', error)
+    return
+  }
+
+  setPractitionerClients(data || [])
+}
+
+// Only columns from the original Phase 0 foundation — the newer
+// proposed-skin-profile columns aren't selected here since this list is
+// just the history overview, not the detail; keeps this screen usable even
+// before the skin-profile migration lands.
+const loadPractitionerRecommendations = async () => {
+  setPractitionerRecommendationsLoading(true)
+
+  const { data, error } = await supabase
+    .from('recommendations')
+    .select('id, status, note, created_at, responded_at, profiles:client_id (username)')
+    .eq('practitioner_id', user.id)
+    .order('created_at', { ascending: false })
+
+  setPractitionerRecommendationsLoading(false)
+
+  if (error) {
+    console.error('PRACTITIONER RECOMMENDATIONS ERROR:', error)
+    return
+  }
+
+  setPractitionerRecommendations(data || [])
+}
+
+const reviewPractitioner = async (targetId, approve) => {
+  if (!approve) {
+    const confirmed = await confirmAction(
+      "Reject this application? They'll need to apply again if they want to reconsider."
+    )
+    if (!confirmed) return
+  }
+
+  const { error } = await supabase.rpc('admin_review_practitioner', {
+    target_id: targetId,
+    approve,
+  })
+
+  if (error) {
+    console.error('ADMIN REVIEW PRACTITIONER ERROR:', error)
+    notify(error.message)
+    return
+  }
+
+  notify(approve ? 'Approved.' : 'Rejected.', 'success')
+  setPendingPractitioners((current) => current.filter((p) => p.user_id !== targetId))
 }
 
 const exportAdminUsersCsv = (users) => {
@@ -1899,56 +2220,59 @@ if (screen === 'auth') {
           </div>
 
           <button
-            onClick={async () => {
-              const email = loginEmail
-              const password = loginPassword
+            disabled={busyAction === 'signup'}
+            onClick={() =>
+              runBusy('signup', async () => {
+                const email = loginEmail
+                const password = loginPassword
 
-              if (!username || !email || !password) {
-                notify('Please enter your email, password and name.')
-                return
-              }
+                if (!username || !email || !password) {
+                  notify('Please enter your email, password and name.')
+                  return
+                }
 
-              const { data, error } = await supabase.auth.signUp({
-                email,
-                password,
-                options: {
-                  data: {
-                    username,
+                const { data, error } = await supabase.auth.signUp({
+                  email,
+                  password,
+                  options: {
+                    data: {
+                      username,
+                    },
+                    emailRedirectTo: `${SITE_URL}/?confirmed=true`,
                   },
-                  emailRedirectTo: `${SITE_URL}/?confirmed=true`,
-                },
+                })
+
+                if (error) {
+                  notify(error.message)
+                  return
+                }
+
+                if (!data.user) {
+                  notify('Account could not be created.')
+                  return
+                }
+
+                setProducts([])
+                setUser(data.user)
+                setDisplayName(username)
+                setOnboardingCompleted(false)
+
+                if (data.user.email === ADMIN_EMAIL) {
+                  setScreen('admin')
+                  return
+                }
+
+                if (data.session) {
+                  setScreen('skinProfile')
+                  return
+                }
+
+                setScreen('checkEmail')
               })
-
-              if (error) {
-                notify(error.message)
-                return
-              }
-
-              if (!data.user) {
-                notify('Account could not be created.')
-                return
-              }
-
-              setProducts([])
-              setUser(data.user)
-              setDisplayName(username)
-              setOnboardingCompleted(false)
-
-              if (data.user.email === ADMIN_EMAIL) {
-                setScreen('admin')
-                return
-              }
-
-              if (data.session) {
-                setScreen('skinProfile')
-                return
-              }
-
-              setScreen('checkEmail')
-            }}
-            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+            }
+            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
           >
-            Create account
+            {busyAction === 'signup' ? 'Creating account…' : 'Create account'}
           </button>
 
         </div>
@@ -1969,18 +2293,14 @@ if (screen === 'auth') {
 }
 
 const loadReminderSettings = async () => {
-  const {
-    data: { user: currentUser },
-  } = await supabase.auth.getUser()
-
-  if (!currentUser) return
+  if (!user) return
 
   const { data, error } = await supabase
     .from('reminder_settings')
     .select(
       'morning_enabled, morning_time, night_enabled, night_time, spf_reapply_enabled, diary_nudge_enabled'
     )
-    .eq('user_id', currentUser.id)
+    .eq('user_id', user.id)
     .maybeSingle()
 
   if (error) {
@@ -2038,6 +2358,450 @@ const saveReminderSettings = async () => {
   }
 
   notify('Reminder settings saved.', 'success')
+}
+
+const CARE_SCOPES = [
+  ['skin_profile', 'Skin profile'],
+  // Split out from skin_profile on purpose — it's the most sensitive field
+  // on file, and a client granting "skin profile" almost certainly isn't
+  // picturing this specifically included. Off by default on every invite;
+  // only ever shared if a client turns it on here themselves.
+  ['pregnancy_status', 'Pregnancy/breastfeeding status'],
+  ['routine', 'Routine & products'],
+  ['daily_logs', 'Daily completions'],
+  // "photos" is a recognized scope in the schema but not yet granted by
+  // any RLS policy — leaving it out of the picker rather than show a
+  // toggle that would silently do nothing.
+]
+
+const respondToCareInvite = async (relationshipId, accept) => {
+  const { error } = accept
+    ? await supabase.rpc('accept_care_relationship', { p_relationship_id: relationshipId })
+    : await supabase.rpc('revoke_care_access', { p_relationship_id: relationshipId })
+
+  if (error) {
+    console.error('CARE INVITE RESPONSE ERROR:', error)
+    notify('Could not update that. Try again.')
+    return
+  }
+
+  notify(accept ? 'Invitation accepted.' : 'Invitation declined.', 'success')
+  await loadCareTeam()
+}
+
+const revokeCareAccess = async (relationshipId) => {
+  const confirmed = await confirmAction(
+    "Revoke this practitioner's access? They'll no longer be able to see anything you've shared."
+  )
+  if (!confirmed) return
+
+  const { error } = await supabase.rpc('revoke_care_access', { p_relationship_id: relationshipId })
+
+  if (error) {
+    console.error('REVOKE CARE ACCESS ERROR:', error)
+    notify('Could not revoke access. Try again.')
+    return
+  }
+
+  notify('Access revoked.', 'success')
+  await loadCareTeam()
+}
+
+const respondToRecommendation = async (recommendationId, accept) => {
+  if (accept) {
+    const { error } = await supabase.rpc('accept_recommendation', {
+      p_recommendation_id: recommendationId,
+    })
+
+    if (error) {
+      console.error('ACCEPT RECOMMENDATION ERROR:', error)
+      notify(error.message)
+      return
+    }
+
+    notify('Routine saved!', 'success')
+    await loadPendingRecommendations()
+    setScreen('today')
+    return
+  }
+
+  const confirmed = await confirmAction('Decline this recommendation?')
+  if (!confirmed) return
+
+  const { error } = await supabase
+    .from('recommendations')
+    .update({ status: 'declined', responded_at: new Date().toISOString() })
+    .eq('id', recommendationId)
+
+  if (error) {
+    console.error('DECLINE RECOMMENDATION ERROR:', error)
+    notify('Could not decline that. Try again.')
+    return
+  }
+
+  notify('Recommendation declined.', 'success')
+  await loadPendingRecommendations()
+}
+
+const toggleCareScope = async (relationship, scope) => {
+  // pregnancy_status only means anything alongside skin_profile — the RPC
+  // that serves it requires skin_profile just for the row to exist at all.
+  // Turning skin_profile off takes pregnancy_status with it, so scopes
+  // never end up in a state where one is granted without the other making
+  // it reachable; the toggle below additionally disables pregnancy_status
+  // outright until skin_profile is on, so this mostly guards against a
+  // stale click landing after the UI should've already blocked it.
+  let nextScopes = relationship.scopes.includes(scope)
+    ? relationship.scopes.filter((s) => s !== scope)
+    : [...relationship.scopes, scope]
+
+  if (scope === 'skin_profile' && !nextScopes.includes('skin_profile')) {
+    nextScopes = nextScopes.filter((s) => s !== 'pregnancy_status')
+  }
+
+  if (scope === 'pregnancy_status' && !relationship.scopes.includes('skin_profile')) {
+    notify('Turn on skin profile access first — pregnancy status is shared alongside it.')
+    return
+  }
+
+  // Optimistic — this is a low-stakes toggle and the whole point is that
+  // it should feel instant.
+  setCareRelationships((current) =>
+    current.map((r) => (r.id === relationship.id ? { ...r, scopes: nextScopes } : r))
+  )
+
+  const { error } = await supabase.rpc('update_care_relationship_scopes', {
+    p_relationship_id: relationship.id,
+    p_scopes: nextScopes,
+  })
+
+  if (error) {
+    console.error('UPDATE CARE SCOPES ERROR:', error)
+    notify("That didn't save. Try again.")
+    setCareRelationships((current) =>
+      current.map((r) => (r.id === relationship.id ? { ...r, scopes: relationship.scopes } : r))
+    )
+  }
+}
+
+// Whether the logged-in user already has a practitioner application —
+// and if so, whether it's been approved yet. verified_at only ever gets
+// set by admin_review_practitioner, never by the applicant themselves.
+const submitPractitionerApplication = async () => {
+  if (!applyDisplayName.trim()) {
+    notify('Please enter a display name.')
+    return
+  }
+
+  if (!user) {
+    notify('Please log in again.')
+    return
+  }
+
+  setApplySaving(true)
+
+  const { error } = await supabase.from('practitioners').upsert(
+    {
+      user_id: user.id,
+      display_name: applyDisplayName.trim(),
+      title: applyTitle.trim() || null,
+      bio: applyBio.trim() || null,
+      specialisms: applySpecialisms
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      instagram: applyInstagram.trim() || null,
+      whatsapp: applyWhatsapp.trim() || null,
+    },
+    { onConflict: 'user_id' }
+  )
+
+  setApplySaving(false)
+
+  if (error) {
+    console.error('PRACTITIONER APPLY ERROR:', error)
+    notify(error.message)
+    return
+  }
+
+  notify("Application sent — we'll review it and let you know.", 'success')
+  setPractitionerStatus('pending')
+}
+
+// practitioner_get_client_profile logs the access (the client sees "your
+// professional viewed your profile on..."); the routine/product reads below
+// go straight through the has_client_access RLS policies and aren't logged
+// separately — same distinction the foundation migration draws between the
+// one RPC that matters for the access log and a plain list that doesn't.
+const openClientDetail = async (clientId) => {
+  setSelectedClientId(clientId)
+  setScreen('practitionerClientDetail')
+  setClientDetailLoading(true)
+  setClientDetail(null)
+  setClientRoutineSteps({ am: [], pm: [] })
+  setClientProducts([])
+
+  const [{ data: profileRows, error: profileError }, { data: routines, error: routinesError }, { data: userProducts, error: productsError }] =
+    await Promise.all([
+      supabase.rpc('practitioner_get_client_profile', { p_client: clientId }),
+      supabase
+        .from('routines')
+        .select('id, time_of_day, routine_steps (step_order, step_name, frequency, days_of_week)')
+        .eq('user_id', clientId)
+        .eq('is_active', true),
+      supabase
+        .from('user_products')
+        .select('id, opened_date, pao_months, expiry_date, products (id, brand, name, category, ingredients)')
+        .eq('user_id', clientId)
+        .eq('is_active', true),
+    ])
+
+  setClientDetailLoading(false)
+
+  if (profileError) console.error('CLIENT PROFILE ERROR:', profileError)
+  if (routinesError) console.error('CLIENT ROUTINES ERROR:', routinesError)
+  if (productsError) console.error('CLIENT PRODUCTS ERROR:', productsError)
+
+  // Without this, a failed load renders identically to a client who
+  // genuinely has nothing set up — every section here already has its own
+  // "nothing yet" empty state, so a silent failure is indistinguishable
+  // from an empty client until someone double-checks with the client
+  // directly.
+  if (profileError || routinesError || productsError) {
+    notify("Couldn't load everything for this client. Try again in a moment.")
+  }
+
+  setClientDetail(profileRows?.[0] || null)
+  setClientProducts(userProducts || [])
+
+  const am = (routines || []).find((r) => r.time_of_day === 'AM')?.routine_steps || []
+  const pm = (routines || []).find((r) => r.time_of_day === 'PM')?.routine_steps || []
+  setClientRoutineSteps({
+    am: [...am].sort((a, b) => a.step_order - b.step_order),
+    pm: [...pm].sort((a, b) => a.step_order - b.step_order),
+  })
+}
+
+const inviteClientByEmail = async () => {
+  const email = addClientEmail.trim()
+
+  if (!email) {
+    notify('Please enter an email address.')
+    return
+  }
+
+  setAddClientSaving(true)
+
+  const { data, error } = await supabase.rpc('practitioner_invite_by_email', {
+    p_email: email,
+    p_scopes: ['skin_profile', 'routine', 'daily_logs'],
+  })
+
+  setAddClientSaving(false)
+
+  if (error) {
+    notify(error.message)
+    return
+  }
+
+  if (data?.kind === 'relationship') {
+    notify("Invite sent — they'll see it in their Care team once they accept.", 'success')
+    setAddClientEmail('')
+    loadPractitionerClients()
+    setScreen('practitionerDashboard')
+    return
+  }
+
+  // Not an existing account yet — hand back a shareable link instead of
+  // silently failing, same as the PDF's "client receives a link" step.
+  setAddClientResult({ token: data.token, link: `${SITE_URL}/?invite=${data.token}` })
+}
+
+// Same tiered share pattern as inviteFriend — native share sheet first
+// (which surfaces WhatsApp directly, matching the "no chat, share a link"
+// v1 decision), clipboard as the fallback.
+const shareClientInviteLink = async (link) => {
+  const shareData = {
+    title: 'Tracka+',
+    text: "I'd like to set up your skincare routine on Tracka+ — tap to get started:",
+    url: link,
+  }
+
+  if (navigator.share) {
+    try {
+      await navigator.share(shareData)
+    } catch (err) {
+      if (err?.name !== 'AbortError') console.error('CLIENT INVITE SHARE ERROR:', err)
+    }
+    return
+  }
+
+  if (navigator.clipboard) {
+    await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`)
+    notify('Invite link copied — paste it anywhere.', 'success')
+  } else {
+    notify(shareData.url, 'success')
+  }
+}
+
+// Opens WhatsApp with a pre-filled message to a practitioner's stored
+// number — the client->practitioner half of "no chat, WhatsApp instead".
+// There's no client phone number on file (never collected), so the
+// reverse direction isn't built yet.
+const whatsappLink = (rawNumber, message) => {
+  const digits = (rawNumber || '').replace(/[^0-9]/g, '')
+  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`
+}
+
+const openComposer = () => {
+  setComposeIncludeSkinProfile(false)
+  setComposeGender('')
+  setComposePregnant(undefined)
+  setComposeSkinType('')
+  setComposeConcerns([])
+  setComposeGoals([])
+  setComposeSensitivity('')
+  setComposeItems([])
+  setComposeItemBrand('')
+  setComposeItemName('')
+  setComposeItemCategory('')
+  setComposeItemSlot('AM')
+  setComposeItemDays([0, 1, 2, 3, 4, 5, 6])
+  setComposeItemReason('')
+  setComposeNote('')
+  setScreen('composeRecommendation')
+}
+
+const addComposeItem = () => {
+  if (!composeItemBrand.trim() || !composeItemName.trim() || !composeItemCategory) {
+    notify('Please fill in brand, product name and category.')
+    return
+  }
+
+  if (composeItemDays.length === 0) {
+    notify('Please choose at least one day.')
+    return
+  }
+
+  setComposeItems((current) => [
+    ...current,
+    {
+      tempId: `${Date.now()}-${current.length}`,
+      brand: composeItemBrand.trim(),
+      name: composeItemName.trim(),
+      category: composeItemCategory,
+      slot: composeItemSlot,
+      days_of_week: composeItemDays,
+      reason: composeItemReason.trim() || null,
+    },
+  ])
+
+  setComposeItemBrand('')
+  setComposeItemName('')
+  setComposeItemCategory('')
+  setComposeItemSlot('AM')
+  setComposeItemDays([0, 1, 2, 3, 4, 5, 6])
+  setComposeItemReason('')
+}
+
+const removeComposeItem = (tempId) => {
+  setComposeItems((current) => current.filter((item) => item.tempId !== tempId))
+}
+
+const submitRecommendation = async () => {
+  if (!selectedClientId) return
+
+  if (!composeIncludeSkinProfile && composeItems.length === 0) {
+    notify('Add at least one product, or include a skin profile.')
+    return
+  }
+
+  // A final checkpoint before this reaches the client — mirrors the PDF's
+  // own "Review Routine" step (client, skin profile, products, routine,
+  // notes, then Share) rather than letting one tap on a long scrolling
+  // form send something half-built.
+  const clientName = practitionerClients.find((c) => c.client_id === selectedClientId)?.username || 'this client'
+  const amCount = composeItems.filter((i) => i.slot === 'AM').length
+  const pmCount = composeItems.filter((i) => i.slot === 'PM').length
+  const parts = []
+  if (composeIncludeSkinProfile) parts.push('a skin profile update')
+  if (composeItems.length > 0) {
+    parts.push(
+      `${composeItems.length} product${composeItems.length === 1 ? '' : 's'}` +
+        (amCount > 0 && pmCount > 0 ? ` (${amCount} AM, ${pmCount} PM)` : amCount > 0 ? ' (AM)' : ' (PM)')
+    )
+  }
+  if (composeNote.trim()) parts.push('a note')
+  const summary = `Share this with ${clientName}? Includes ${parts.join(', ')}.`
+
+  const confirmed = await confirmAction(summary, ['Keep editing', 'Share Routine'])
+  if (!confirmed) return
+
+  setComposeSaving(true)
+
+  const { data: recommendation, error: recError } = await supabase
+    .from('recommendations')
+    .insert({
+      practitioner_id: user.id,
+      client_id: selectedClientId,
+      note: composeNote.trim() || null,
+      proposes_skin_profile: composeIncludeSkinProfile,
+      gender: composeIncludeSkinProfile ? composeGender || null : null,
+      pregnant_or_breastfeeding: composeIncludeSkinProfile ? composePregnant ?? null : null,
+      skin_type: composeIncludeSkinProfile ? composeSkinType || null : null,
+      concerns: composeIncludeSkinProfile ? composeConcerns.join(', ') || null : null,
+      goals: composeIncludeSkinProfile ? composeGoals.join(', ') || null : null,
+      sensitivity: composeIncludeSkinProfile ? composeSensitivity || null : null,
+    })
+    .select()
+    .single()
+
+  if (recError) {
+    setComposeSaving(false)
+    notify(recError.message)
+    return
+  }
+
+  // Each item is its own products row — the catalogue isn't deduped
+  // per-user, same as the client's own "Add Product" screen — then a
+  // recommendation_items row referencing it. Sequential rather than
+  // Promise.all so a failure partway through leaves a clear, small list of
+  // what still needs retrying instead of a pile of concurrent errors.
+  for (let i = 0; i < composeItems.length; i++) {
+    const item = composeItems[i]
+
+    const { data: product, error: productError } = await supabase
+      .from('products')
+      .insert({ brand: item.brand, name: item.name, category: item.category })
+      .select()
+      .single()
+
+    if (productError) {
+      setComposeSaving(false)
+      notify(`Couldn't save "${item.name}": ${productError.message}`)
+      return
+    }
+
+    const { error: itemError } = await supabase.from('recommendation_items').insert({
+      recommendation_id: recommendation.id,
+      product_id: product.id,
+      slot: item.slot,
+      frequency: 'daily',
+      days_of_week: item.days_of_week,
+      reason: item.reason,
+      sort_order: i,
+    })
+
+    if (itemError) {
+      setComposeSaving(false)
+      notify(`Couldn't add "${item.name}" to the recommendation: ${itemError.message}`)
+      return
+    }
+  }
+
+  setComposeSaving(false)
+  notify('Recommendation sent.', 'success')
+  setScreen('practitionerClientDetail')
 }
 
   if (screen === 'skinProfile') {
@@ -2249,15 +3013,17 @@ const saveReminderSettings = async () => {
                       // "None" is an exclusive choice, not just another
                       // item in the list — picking it clears everything
                       // else, and picking anything else clears "None".
-                      if (concern === 'None') {
-                        setConcerns(concerns.includes('None') ? [] : ['None'])
-                      } else {
-                        toggleOption(
-                          concern,
-                          concerns.filter((c) => c !== 'None'),
-                          setConcerns
-                        )
-                      }
+                      // Functional update throughout, same reasoning as
+                      // toggleOption above.
+                      setConcerns((current) => {
+                        if (concern === 'None') {
+                          return current.includes('None') ? [] : ['None']
+                        }
+                        const withoutNone = current.filter((c) => c !== 'None')
+                        return withoutNone.includes(concern)
+                          ? withoutNone.filter((c) => c !== concern)
+                          : [...withoutNone, concern]
+                      })
                     }}
                     className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
                       concerns.includes(concern)
@@ -2290,7 +3056,7 @@ const saveReminderSettings = async () => {
                   <button
                     key={goal}
                     onClick={() =>
-                      toggleOption(goal, goals, setGoals)
+                      toggleOption(goal, setGoals)
                     }
                     className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
                       goals.includes(goal)
@@ -2331,57 +3097,60 @@ const saveReminderSettings = async () => {
             </section>
 
             <button
-              onClick={async () => {
-                // getSession() reads the persisted session (no network
-                // round trip in the normal case) instead of getUser(),
-                // which validates the token against the auth server every
-                // time — a signed-in person on a slow connection used to
-                // get bounced with "Please create an account first," which
-                // was exactly backwards from what actually happened.
-                const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+              disabled={busyAction === 'saveSkinProfile'}
+              onClick={() =>
+                runBusy('saveSkinProfile', async () => {
+                  // getSession() reads the persisted session (no network
+                  // round trip in the normal case) instead of getUser(),
+                  // which validates the token against the auth server every
+                  // time — a signed-in person on a slow connection used to
+                  // get bounced with "Please create an account first," which
+                  // was exactly backwards from what actually happened.
+                  const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-                if (sessionError) {
-                  notify("Couldn't reach the server. Check your connection and try again.")
-                  return
-                }
+                  if (sessionError) {
+                    notify("Couldn't reach the server. Check your connection and try again.")
+                    return
+                  }
 
-                if (!session?.user) {
-                  notify('Your session ended. Please log in again.')
-                  setScreen('login')
-                  return
-                }
+                  if (!session?.user) {
+                    notify('Your session ended. Please log in again.')
+                    setScreen('login')
+                    return
+                  }
 
-                const { error } = await supabase
-                  .from('skin_profiles')
-                  .upsert(
-                    {
-                      user_id: session.user.id,
-                      gender: gender,
-                      pregnant_or_breastfeeding: pregnantOrBreastfeeding ?? null,
-                      skin_type: skinType,
-                      concerns: concerns.join(', '),
-                      goals: goals.join(', '),
-                      sensitivity: sensitivity,
-                    },
-                    { onConflict: 'user_id' }
-                  )
+                  const { error } = await supabase
+                    .from('skin_profiles')
+                    .upsert(
+                      {
+                        user_id: session.user.id,
+                        gender: gender,
+                        pregnant_or_breastfeeding: pregnantOrBreastfeeding ?? null,
+                        skin_type: skinType,
+                        concerns: concerns.join(', '),
+                        goals: goals.join(', '),
+                        sensitivity: sensitivity,
+                      },
+                      { onConflict: 'user_id' }
+                    )
 
-                if (error) {
-                  notify(error.message)
-                  return
-                }
+                  if (error) {
+                    notify(error.message)
+                    return
+                  }
 
-                if (onboardingCompleted) {
-                  notify('Skin profile updated!', 'success')
-                  setSkinProfileEditing(false)
-                } else {
-                  notify('Skin profile saved!', 'success')
-                  setScreen('products')
-                }
-              }}
-              className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+                  if (onboardingCompleted) {
+                    notify('Skin profile updated!', 'success')
+                    setSkinProfileEditing(false)
+                  } else {
+                    notify('Skin profile saved!', 'success')
+                    setScreen('products')
+                  }
+                })
+              }
+              className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
             >
-              {onboardingCompleted ? 'Save changes' : 'Continue'}
+              {busyAction === 'saveSkinProfile' ? 'Saving…' : onboardingCompleted ? 'Save changes' : 'Continue'}
             </button>
 
             {onboardingCompleted && (
@@ -2458,31 +3227,34 @@ const saveReminderSettings = async () => {
                       className={`relative rounded-2xl border ${t.hair} p-4`}
                     >
                       <button
-                        onClick={async () => {
-                          const confirmed = await confirmAction(
-                            `Remove ${item.products.name} from your products?`
-                          )
-
-                          if (!confirmed) return
-
-                          const { error } = await supabase
-                            .from('user_products')
-                            .update({ is_active: false })
-                            .eq('id', item.id)
-
-                          if (error) {
-                            notify(error.message)
-                            return
-                          }
-
-                          setProducts((current) =>
-                            current.filter(
-                              (product) => product.id !== item.id
+                        disabled={busyAction === `removeProduct-${item.id}`}
+                        onClick={() =>
+                          runBusy(`removeProduct-${item.id}`, async () => {
+                            const confirmed = await confirmAction(
+                              `Remove ${item.products.name} from your products?`
                             )
-                          )
-                        }}
+
+                            if (!confirmed) return
+
+                            const { error } = await supabase
+                              .from('user_products')
+                              .update({ is_active: false })
+                              .eq('id', item.id)
+
+                            if (error) {
+                              notify(error.message)
+                              return
+                            }
+
+                            setProducts((current) =>
+                              current.filter(
+                                (product) => product.id !== item.id
+                              )
+                            )
+                          })
+                        }
                         aria-label={`Remove ${item.products.name}`}
-                        className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full text-base leading-none ${t.faint}`}
+                        className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full text-base leading-none ${t.faint} disabled:opacity-40`}
                       >
                         ×
                       </button>
@@ -3197,7 +3969,7 @@ if (screen === 'admin') {
               Admin
             </p>
             <h1 className="mt-1 font-display text-[32px] font-light leading-[1.05] tracking-tight">
-              Signups
+              {adminTab === 'signups' ? 'Signups' : 'Professional approvals'}
             </h1>
           </div>
 
@@ -3216,7 +3988,25 @@ if (screen === 'admin') {
           </button>
         </div>
 
-        {!adminLoading && !adminError && (
+        <div className={`mt-4 flex gap-2 rounded-2xl border ${t.hair} p-1`}>
+          {[
+            ['signups', 'Signups'],
+            ['practitioners', `Approvals${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`],
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setAdminTab(key)}
+              className={`flex-1 rounded-xl py-2 text-[13px] font-semibold transition ${
+                adminTab === key ? t.chip : t.muted
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {adminTab === 'signups' && !adminLoading && !adminError && (
           <div className="mt-3 flex items-center justify-between">
             <p className={`text-[13px] ${t.faint}`}>
               {adminUsers.length} {adminUsers.length === 1 ? 'user' : 'users'}
@@ -3233,17 +4023,17 @@ if (screen === 'admin') {
           </div>
         )}
 
-        {adminLoading && (
+        {adminTab === 'signups' && adminLoading && (
           <p className={`mt-8 text-[15px] ${t.muted}`}>Loading…</p>
         )}
 
-        {adminError && (
+        {adminTab === 'signups' && adminError && (
           <div className="mt-6 rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4">
             <p className={`text-[13px] leading-relaxed ${t.danger}`}>{adminError}</p>
           </div>
         )}
 
-        {!adminLoading && !adminError && (
+        {adminTab === 'signups' && !adminLoading && !adminError && (
           <div className="mt-5 flex flex-col gap-3">
             {adminUsers.map((u) => (
               <div key={u.id} className={`rounded-2xl border ${t.hair} p-4`}>
@@ -3309,6 +4099,76 @@ if (screen === 'admin') {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {adminTab === 'practitioners' && (
+          <div className="mt-5">
+            {pendingPractitionersLoading ? (
+              <p className={`text-[15px] ${t.muted}`}>Loading…</p>
+            ) : pendingPractitioners.length === 0 ? (
+              <p className={`text-[13px] leading-relaxed ${t.muted}`}>
+                No pending applications.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {pendingPractitioners.map((p) => (
+                  <div key={p.user_id} className={`rounded-2xl border ${t.hair} p-4`}>
+                    <p className="text-[15px] font-semibold">{p.display_name}</p>
+                    {p.title && (
+                      <p className={`text-[12px] font-medium ${t.mark}`}>{p.title}</p>
+                    )}
+                    <p className={`truncate text-[13px] ${t.muted}`}>{p.email}</p>
+
+                    {p.bio && (
+                      <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>{p.bio}</p>
+                    )}
+
+                    {p.specialisms?.length > 0 && (
+                      <p className={`mt-2 text-[12px] ${t.faint}`}>
+                        {p.specialisms.join(' · ')}
+                      </p>
+                    )}
+
+                    <div className={`mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] ${t.faint}`}>
+                      {p.instagram && <span>IG: {p.instagram}</span>}
+                      {p.whatsapp && <span>WhatsApp: {p.whatsapp}</span>}
+                      <span>
+                        Applied {new Date(p.created_at).toLocaleDateString('en-GB', {
+                          day: 'numeric', month: 'short', year: 'numeric',
+                        })}
+                      </span>
+                    </div>
+
+                    {p.title && (
+                      <p className={`mt-2 text-[11px] leading-relaxed ${t.faint}`}>
+                        Shown to clients next to their name — check it against their Instagram/WhatsApp before approving.
+                      </p>
+                    )}
+
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        disabled={!!busyAction}
+                        onClick={() => runBusy(`reviewPractitioner-${p.user_id}`, () => reviewPractitioner(p.user_id, false))}
+                        className={`flex-1 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-[12px] font-semibold ${t.danger} disabled:opacity-50`}
+                      >
+                        {busyAction === `reviewPractitioner-${p.user_id}` ? 'Rejecting…' : 'Reject'}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={!!busyAction}
+                        onClick={() => runBusy(`reviewPractitioner-${p.user_id}`, () => reviewPractitioner(p.user_id, true))}
+                        className={`flex-1 rounded-xl px-3 py-2 text-[12px] font-bold ${t.btn} disabled:opacity-50`}
+                      >
+                        {busyAction === `reviewPractitioner-${p.user_id}` ? 'Approving…' : 'Approve'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -3447,69 +4307,72 @@ if (screen === 'login') {
           </div>
 
           <button
-            onClick={async () => {
-              setLoginError(null)
+            disabled={busyAction === 'login'}
+            onClick={() =>
+              runBusy('login', async () => {
+                setLoginError(null)
 
-              if (!loginEmail || !loginPassword) {
-                setLoginError('Please enter your email and password.')
-                return
-              }
+                if (!loginEmail || !loginPassword) {
+                  setLoginError('Please enter your email and password.')
+                  return
+                }
 
-              const { data, error } =
-                await supabase.auth.signInWithPassword({
-                  email: loginEmail,
-                  password: loginPassword,
-                })
+                const { data, error } =
+                  await supabase.auth.signInWithPassword({
+                    email: loginEmail,
+                    password: loginPassword,
+                  })
 
-              if (error) {
-                setLoginError(
-                  error.message === 'Invalid login credentials'
-                    ? "That email or password isn't right. Try again."
-                    : error.message
-                )
-                return
-              }
+                if (error) {
+                  setLoginError(
+                    error.message === 'Invalid login credentials'
+                      ? "That email or password isn't right. Try again."
+                      : error.message
+                  )
+                  return
+                }
 
-              setDisplayName('')
+                setDisplayName('')
 
-              setUser(data.user)
+                setUser(data.user)
 
-              if (data.user.email === ADMIN_EMAIL) {
-                setScreen('admin')
-                return
-              }
+                if (data.user.email === ADMIN_EMAIL) {
+                  setScreen('admin')
+                  return
+                }
 
-              const { data: profile, error: profileError } =
-                await supabase
-                  .from('profiles')
-                  .select('username, onboarding_completed')
-                  .eq('id', data.user.id)
-                  .single()
+                const { data: profile, error: profileError } =
+                  await supabase
+                    .from('profiles')
+                    .select('username, onboarding_completed')
+                    .eq('id', data.user.id)
+                    .single()
 
-              if (profileError) {
-                console.error(profileError)
-                notify('Profile could not be loaded: ' + profileError.message)
-              } else {
-                // Same fallback as the mount-flow checkUser — a null
-                // username used to render as a blank greeting here.
-                setDisplayName(profile.username || data.user.email?.split('@')[0] || 'there')
-                setOnboardingCompleted(profile.onboarding_completed !== false)
-              }
+                if (profileError) {
+                  console.error(profileError)
+                  notify('Profile could not be loaded: ' + profileError.message)
+                } else {
+                  // Same fallback as the mount-flow checkUser — a null
+                  // username used to render as a blank greeting here.
+                  setDisplayName(profile.username || data.user.email?.split('@')[0] || 'there')
+                  setOnboardingCompleted(profile.onboarding_completed !== false)
+                }
 
-              // New users land on the skin profile step until they've
-              // filled it in at least once; after that, straight to Today.
-              const { data: existingSkinProfile } = await supabase
-                .from('skin_profiles')
-                .select('id')
-                .eq('user_id', data.user.id)
-                .limit(1)
-                .maybeSingle()
+                // New users land on the skin profile step until they've
+                // filled it in at least once; after that, straight to Today.
+                const { data: existingSkinProfile } = await supabase
+                  .from('skin_profiles')
+                  .select('id')
+                  .eq('user_id', data.user.id)
+                  .limit(1)
+                  .maybeSingle()
 
-              setScreen(existingSkinProfile ? 'today' : 'skinProfile')
-            }}
-            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+                setScreen(existingSkinProfile ? 'today' : 'skinProfile')
+              })
+            }
+            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
           >
-            Log in
+            {busyAction === 'login' ? 'Logging in…' : 'Log in'}
           </button>
 
           {loginError && (
@@ -3578,26 +4441,29 @@ if (screen === 'forgotPassword') {
           </div>
 
           <button
-            onClick={async () => {
-              if (!loginEmail) {
-                notify('Please enter your email address.')
-                return
-              }
+            disabled={busyAction === 'forgotPassword'}
+            onClick={() =>
+              runBusy('forgotPassword', async () => {
+                if (!loginEmail) {
+                  notify('Please enter your email address.')
+                  return
+                }
 
-              const { error } = await supabase.auth.resetPasswordForEmail(loginEmail, {
-                redirectTo: `${SITE_URL}/?recovery=true`,
+                const { error } = await supabase.auth.resetPasswordForEmail(loginEmail, {
+                  redirectTo: `${SITE_URL}/?recovery=true`,
+                })
+
+                if (error) {
+                  setResetStatus(error.message)
+                  return
+                }
+
+                setResetStatus("Check your email for a link to reset your password.")
               })
-
-              if (error) {
-                setResetStatus(error.message)
-                return
-              }
-
-              setResetStatus("Check your email for a link to reset your password.")
-            }}
-            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+            }
+            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
           >
-            Send reset link
+            {busyAction === 'forgotPassword' ? 'Sending…' : 'Send reset link'}
           </button>
 
           {resetStatus && (
@@ -3657,49 +4523,52 @@ if (screen === 'resetPassword') {
           </div>
 
           <button
-            onClick={async () => {
-              if (!newPassword || newPassword.length < 6) {
-                notify('Please enter a password with at least 6 characters.')
-                return
-              }
+            disabled={busyAction === 'resetPassword'}
+            onClick={() =>
+              runBusy('resetPassword', async () => {
+                if (!newPassword || newPassword.length < 6) {
+                  notify('Please enter a password with at least 6 characters.')
+                  return
+                }
 
-              if (newPassword !== confirmNewPassword) {
-                notify('Passwords do not match.')
-                return
-              }
+                if (newPassword !== confirmNewPassword) {
+                  notify('Passwords do not match.')
+                  return
+                }
 
-              const { data, error } = await supabase.auth.updateUser({
-                password: newPassword,
+                const { data, error } = await supabase.auth.updateUser({
+                  password: newPassword,
+                })
+
+                if (error) {
+                  notify(error.message)
+                  return
+                }
+
+                setNewPassword('')
+                setConfirmNewPassword('')
+                setUser(data.user)
+
+                const { data: profile, error: profileError } = await supabase
+                  .from('profiles')
+                  .select('username')
+                  .eq('id', data.user.id)
+                  .maybeSingle()
+
+                setDisplayName(
+                  profileError || !profile?.username
+                    ? data.user.email?.split('@')[0] || 'there'
+                    : profile.username
+                )
+
+                window.history.replaceState({}, '', window.location.pathname)
+                notify('Your password has been updated.', 'success')
+                setScreen('today')
               })
-
-              if (error) {
-                notify(error.message)
-                return
-              }
-
-              setNewPassword('')
-              setConfirmNewPassword('')
-              setUser(data.user)
-
-              const { data: profile, error: profileError } = await supabase
-                .from('profiles')
-                .select('username')
-                .eq('id', data.user.id)
-                .maybeSingle()
-
-              setDisplayName(
-                profileError || !profile?.username
-                  ? data.user.email?.split('@')[0] || 'there'
-                  : profile.username
-              )
-
-              window.history.replaceState({}, '', window.location.pathname)
-              notify('Your password has been updated.', 'success')
-              setScreen('today')
-            }}
-            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+            }
+            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
           >
-            Update password
+            {busyAction === 'resetPassword' ? 'Updating…' : 'Update password'}
           </button>
         </div>
 
@@ -3780,13 +4649,82 @@ if (screen === 'settings') {
           </button>
 
           <button
-            onClick={async () => {
-              await loadReminderSettings()
-              setScreen('reminders')
-            }}
+            onClick={() => setScreen('careTeam')}
             className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
           >
-            Reminders
+            Care team
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
+          <button
+            onClick={() => setScreen('notifications')}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            <span>
+              Notifications
+              {(pendingRecommendations.length + careRelationships.filter((r) => r.status === 'invited').length) > 0 && (
+                <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
+                  {pendingRecommendations.length + careRelationships.filter((r) => r.status === 'invited').length}
+                </span>
+              )}
+            </span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
+          {practitionerStatus !== 'verified' && (
+            <button
+              onClick={() => setScreen('applyPractitioner')}
+              className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+            >
+              <span>
+                {practitionerStatus === 'pending' ? 'Professional application' : 'Become a professional'}
+                {practitionerStatus === 'pending' && (
+                  <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
+                    Pending
+                  </span>
+                )}
+              </span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
+
+          {practitionerStatus === 'verified' && (
+            <button
+              onClick={() => setScreen('practitionerDashboard')}
+              className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+            >
+              Practitioner dashboard
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
+
+          <button
+            disabled={busyAction === 'remindersNav'}
+            onClick={() =>
+              runBusy('remindersNav', async () => {
+                await loadReminderSettings()
+                setScreen('reminders')
+              })
+            }
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold disabled:opacity-50"
+          >
+            {busyAction === 'remindersNav' ? 'Loading…' : 'Reminders'}
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="1.8"
               strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
@@ -3897,48 +4835,51 @@ if (screen === 'settingsUsername') {
           />
 
           <button
-            onClick={async () => {
-              if (!settingsUsername.trim()) {
-                notify('Please enter a username.')
-                return
-              }
+            disabled={busyAction === 'settingsUsername'}
+            onClick={() =>
+              runBusy('settingsUsername', async () => {
+                if (!settingsUsername.trim()) {
+                  notify('Please enter a username.')
+                  return
+                }
 
-              const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+                const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-              if (sessionError) {
-                notify("Couldn't reach the server. Check your connection and try again.")
-                return
-              }
+                if (sessionError) {
+                  notify("Couldn't reach the server. Check your connection and try again.")
+                  return
+                }
 
-              if (!session?.user) {
-                notify('Your session ended. Please log in again.')
-                setScreen('login')
-                return
-              }
+                if (!session?.user) {
+                  notify('Your session ended. Please log in again.')
+                  setScreen('login')
+                  return
+                }
 
-              const { error } = await supabase
-                .from('profiles')
-                .upsert(
-                  { id: session.user.id, username: settingsUsername.trim() },
-                  { onConflict: 'id' }
-                )
+                const { error } = await supabase
+                  .from('profiles')
+                  .upsert(
+                    { id: session.user.id, username: settingsUsername.trim() },
+                    { onConflict: 'id' }
+                  )
 
-              if (error) {
-                console.error('PROFILE UPDATE ERROR:', error)
-                setSettingsStatus(
-                  error.code === '23505'
-                    ? 'That username is already taken. Try another one.'
-                    : 'Could not save your username: ' + error.message
-                )
-                return
-              }
+                if (error) {
+                  console.error('PROFILE UPDATE ERROR:', error)
+                  setSettingsStatus(
+                    error.code === '23505'
+                      ? 'That username is already taken. Try another one.'
+                      : 'Could not save your username: ' + error.message
+                  )
+                  return
+                }
 
-              setDisplayName(settingsUsername.trim())
-              setSettingsStatus('Username updated.')
-            }}
-            className={`mt-5 w-full rounded-2xl py-[16px] text-base font-bold ${t.btn}`}
+                setDisplayName(settingsUsername.trim())
+                setSettingsStatus('Username updated.')
+              })
+            }
+            className={`mt-5 w-full rounded-2xl py-[16px] text-base font-bold ${t.btn} disabled:opacity-60`}
           >
-            Save username
+            {busyAction === 'settingsUsername' ? 'Saving…' : 'Save username'}
           </button>
 
           {settingsStatus && (
@@ -4008,33 +4949,36 @@ if (screen === 'settingsPassword') {
           </div>
 
           <button
-            onClick={async () => {
-              if (!newPassword || newPassword.length < 6) {
-                notify('Please enter a password with at least 6 characters.')
-                return
-              }
+            disabled={busyAction === 'settingsPassword'}
+            onClick={() =>
+              runBusy('settingsPassword', async () => {
+                if (!newPassword || newPassword.length < 6) {
+                  notify('Please enter a password with at least 6 characters.')
+                  return
+                }
 
-              if (newPassword !== confirmNewPassword) {
-                notify('Passwords do not match.')
-                return
-              }
+                if (newPassword !== confirmNewPassword) {
+                  notify('Passwords do not match.')
+                  return
+                }
 
-              const { error } = await supabase.auth.updateUser({
-                password: newPassword,
+                const { error } = await supabase.auth.updateUser({
+                  password: newPassword,
+                })
+
+                if (error) {
+                  setSettingsStatus(error.message)
+                  return
+                }
+
+                setNewPassword('')
+                setConfirmNewPassword('')
+                setSettingsStatus('Password updated.')
               })
-
-              if (error) {
-                setSettingsStatus(error.message)
-                return
-              }
-
-              setNewPassword('')
-              setConfirmNewPassword('')
-              setSettingsStatus('Password updated.')
-            }}
-            className={`mt-5 w-full rounded-2xl py-[16px] text-base font-bold ${t.btn}`}
+            }
+            className={`mt-5 w-full rounded-2xl py-[16px] text-base font-bold ${t.btn} disabled:opacity-60`}
           >
-            Update password
+            {busyAction === 'settingsPassword' ? 'Updating…' : 'Update password'}
           </button>
 
           {settingsStatus && (
@@ -4292,24 +5236,27 @@ if (screen === 'reminders') {
           </p>
 
           <button
-            onClick={async () => {
-              const result = await subscribeToPushNotifications()
+            disabled={busyAction === 'pushSubscribe'}
+            onClick={() =>
+              runBusy('pushSubscribe', async () => {
+                const result = await subscribeToPushNotifications()
 
-              setPushStatus(
-                result.ok
-                  ? "You're all set!"
-                  : result.reason === 'needs_install'
-                    ? 'Add Tracka+ to your home screen first, then open it from there.'
-                    : result.reason === 'denied'
-                      ? 'Notifications are blocked. Turn them on in your browser settings for this site.'
-                      : result.reason === 'unsupported'
-                        ? "This browser can't do notifications. Try Chrome or Safari."
-                        : "That didn't work. Try again in a moment."
-              )
-            }}
-            className={`mt-5 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+                setPushStatus(
+                  result.ok
+                    ? "You're all set!"
+                    : result.reason === 'needs_install'
+                      ? 'Add Tracka+ to your home screen first, then open it from there.'
+                      : result.reason === 'denied'
+                        ? 'Notifications are blocked. Turn them on in your browser settings for this site.'
+                        : result.reason === 'unsupported'
+                          ? "This browser can't do notifications. Try Chrome or Safari."
+                          : "That didn't work. Try again in a moment."
+                )
+              })
+            }
+            className={`mt-5 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
           >
-            Turn on notifications
+            {busyAction === 'pushSubscribe' ? 'Turning on…' : 'Turn on notifications'}
           </button>
 
           {pushStatus && (
@@ -4323,6 +5270,1209 @@ if (screen === 'reminders') {
         >
           Save reminder settings
         </button>
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'careTeam') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('settings')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Settings
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Care team
+          </h1>
+
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Professionals you've connected with, and exactly what they can see.
+          </p>
+        </div>
+
+        {careTeamLoading ? (
+          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
+        ) : careRelationships.length === 0 ? (
+          <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
+            Nobody yet. If a professional invites you, they'll show up here.
+          </p>
+        ) : (
+          <div className="mt-8 flex flex-col gap-4">
+            {careRelationships.map((rel) => (
+              <div key={rel.id} className={`rounded-3xl ${t.surface} p-5`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[16px] font-semibold">
+                      {rel.practitioners?.display_name || 'Professional'}
+                    </p>
+                    {rel.practitioners?.title && (
+                      <p className={`mt-0.5 text-[12px] font-medium ${t.mark}`}>{rel.practitioners.title}</p>
+                    )}
+                    {rel.practitioners?.bio && (
+                      <p className={`mt-0.5 text-[13px] ${t.muted}`}>{rel.practitioners.bio}</p>
+                    )}
+                  </div>
+                  {rel.status === 'invited' && (
+                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
+                      Pending
+                    </span>
+                  )}
+                </div>
+
+                {rel.status === 'invited' ? (
+                  <div className="mt-4 flex gap-2.5">
+                    <button
+                      disabled={!!busyAction}
+                      onClick={() => runBusy(`careInvite-${rel.id}`, () => respondToCareInvite(rel.id, false))}
+                      className={`flex-1 rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-50`}
+                    >
+                      {busyAction === `careInvite-${rel.id}` ? 'Declining…' : 'Decline'}
+                    </button>
+                    <button
+                      disabled={!!busyAction}
+                      onClick={() => runBusy(`careInvite-${rel.id}`, () => respondToCareInvite(rel.id, true))}
+                      className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn} disabled:opacity-50`}
+                    >
+                      {busyAction === `careInvite-${rel.id}` ? 'Accepting…' : 'Accept'}
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className={`mt-4 flex flex-col gap-2.5 border-t pt-4 ${t.hair}`}>
+                      {CARE_SCOPES.map(([scope, label]) => {
+                        const isNested = scope === 'pregnancy_status'
+                        const locked = isNested && !rel.scopes.includes('skin_profile')
+
+                        return (
+                          <div
+                            key={scope}
+                            className={`flex items-center justify-between ${isNested ? 'ml-4' : ''}`}
+                          >
+                            <div>
+                              <span className={`text-[14px] ${locked ? t.faint : ''}`}>{label}</span>
+                              {locked && (
+                                <p className={`text-[11px] ${t.faint}`}>Requires skin profile access</p>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              disabled={locked}
+                              onClick={() => toggleCareScope(rel, scope)}
+                              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                                rel.scopes.includes(scope) ? t.btn : t.rail
+                              } ${locked ? 'opacity-40' : ''}`}
+                            >
+                              <span
+                                className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${
+                                  rel.scopes.includes(scope) ? 'left-6' : 'left-1'
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between">
+                      {rel.practitioners?.whatsapp ? (
+                        <a
+                          href={whatsappLink(rel.practitioners.whatsapp, `Hi ${rel.practitioners.display_name || ''}, `)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`text-[13px] font-semibold ${t.mark}`}
+                        >
+                          Message on WhatsApp
+                        </a>
+                      ) : <span />}
+
+                      <button
+                        disabled={!!busyAction}
+                        onClick={() => runBusy(`revokeCare-${rel.id}`, () => revokeCareAccess(rel.id))}
+                        className={`text-[13px] font-semibold ${t.danger} disabled:opacity-50`}
+                      >
+                        {busyAction === `revokeCare-${rel.id}` ? 'Revoking…' : 'Revoke access'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {careAccessLog.length > 0 && (
+          <div className="mt-8">
+            <h2 className="text-[15px] font-semibold">Recent activity</h2>
+            <div className="mt-3 flex flex-col gap-2.5">
+              {careAccessLog.map((entry, i) => (
+                <p key={i} className={`text-[13px] ${t.muted}`}>
+                  <span className="font-medium">{entry.practitioners?.display_name || 'A professional'}</span>
+                  {' '}viewed your {entry.what === 'view_skin_profile' ? 'skin profile' : entry.what}
+                  {' — '}
+                  {new Date(entry.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'notifications') {
+  const pendingInvites = careRelationships.filter((r) => r.status === 'invited')
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('settings')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Settings
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Notifications
+          </h1>
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Invites and routines waiting on you.
+          </p>
+        </div>
+
+        {pendingInvites.length > 0 && (
+          <div className="mt-8 flex flex-col gap-4">
+            {pendingInvites.map((rel) => (
+              <div key={rel.id} className={`rounded-3xl ${t.surface} p-5`}>
+                <p className="text-[16px] font-semibold">
+                  {rel.practitioners?.display_name || 'A professional'} wants to connect
+                </p>
+                {rel.practitioners?.title && (
+                  <p className={`mt-0.5 text-[12px] font-medium ${t.mark}`}>{rel.practitioners.title}</p>
+                )}
+                {rel.practitioners?.bio && (
+                  <p className={`mt-0.5 text-[13px] ${t.muted}`}>{rel.practitioners.bio}</p>
+                )}
+                <div className="mt-4 flex gap-2.5">
+                  <button
+                    disabled={!!busyAction}
+                    onClick={() => runBusy(`careInvite-${rel.id}`, () => respondToCareInvite(rel.id, false))}
+                    className={`flex-1 rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-50`}
+                  >
+                    {busyAction === `careInvite-${rel.id}` ? 'Declining…' : 'Decline'}
+                  </button>
+                  <button
+                    disabled={!!busyAction}
+                    onClick={() => runBusy(`careInvite-${rel.id}`, () => respondToCareInvite(rel.id, true))}
+                    className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn} disabled:opacity-50`}
+                  >
+                    {busyAction === `careInvite-${rel.id}` ? 'Accepting…' : 'Accept'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {pendingRecommendationsLoading ? (
+          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
+        ) : pendingRecommendations.length === 0 ? (
+          pendingInvites.length === 0 && (
+            <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
+              Nothing pending. Invites and recommendations from a professional will show up here.
+            </p>
+          )
+        ) : (
+          <div className="mt-8 flex flex-col gap-5">
+            {pendingRecommendations.map((rec) => {
+              const amItems = rec.recommendation_items.filter((i) => i.slot === 'AM')
+              const pmItems = rec.recommendation_items.filter((i) => i.slot === 'PM')
+
+              return (
+                <div key={rec.id} className={`rounded-3xl ${t.surface} p-5`}>
+                  <p className="text-[16px] font-semibold">
+                    {rec.practitioners?.display_name || 'A professional'}
+                  </p>
+                  {rec.practitioners?.title && (
+                    <p className={`mt-0.5 text-[12px] font-medium ${t.mark}`}>{rec.practitioners.title}</p>
+                  )}
+                  {rec.practitioners?.bio && (
+                    <p className={`mt-0.5 text-[13px] ${t.muted}`}>{rec.practitioners.bio}</p>
+                  )}
+
+                  {rec.proposes_skin_profile && (
+                    <div className={`mt-4 rounded-2xl border ${t.hair} p-4`}>
+                      <p className={`text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
+                        Proposed skin profile
+                      </p>
+                      <div className="mt-2 flex flex-col gap-1 text-[13px]">
+                        {rec.skin_type && <p>Skin type — {rec.skin_type}</p>}
+                        {rec.concerns && <p>Concerns — {rec.concerns}</p>}
+                        {rec.goals && <p>Goals — {rec.goals}</p>}
+                        {rec.sensitivity && <p>Sensitivity — {rec.sensitivity}</p>}
+                      </div>
+                    </div>
+                  )}
+
+                  {amItems.length > 0 && (
+                    <div className="mt-4">
+                      <p className={`text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>Morning</p>
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        {amItems.map((item) => (
+                          <p key={item.id} className="text-[14px]">
+                            <span className="font-medium">{item.products?.brand}</span>{' '}{item.products?.name}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {pmItems.length > 0 && (
+                    <div className="mt-4">
+                      <p className={`text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>Night</p>
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        {pmItems.map((item) => (
+                          <p key={item.id} className="text-[14px]">
+                            <span className="font-medium">{item.products?.brand}</span>{' '}{item.products?.name}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {rec.note && (
+                    <div className={`mt-4 rounded-2xl border ${t.hair} p-4`}>
+                      <p className={`text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>Note</p>
+                      <p className="mt-1.5 text-[14px] leading-relaxed">{rec.note}</p>
+                    </div>
+                  )}
+
+                  {rec.practitioners?.whatsapp && (
+                    <a
+                      href={whatsappLink(rec.practitioners.whatsapp, `Hi ${rec.practitioners.display_name || ''}, about the routine you sent — `)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`mt-4 inline-block text-[13px] font-semibold ${t.mark}`}
+                    >
+                      Message on WhatsApp
+                    </a>
+                  )}
+
+                  <div className="mt-5 flex gap-2.5">
+                    <button
+                      disabled={!!busyAction}
+                      onClick={() => runBusy(`recommendation-${rec.id}`, () => respondToRecommendation(rec.id, false))}
+                      className={`flex-1 rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-50`}
+                    >
+                      {busyAction === `recommendation-${rec.id}` ? 'Declining…' : 'Decline'}
+                    </button>
+                    <button
+                      disabled={!!busyAction}
+                      onClick={() => runBusy(`recommendation-${rec.id}`, () => respondToRecommendation(rec.id, true))}
+                      className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn} disabled:opacity-50`}
+                    >
+                      {busyAction === `recommendation-${rec.id}` ? 'Accepting…' : 'Accept'}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'applyPractitioner') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+
+        <button
+          onClick={() => setScreen('settings')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Settings
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            {practitionerStatus === 'verified' ? 'Your practitioner profile' : 'Become a professional'}
+          </h1>
+
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            {practitionerStatus === 'verified'
+              ? 'Clients see this when you invite them. You can update it any time.'
+              : practitionerStatus === 'pending'
+              ? "Your application is under review — we'll let you know once it's approved."
+              : 'Tell us a bit about your practice. We review applications by hand before you can invite clients.'}
+          </p>
+        </div>
+
+        <div className={`mt-8 flex flex-col gap-5 rounded-3xl ${t.surface} p-5`}>
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Display name
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Deeyah Skin Studio"
+              value={applyDisplayName}
+              onChange={(e) => setApplyDisplayName(e.target.value)}
+              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
+
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Your title
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Esthetician, Licensed Dermatologist, Skincare Consultant"
+              value={applyTitle}
+              onChange={(e) => setApplyTitle(e.target.value)}
+              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+            <p className={`mt-1.5 text-[12px] ${t.faint}`}>
+              Shown to clients wherever your name appears.
+            </p>
+          </div>
+
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Bio
+            </label>
+            <textarea
+              placeholder="A short intro clients will see"
+              value={applyBio}
+              onChange={(e) => setApplyBio(e.target.value)}
+              rows={3}
+              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
+
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Specialisms
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Acne, hyperpigmentation, sensitive skin"
+              value={applySpecialisms}
+              onChange={(e) => setApplySpecialisms(e.target.value)}
+              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+            <p className={`mt-1.5 text-[12px] ${t.faint}`}>Separate with commas</p>
+          </div>
+
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Instagram
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. @deeyahskin"
+              value={applyInstagram}
+              onChange={(e) => setApplyInstagram(e.target.value)}
+              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
+
+          <div>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              WhatsApp number
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. +2348012345678"
+              value={applyWhatsapp}
+              onChange={(e) => setApplyWhatsapp(e.target.value)}
+              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+          </div>
+
+          <button
+            onClick={submitPractitionerApplication}
+            disabled={applySaving}
+            className={`mt-2 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn} disabled:opacity-60`}
+          >
+            {applySaving
+              ? 'Saving…'
+              : practitionerStatus === 'verified'
+              ? 'Save changes'
+              : practitionerStatus === 'pending'
+              ? 'Update application'
+              : 'Submit application'}
+          </button>
+        </div>
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'practitionerDashboard') {
+  const pendingClients = practitionerClients.filter((c) => c.status === 'invited')
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+
+        <button
+          onClick={() => setScreen('settings')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Settings
+        </button>
+
+        <div className="mt-5">
+          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            Practitioner
+          </p>
+          <h1 className="mt-1.5 font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Hello, {applyDisplayName || displayName}
+          </h1>
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Help your clients stay consistent with their skincare routines.
+          </p>
+        </div>
+
+        <button
+          onClick={() => {
+            setAddClientEmail('')
+            setAddClientResult(null)
+            setScreen('addClient')
+          }}
+          className={`mt-6 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn}`}
+        >
+          + Add Client
+        </button>
+
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <div className={`rounded-3xl ${t.surface} p-4`}>
+            <p className="text-[28px] font-semibold">{practitionerClients.length}</p>
+            <p className={`text-[13px] ${t.muted}`}>Total clients</p>
+          </div>
+          <div className={`rounded-3xl ${t.surface} p-4`}>
+            <p className="text-[28px] font-semibold">{pendingClients.length}</p>
+            <p className={`text-[13px] ${t.muted}`}>Pending acceptance</p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => setScreen('practitionerRoutines')}
+          className={`mt-4 flex w-full items-center justify-between rounded-2xl border ${t.hair} px-4 py-3 text-left text-[14px] font-semibold ${t.muted}`}
+        >
+          All routines sent
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+
+        <div className="mt-8">
+          <h2 className="text-[15px] font-semibold">Clients</h2>
+
+          {practitionerClientsLoading ? (
+            <p className={`mt-4 text-[13px] ${t.muted}`}>Loading…</p>
+          ) : practitionerClients.length === 0 ? (
+            <p className={`mt-4 text-[13px] leading-relaxed ${t.muted}`}>
+              No clients yet. Once "Add Client" is ready, they'll show up here.
+            </p>
+          ) : (
+            <div className="mt-4 flex flex-col gap-3">
+              {practitionerClients.map((c) => (
+                <button
+                  key={c.relationship_id}
+                  onClick={() => c.status === 'active' && openClientDetail(c.client_id)}
+                  className={`flex items-center justify-between rounded-2xl ${t.surface} p-4 text-left`}
+                >
+                  <div>
+                    <p className="text-[15px] font-semibold">{c.username || 'Client'}</p>
+                    <p className={`mt-0.5 text-[13px] ${t.muted}`}>
+                      {c.status === 'invited' ? 'Waiting for acceptance' : 'Active'}
+                    </p>
+                  </div>
+                  {c.status === 'invited' ? (
+                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
+                      Pending
+                    </span>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="1.8"
+                      strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+                      <path d="M9 5l7 7-7 7" />
+                    </svg>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {practitionerRecommendations.length > 0 && (
+          <div className="mt-8">
+            <h2 className="text-[15px] font-semibold">Recent activity</h2>
+            <div className="mt-4 flex flex-col gap-2.5">
+              {practitionerRecommendations.slice(0, 5).map((rec) => {
+                const label =
+                  rec.status === 'proposed' ? 'Routine sent to'
+                  : rec.status === 'accepted' ? 'Accepted by'
+                  : rec.status === 'declined' ? 'Declined by'
+                  : 'Withdrawn for'
+                const at = rec.status === 'proposed' ? rec.created_at : rec.responded_at || rec.created_at
+
+                return (
+                  <p key={rec.id} className={`text-[13px] ${t.muted}`}>
+                    <span className="font-medium">{label} {rec.profiles?.username || 'a client'}</span>
+                    {' — '}
+                    {new Date(at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                  </p>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'practitionerClientDetail') {
+  const client = practitionerClients.find((c) => c.client_id === selectedClientId)
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+
+        <button
+          onClick={() => setScreen('practitionerDashboard')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Clients
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[32px] font-light leading-[1.05] tracking-tight">
+            {client?.username || 'Client'}
+          </h1>
+        </div>
+
+        {clientDetailLoading ? (
+          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
+        ) : (
+          <>
+            <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
+              <h2 className="text-[15px] font-semibold">Skin profile</h2>
+              {clientDetail ? (
+                <div className="mt-3 flex flex-col gap-2 text-[14px]">
+                  {clientDetail.skin_type && (
+                    <p><span className={t.muted}>Skin type — </span>{clientDetail.skin_type}</p>
+                  )}
+                  {clientDetail.concerns && (
+                    <p><span className={t.muted}>Concerns — </span>{clientDetail.concerns}</p>
+                  )}
+                  {clientDetail.goals && (
+                    <p><span className={t.muted}>Goals — </span>{clientDetail.goals}</p>
+                  )}
+                  {!clientDetail.skin_type && !clientDetail.concerns && !clientDetail.goals && (
+                    <p className={t.muted}>Not filled in yet.</p>
+                  )}
+                </div>
+              ) : (
+                <p className={`mt-3 text-[13px] ${t.muted}`}>Not shared, or not filled in yet.</p>
+              )}
+            </div>
+
+            <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+              <h2 className="text-[15px] font-semibold">Products</h2>
+              {clientProducts.length === 0 ? (
+                <p className={`mt-3 text-[13px] ${t.muted}`}>None added yet.</p>
+              ) : (
+                <div className="mt-3 flex flex-col gap-2">
+                  {clientProducts.map((p) => (
+                    <p key={p.id} className="text-[14px]">
+                      <span className="font-medium">{p.products?.brand}</span>
+                      {' '}{p.products?.name}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+              <h2 className="text-[15px] font-semibold">Routine</h2>
+
+              <p className={`mt-3 text-[13px] font-semibold ${t.mark}`}>Morning</p>
+              {clientRoutineSteps.am.length === 0 ? (
+                <p className={`mt-1 text-[13px] ${t.muted}`}>No AM routine.</p>
+              ) : (
+                clientRoutineSteps.am.map((s, i) => (
+                  <p key={i} className="mt-1 text-[14px]">{s.step_name}</p>
+                ))
+              )}
+
+              <p className={`mt-4 text-[13px] font-semibold ${t.mark}`}>Night</p>
+              {clientRoutineSteps.pm.length === 0 ? (
+                <p className={`mt-1 text-[13px] ${t.muted}`}>No PM routine.</p>
+              ) : (
+                clientRoutineSteps.pm.map((s, i) => (
+                  <p key={i} className="mt-1 text-[14px]">{s.step_name}</p>
+                ))
+              )}
+            </div>
+
+            <button
+              onClick={openComposer}
+              className={`mt-6 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn}`}
+            >
+              Propose a routine
+            </button>
+          </>
+        )}
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'addClient') {
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+
+        <button
+          onClick={() => setScreen('practitionerDashboard')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Dashboard
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[34px] font-light leading-[1.05] tracking-tight">
+            Add Client
+          </h1>
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Invite a client to receive their personalized skincare routine.
+          </p>
+        </div>
+
+        {!addClientResult ? (
+          <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+              Client email
+            </label>
+
+            <input
+              type="email"
+              placeholder="e.g. sarah@email.com"
+              value={addClientEmail}
+              onChange={(e) => setAddClientEmail(e.target.value)}
+              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+            />
+
+            <p className={`mt-1.5 text-[12px] ${t.faint}`}>
+              This email is used to find or create their Tracka+ account.
+            </p>
+
+            <button
+              onClick={inviteClientByEmail}
+              disabled={addClientSaving}
+              className={`mt-5 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn} disabled:opacity-60`}
+            >
+              {addClientSaving ? 'Sending…' : 'Continue'}
+            </button>
+          </div>
+        ) : (
+          <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+            <p className="text-[15px] font-semibold">No Tracka+ account yet</p>
+            <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>
+              Share this link with them — opening it walks them through creating an account and connecting with you.
+            </p>
+
+            <div className={`mt-4 rounded-2xl border ${t.hair} px-4 py-3`}>
+              <p className="break-all text-[13px]">{addClientResult.link}</p>
+            </div>
+
+            <button
+              onClick={() => shareClientInviteLink(addClientResult.link)}
+              className={`mt-4 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn}`}
+            >
+              Share link
+            </button>
+
+            <button
+              onClick={() => {
+                setAddClientEmail('')
+                setAddClientResult(null)
+                setScreen('practitionerDashboard')
+              }}
+              className={`mt-3 w-full text-[13px] font-semibold ${t.muted}`}
+            >
+              Done
+            </button>
+          </div>
+        )}
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'composeRecommendation') {
+  const client = practitionerClients.find((c) => c.client_id === selectedClientId)
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
+
+        <button
+          onClick={() => setScreen('practitionerClientDetail')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          {client?.username || 'Client'}
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[32px] font-light leading-[1.05] tracking-tight">
+            Propose a routine
+          </h1>
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            They'll review everything and can accept or decline it.
+          </p>
+        </div>
+
+        <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !composeIncludeSkinProfile
+              setComposeIncludeSkinProfile(next)
+              if (next && !composeSkinType && clientDetail) {
+                setComposeGender(clientDetail.gender || '')
+                setComposePregnant(clientDetail.pregnant_or_breastfeeding ?? undefined)
+                setComposeSkinType(clientDetail.skin_type || '')
+                setComposeConcerns(clientDetail.concerns ? clientDetail.concerns.split(', ').filter(Boolean) : [])
+                setComposeGoals(clientDetail.goals ? clientDetail.goals.split(', ').filter(Boolean) : [])
+                setComposeSensitivity(clientDetail.sensitivity || '')
+              }
+            }}
+            className="flex w-full items-center justify-between"
+          >
+            <span className="text-[15px] font-semibold">Include a skin profile</span>
+            <span
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                composeIncludeSkinProfile ? t.btn : t.rail
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${
+                  composeIncludeSkinProfile ? 'left-6' : 'left-1'
+                }`}
+              />
+            </span>
+          </button>
+
+          {composeIncludeSkinProfile && (
+            <div className="mt-6 flex flex-col gap-6">
+              <section>
+                <h3 className="mb-2.5 text-[14px] font-semibold">Gender</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {['Female', 'Male', 'Non-binary', 'Prefer not to say'].map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setComposeGender(option)}
+                      className={`rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
+                        composeGender === option ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-2.5 text-[14px] font-semibold">Pregnant or breastfeeding?</h3>
+                <div className="flex gap-2">
+                  {[['Yes', true], ['No', false], ['Rather not say', null]].map(([label, value]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => setComposePregnant(value)}
+                      className={`flex-1 rounded-xl border px-3 py-3 text-[13px] font-medium ${
+                        composePregnant === value ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-2.5 text-[14px] font-semibold">Skin type</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {['Normal', 'Dry', 'Oily', 'Combination'].map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setComposeSkinType(type)}
+                      className={`rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
+                        composeSkinType === type ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-2.5 text-[14px] font-semibold">Main concerns</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {['Acne', 'Dark circles', 'Dullness', 'Puffiness', 'Uneven texture', 'Visible pores', 'Dryness', 'Hyperpigmentation', 'Sensitivity', 'None'].map((concern) => (
+                    <button
+                      key={concern}
+                      type="button"
+                      onClick={() => {
+                        setComposeConcerns((current) => {
+                          if (concern === 'None') {
+                            return current.includes('None') ? [] : ['None']
+                          }
+                          const withoutNone = current.filter((c) => c !== 'None')
+                          return withoutNone.includes(concern)
+                            ? withoutNone.filter((c) => c !== concern)
+                            : [...withoutNone, concern]
+                        })
+                      }}
+                      className={`rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
+                        composeConcerns.includes(concern) ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
+                      }`}
+                    >
+                      {concern}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-2.5 text-[14px] font-semibold">Goals</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {['Hydration', 'Clearer skin', 'Even skin tone', 'Healthy skin'].map((goal) => (
+                    <button
+                      key={goal}
+                      type="button"
+                      onClick={() =>
+                        setComposeGoals((current) =>
+                          current.includes(goal)
+                            ? current.filter((g) => g !== goal)
+                            : [...current, goal]
+                        )
+                      }
+                      className={`rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
+                        composeGoals.includes(goal) ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
+                      }`}
+                    >
+                      {goal}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-2.5 text-[14px] font-semibold">Sensitivity</h3>
+                <div className="flex flex-col gap-2">
+                  {['Not sensitive', 'Sometimes sensitive', 'Very sensitive'].map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setComposeSensitivity(option)}
+                      className={`w-full rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
+                        composeSensitivity === option ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </div>
+          )}
+        </div>
+
+        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+          <h2 className="text-[15px] font-semibold">Products</h2>
+
+          {composeItems.length > 0 && (
+            <div className="mt-4 flex flex-col gap-2.5">
+              {composeItems.map((item) => (
+                <div key={item.tempId} className={`flex items-start justify-between rounded-2xl border ${t.hair} p-3.5`}>
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-semibold">{item.brand} — {item.name}</p>
+                    <p className={`mt-0.5 text-[12px] ${t.muted}`}>
+                      {item.category} • {item.slot} • {item.days_of_week.length === 7 ? 'Every day' : `${item.days_of_week.length} days/week`}
+                    </p>
+                    {item.reason && (
+                      <p className={`mt-1 text-[12px] italic ${t.faint}`}>"{item.reason}"</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeComposeItem(item.tempId)}
+                    className={`shrink-0 text-[12px] font-semibold ${t.danger}`}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className={`mt-4 rounded-2xl border ${t.hair} p-4`}>
+            <div className="grid grid-cols-2 gap-2.5">
+              <input
+                type="text"
+                placeholder="Brand"
+                value={composeItemBrand}
+                onChange={(e) => setComposeItemBrand(e.target.value)}
+                className={`rounded-xl border ${t.hair} px-3 py-2.5 text-[13px] outline-none`}
+              />
+              <input
+                type="text"
+                placeholder="Product name"
+                value={composeItemName}
+                onChange={(e) => setComposeItemName(e.target.value)}
+                className={`rounded-xl border ${t.hair} px-3 py-2.5 text-[13px] outline-none`}
+              />
+            </div>
+
+            <select
+              value={composeItemCategory}
+              onChange={(e) => setComposeItemCategory(e.target.value)}
+              className={`mt-2.5 w-full rounded-xl border ${t.hair} px-3 py-2.5 text-[13px] outline-none`}
+            >
+              <option value="">Select a category</option>
+              <option value="cleanser">Cleanser</option>
+              <option value="toner">Toner</option>
+              <option value="essence">Essence</option>
+              <option value="serum">Serum</option>
+              <option value="treatment">Treatment</option>
+              <option value="moisturizer">Moisturizer</option>
+              <option value="sunscreen">Sunscreen</option>
+              <option value="exfoliant">Exfoliant</option>
+              <option value="mask">Mask</option>
+              <option value="other">Other</option>
+            </select>
+
+            <div className="mt-2.5 flex gap-2">
+              {['AM', 'PM'].map((slot) => (
+                <button
+                  key={slot}
+                  type="button"
+                  onClick={() => setComposeItemSlot(slot)}
+                  className={`flex-1 rounded-xl border px-3 py-2.5 text-[13px] font-semibold ${
+                    composeItemSlot === slot ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
+                  }`}
+                >
+                  {slot}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-2.5 flex justify-between">
+              {[['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6], ['Sun', 0]].map(([label, day]) => {
+                const selected = composeItemDays.includes(day)
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() =>
+                      setComposeItemDays((current) =>
+                        current.includes(day) ? current.filter((d) => d !== day) : [...current, day]
+                      )
+                    }
+                    className={`flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-semibold ${
+                      selected ? `${t.chip} border-transparent` : `border ${t.hair} ${t.muted}`
+                    }`}
+                  >
+                    {label[0]}
+                  </button>
+                )
+              })}
+            </div>
+
+            <input
+              type="text"
+              placeholder="Why this product? (optional)"
+              value={composeItemReason}
+              onChange={(e) => setComposeItemReason(e.target.value)}
+              className={`mt-2.5 w-full rounded-xl border ${t.hair} px-3 py-2.5 text-[13px] outline-none`}
+            />
+
+            <button
+              type="button"
+              onClick={addComposeItem}
+              className={`mt-2.5 w-full rounded-xl py-2.5 text-[13px] font-bold ${t.btn}`}
+            >
+              + Add product
+            </button>
+          </div>
+        </div>
+
+        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
+          <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+            Notes for your client
+          </label>
+          <textarea
+            placeholder='e.g. "Use sunscreen daily. Introduce actives slowly."'
+            value={composeNote}
+            onChange={(e) => setComposeNote(e.target.value)}
+            rows={3}
+            className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+          />
+        </div>
+
+        <button
+          onClick={submitRecommendation}
+          disabled={composeSaving}
+          className={`mt-6 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn} disabled:opacity-60`}
+        >
+          {composeSaving ? 'Sending…' : 'Share Routine'}
+        </button>
+
+      </div>
+    </main>
+  )
+}
+if (screen === 'practitionerRoutines') {
+  const FILTERS = [
+    ['all', 'All'],
+    ['proposed', 'Sent'],
+    ['accepted', 'Accepted'],
+    ['declined', 'Declined'],
+    ['superseded', 'Withdrawn'],
+  ]
+
+  const filtered = recommendationsFilter === 'all'
+    ? practitionerRecommendations
+    : practitionerRecommendations.filter((r) => r.status === recommendationsFilter)
+
+  const STATUS_LABEL = {
+    proposed: 'Sent — awaiting response',
+    accepted: 'Accepted',
+    declined: 'Declined',
+    superseded: 'Withdrawn',
+  }
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+
+        <button
+          onClick={() => setScreen('practitionerDashboard')}
+          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Dashboard
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[34px] font-light leading-[1.05] tracking-tight">
+            Routines
+          </h1>
+        </div>
+
+        <div className="mt-5 flex gap-2 overflow-x-auto">
+          {FILTERS.map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setRecommendationsFilter(value)}
+              className={`shrink-0 rounded-full px-3.5 py-2 text-[13px] font-semibold ${
+                recommendationsFilter === value ? `${t.chip} border-transparent` : `border ${t.hair} ${t.muted}`
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {practitionerRecommendationsLoading ? (
+          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
+        ) : filtered.length === 0 ? (
+          <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
+            Nothing here yet.
+          </p>
+        ) : (
+          <div className="mt-6 flex flex-col gap-3">
+            {filtered.map((rec) => (
+              <div key={rec.id} className={`rounded-2xl ${t.surface} p-4`}>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[15px] font-semibold">{rec.profiles?.username || 'Client'}</p>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
+                    {STATUS_LABEL[rec.status] || rec.status}
+                  </span>
+                </div>
+                <p className={`mt-1 text-[12px] ${t.muted}`}>
+                  {new Date(rec.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                </p>
+                {rec.note && (
+                  <p className={`mt-2 text-[13px] italic ${t.faint}`}>"{rec.note}"</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
       </div>
     </main>
@@ -4475,7 +6625,7 @@ if (screen === 'today') {
           </p>
 
           <p className={`mt-2.5 text-sm ${t.muted}`}>
-            {new Date().toLocaleDateString('en-GB', {
+            {new Date(todayString + 'T00:00:00').toLocaleDateString('en-GB', {
               weekday: 'long',
               day: 'numeric',
               month: 'long',
@@ -4483,6 +6633,37 @@ if (screen === 'today') {
           </p>
           </div>
         </div>
+
+        {(() => {
+          const pendingInvites = careRelationships.filter((r) => r.status === 'invited')
+          const totalPending = pendingRecommendations.length + pendingInvites.length
+          if (totalPending === 0) return null
+
+          const label =
+            pendingRecommendations.length > 0 && pendingInvites.length === 0
+              ? pendingRecommendations.length === 1
+                ? `${pendingRecommendations[0].practitioners?.display_name || 'A professional'} sent you a routine`
+                : `${pendingRecommendations.length} new recommendations waiting`
+              : pendingInvites.length > 0 && pendingRecommendations.length === 0
+              ? pendingInvites.length === 1
+                ? `${pendingInvites[0].practitioners?.display_name || 'A professional'} wants to connect`
+                : `${pendingInvites.length} professionals want to connect`
+              : `${totalPending} things need your attention`
+
+          return (
+            <button
+              onClick={() => setScreen('notifications')}
+              className={`mt-5 flex w-full items-center justify-between rounded-2xl ${t.chip} px-4 py-3.5 text-left`}
+            >
+              <span className="text-[14px] font-semibold">{label}</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )
+        })()}
 
         <div className="mt-10">
           <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
@@ -4759,13 +6940,16 @@ if (screen === 'routinePlanner') {
           </button>
 
           <button
-            onClick={async () => {
-              await loadRoutineHistory()
-              setScreen('routineHistory')
-            }}
-            className={`rounded-2xl border px-4 py-2.5 text-[13px] font-semibold ${t.hair} ${t.muted}`}
+            disabled={busyAction === 'routineHistory'}
+            onClick={() =>
+              runBusy('routineHistory', async () => {
+                await loadRoutineHistory()
+                setScreen('routineHistory')
+              })
+            }
+            className={`rounded-2xl border px-4 py-2.5 text-[13px] font-semibold ${t.hair} ${t.muted} disabled:opacity-50`}
           >
-            History
+            {busyAction === 'routineHistory' ? 'Loading…' : 'History'}
           </button>
         </div>
 
@@ -4878,11 +7062,14 @@ if (screen === 'routinePlanner') {
                             key={day}
                             type="button"
                             onClick={() =>
-                              setProductDays({
-                                ...productDays,
-                                [item.id]: selected
-                                  ? selectedDays.filter((d) => d !== day)
-                                  : [...selectedDays, day],
+                              setProductDays((current) => {
+                                const currentDays = current[item.id] || []
+                                return {
+                                  ...current,
+                                  [item.id]: currentDays.includes(day)
+                                    ? currentDays.filter((d) => d !== day)
+                                    : [...currentDays, day],
+                                }
                               })
                             }
                             className={`flex h-9 w-9 items-center justify-center rounded-full text-[12px] font-semibold transition ${
@@ -5372,13 +7559,33 @@ if (screen === 'completed') {
 }
 if (screen === 'progress') {
   const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth()
+  const displayedMonth = new Date(now.getFullYear(), now.getMonth() + progressMonthOffset, 1)
+  const year = displayedMonth.getFullYear()
+  const month = displayedMonth.getMonth()
+  const isCurrentCalendarMonth = progressMonthOffset === 0
   const daysInMonth = new Date(year, month + 1, 0).getDate()
   const firstWeekday = new Date(year, month, 1).getDay()
   const leadingBlanks = firstWeekday === 0 ? 6 : firstWeekday - 1
 
   const stepDays = new Set(stepHistory.map((entry) => entry.local_date))
+
+  // completedDates holds every completion ever (needed for the streak
+  // calculation above, which has to look arbitrarily far back) — the "X of
+  // Y days" stat used to show its all-time size next to this month's
+  // elapsed-day count, which is why it read as nonsense like "9 of 1 days".
+  // Scoped to just the displayed month here instead.
+  const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`
+  const completedThisDisplayedMonth = [...completedDates].filter((d) => d.startsWith(monthPrefix)).length
+  const daysElapsedInDisplayedMonth = isCurrentCalendarMonth ? now.getDate() : daysInMonth
+
+  // todayString is shifted 4 hours for completion-tracking (so a 1am night
+  // routine still counts toward "yesterday" instead of resetting early) —
+  // right for isToday's highlight, wrong for "has this day happened yet."
+  // Between midnight and 4am on the 1st, todayString still points at
+  // yesterday while the real calendar has already turned over, which made
+  // today's own cell read as "this day hasn't happened yet." This uses the
+  // actual wall-clock date instead, just for that distinction.
+  const calendarTodayString = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 
   const streakMessage = (n) => {
     if (n === 0) return 'Complete your routine to start a streak'
@@ -5454,14 +7661,40 @@ if (screen === 'progress') {
 
         <div className={`mt-4 rounded-3xl ${t.surface} px-5 py-6`}>
 
-          <div className="flex items-baseline justify-between">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setProgressMonthOffset((o) => o - 1)}
+              className={`flex h-8 w-8 items-center justify-center rounded-full ${t.chip}`}
+              aria-label="Previous month"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M15 5l-7 7 7 7" />
+              </svg>
+            </button>
+
             <span className="font-display text-[22px]">
-              {now.toLocaleDateString('en-GB', { month: 'long' })}
+              {displayedMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
             </span>
-            <span className={`text-[13px] ${t.faint}`}>
-              {completedDates.size} of {now.getDate()} days
-            </span>
+
+            <button
+              type="button"
+              disabled={isCurrentCalendarMonth}
+              onClick={() => setProgressMonthOffset((o) => o + 1)}
+              className={`flex h-8 w-8 items-center justify-center rounded-full ${t.chip} disabled:opacity-30`}
+              aria-label="Next month"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
           </div>
+
+          <p className={`mt-1 text-center text-[13px] ${t.faint}`}>
+            {completedThisDisplayedMonth} of {daysElapsedInDisplayedMonth} days
+          </p>
 
           <div className="mt-5 grid grid-cols-7 gap-[7px] text-center">
             {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((letter, i) => (
@@ -5478,7 +7711,7 @@ if (screen === 'progress') {
               const finished = completedDates.has(key)
               const partial = !finished && stepDays.has(key)
               const isToday = key === todayString
-              const future = key > todayString
+              const future = key > calendarTodayString
 
               return (
                 <button
@@ -5537,7 +7770,7 @@ if (screen === 'progress') {
                   ? 'Routine finished'
                   : stepDays.has(selectedProgressDate) || (dayDetailSteps && dayDetailSteps.length > 0)
                     ? 'Some steps done'
-                    : selectedProgressDate > todayString
+                    : selectedProgressDate > calendarTodayString
                       ? 'Upcoming'
                       : 'Nothing recorded'}
             </p>
@@ -5574,7 +7807,7 @@ if (screen === 'progress') {
                 if (amDoneSteps.length === 0 && pmDoneSteps.length === 0) {
                   return (
                     <p className={`mt-4 text-[13px] leading-relaxed ${t.muted}`}>
-                      {selectedProgressDate > todayString
+                      {selectedProgressDate > calendarTodayString
                         ? "This day hasn't happened yet."
                         : 'No steps were logged for this day.'}
                     </p>
@@ -5638,16 +7871,52 @@ if (screen === 'skinTrends') {
         </button>
 
         <div className="mt-5">
-          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            {report?.monthLabel || 'This month'}
-          </p>
+          <div className="flex items-center justify-between">
+            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+              {report?.monthLabel || 'This month'}
+            </p>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = reportMonthOffset - 1
+                  setReportMonthOffset(next)
+                  loadMonthlyReport(next)
+                }}
+                className={`flex h-8 w-8 items-center justify-center rounded-full ${t.chip}`}
+                aria-label="Previous month"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 5l-7 7 7 7" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                disabled={reportMonthOffset >= 0}
+                onClick={() => {
+                  const next = reportMonthOffset + 1
+                  setReportMonthOffset(next)
+                  loadMonthlyReport(next)
+                }}
+                className={`flex h-8 w-8 items-center justify-center rounded-full ${t.chip} disabled:opacity-30`}
+                aria-label="Next month"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
 
           <h1 className="mt-1.5 font-display text-[36px] font-light leading-[1.05] tracking-tight">
             Skin reports
           </h1>
 
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Your month at a glance, updated as it goes.
+            See how you showed up for your skin this month.
           </p>
         </div>
 
@@ -5822,14 +8091,15 @@ if (screen === 'progressPhotos') {
                 Cancel
               </button>
               <button
+                disabled={photoUploading}
                 onClick={async () => {
                   await uploadProgressPhoto(pendingPhoto.file, pendingPhoto.date)
                   URL.revokeObjectURL(pendingPhoto.previewUrl)
                   setPendingPhoto(null)
                 }}
-                className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn}`}
+                className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn} disabled:opacity-60`}
               >
-                Save photo
+                {photoUploading ? 'Saving…' : 'Save photo'}
               </button>
             </div>
           </div>
@@ -5975,20 +8245,24 @@ if (screen === 'progressPhotos') {
 
             {viewingPhoto.hasPhoto ? (
               <button
-                onClick={() => deleteProgressPhoto(viewingPhoto)}
-                className="mt-6 text-[14px] font-semibold text-rose-400"
+                disabled={busyAction === 'deletePhoto'}
+                onClick={() => runBusy('deletePhoto', () => deleteProgressPhoto(viewingPhoto))}
+                className="mt-6 text-[14px] font-semibold text-rose-400 disabled:opacity-50"
               >
-                Delete photo
+                {busyAction === 'deletePhoto' ? 'Deleting…' : 'Delete photo'}
               </button>
             ) : (
               <button
-                onClick={async () => {
-                  await saveNoteForDate(viewingPhoto.local_date, '')
-                  setViewingPhoto(null)
-                }}
-                className="mt-6 text-[14px] font-semibold text-rose-400"
+                disabled={busyAction === 'deleteNote'}
+                onClick={() =>
+                  runBusy('deleteNote', async () => {
+                    await saveNoteForDate(viewingPhoto.local_date, '')
+                    setViewingPhoto(null)
+                  })
+                }
+                className="mt-6 text-[14px] font-semibold text-rose-400 disabled:opacity-50"
               >
-                Delete note
+                {busyAction === 'deleteNote' ? 'Deleting…' : 'Delete note'}
               </button>
             )}
 
@@ -6013,6 +8287,14 @@ if (screen === 'progressPhotos') {
             Your daily skincare routine tracker.
           </p>
         </div>
+
+        {hasPendingInvite && (
+          <div className="mb-5 w-full rounded-2xl border border-[#2554EB]/20 bg-[#2554EB]/5 px-4 py-3.5">
+            <p className="text-[14px] leading-relaxed text-[#101B2D]">
+              You've been invited to connect with a professional. Log in or create an account to accept.
+            </p>
+          </div>
+        )}
 
         <button
           onClick={() => setScreen('auth')}
