@@ -6486,6 +6486,14 @@ if (screen === 'practitionerDashboard') {
           >
             Edit your profile
           </button>
+
+          <button
+            type="button"
+            onClick={() => setScreen('today')}
+            className={`mt-4 w-full rounded-2xl border px-4 py-3 text-left text-[14px] font-semibold ${t.hair} ${t.muted}`}
+          >
+            My Today screen
+          </button>
         </div>
 
         <button
