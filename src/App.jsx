@@ -595,17 +595,26 @@ setRoutineHistory(groupedRoutines)
 
         const isRecovery = window.location.search.includes('recovery=true')
 
-        const [{ data: profile, error }, { data: existingSkinProfile }] = await Promise.all([
+        const [{ data: profile, error }, { data: existingSkinProfile }, { data: practitionerRow }] = await Promise.all([
           supabase.from('profiles').select('username, onboarding_completed').eq('id', user.id).maybeSingle(),
           // New users land on the skin profile step until they've filled
           // it in at least once; after that, straight to Today.
           isRecovery
             ? Promise.resolve({ data: null })
             : supabase.from('skin_profiles').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
+          isRecovery
+            ? Promise.resolve({ data: null })
+            : supabase.from('practitioners').select('verified_at').eq('user_id', user.id).maybeSingle(),
         ])
 
         if (!isRecovery) {
-          setScreen(existingSkinProfile ? 'today' : 'skinProfile')
+          // Verified practitioners don't track their own routine — they
+          // have no reason to ever see Today, so skip it entirely.
+          setScreen(
+            practitionerRow?.verified_at
+              ? 'practitionerDashboard'
+              : existingSkinProfile ? 'today' : 'skinProfile'
+          )
         }
 
         if (error) {
@@ -4278,6 +4287,7 @@ if (screen === 'admin') {
               if (!confirmed) return
               await supabase.auth.signOut()
               setUser(null)
+              setPractitionerStatus(null)
               setScreen('welcome')
             }}
             className={`rounded-2xl border px-4 py-2.5 text-[13px] font-semibold ${t.hair} ${t.muted}`}
@@ -4778,14 +4788,18 @@ if (screen === 'login') {
 
                 // New users land on the skin profile step until they've
                 // filled it in at least once; after that, straight to Today.
-                const { data: existingSkinProfile } = await supabase
-                  .from('skin_profiles')
-                  .select('id')
-                  .eq('user_id', data.user.id)
-                  .limit(1)
-                  .maybeSingle()
+                // Verified practitioners skip both — they have no routine
+                // of their own to track and go straight to their dashboard.
+                const [{ data: existingSkinProfile }, { data: practitionerRow }] = await Promise.all([
+                  supabase.from('skin_profiles').select('id').eq('user_id', data.user.id).limit(1).maybeSingle(),
+                  supabase.from('practitioners').select('verified_at').eq('user_id', data.user.id).maybeSingle(),
+                ])
 
-                setScreen(existingSkinProfile ? 'today' : 'skinProfile')
+                setScreen(
+                  practitionerRow?.verified_at
+                    ? 'practitionerDashboard'
+                    : existingSkinProfile ? 'today' : 'skinProfile'
+                )
               })
             }
             className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
@@ -4967,11 +4981,10 @@ if (screen === 'resetPassword') {
                 setConfirmNewPassword('')
                 setUser(data.user)
 
-                const { data: profile, error: profileError } = await supabase
-                  .from('profiles')
-                  .select('username')
-                  .eq('id', data.user.id)
-                  .maybeSingle()
+                const [{ data: profile, error: profileError }, { data: practitionerRow }] = await Promise.all([
+                  supabase.from('profiles').select('username').eq('id', data.user.id).maybeSingle(),
+                  supabase.from('practitioners').select('verified_at').eq('user_id', data.user.id).maybeSingle(),
+                ])
 
                 setDisplayName(
                   profileError || !profile?.username
@@ -4981,7 +4994,7 @@ if (screen === 'resetPassword') {
 
                 window.history.replaceState({}, '', window.location.pathname)
                 notify('Your password has been updated.', 'success')
-                setScreen('today')
+                setScreen(practitionerRow?.verified_at ? 'practitionerDashboard' : 'today')
               })
             }
             className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
@@ -5002,7 +5015,7 @@ if (screen === 'settings') {
 
         <div className="flex items-center justify-between">
           <button
-            onClick={() => setScreen('today')}
+            onClick={() => setScreen(practitionerStatus === 'verified' ? 'practitionerDashboard' : 'today')}
             className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -5010,7 +5023,7 @@ if (screen === 'settings') {
               strokeLinecap="round" strokeLinejoin="round">
               <path d="M15 5l-7 7 7 7" />
             </svg>
-            Today
+            {practitionerStatus === 'verified' ? 'Dashboard' : 'Today'}
           </button>
 
           <span className={`text-[15px] font-semibold tracking-wide ${t.mark}`}>
@@ -5221,6 +5234,10 @@ if (screen === 'settings') {
             setTodayPmSteps([])
             setCompletedSteps([])
             setProgressCompletions([])
+            // Otherwise a stale 'verified' lingers if a different account
+            // logs in next on the same device, sending a plain client
+            // straight to someone else's practitioner dashboard.
+            setPractitionerStatus(null)
             setScreen('welcome')
           }}
           className={`mt-4 w-full rounded-2xl border px-5 py-4 text-left text-[15px] font-semibold ${t.hair} ${t.danger}`}
@@ -5230,7 +5247,7 @@ if (screen === 'settings') {
 
       </div>
 
-      {renderBottomTabs('settings', t)}
+      {practitionerStatus !== 'verified' && renderBottomTabs('settings', t)}
     </main>
   )
 }
