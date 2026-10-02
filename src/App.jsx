@@ -5083,7 +5083,7 @@ if (screen === 'settings') {
 
         <div className="flex items-center justify-between">
           <button
-            onClick={() => setScreen(practitionerStatus === 'verified' ? 'practitionerDashboard' : 'today')}
+            onClick={() => setScreen(practitionerStatus === 'verified' && practitionersLaunched ? 'practitionerDashboard' : 'today')}
             className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -5091,7 +5091,7 @@ if (screen === 'settings') {
               strokeLinecap="round" strokeLinejoin="round">
               <path d="M15 5l-7 7 7 7" />
             </svg>
-            {practitionerStatus === 'verified' ? 'Dashboard' : 'Today'}
+            {practitionerStatus === 'verified' && practitionersLaunched ? 'Dashboard' : 'Today'}
           </button>
 
           <span className={`text-[15px] font-semibold tracking-wide ${t.mark}`}>
@@ -5167,8 +5167,29 @@ if (screen === 'settings') {
               <path d="M9 5l7 7-7 7" />
             </svg>
           </button>
+
+          <button
+            onClick={() => setScreen('notifications')}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            <span>
+              Notifications
+              {(pendingRecommendations.length + careRelationships.filter((r) => r.status === 'invited').length) > 0 && (
+                <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
+                  {pendingRecommendations.length + careRelationships.filter((r) => r.status === 'invited').length}
+                </span>
+              )}
+            </span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
         </div>
 
+        {practitionersLaunched && (
+          <>
         <p className={`mb-2 mt-6 px-1 text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
           Professional care
         </p>
@@ -5200,25 +5221,6 @@ if (screen === 'settings') {
               </svg>
             </button>
           )}
-
-          <button
-            onClick={() => setScreen('notifications')}
-            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
-          >
-            <span>
-              Notifications
-              {(pendingRecommendations.length + careRelationships.filter((r) => r.status === 'invited').length) > 0 && (
-                <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
-                  {pendingRecommendations.length + careRelationships.filter((r) => r.status === 'invited').length}
-                </span>
-              )}
-            </span>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
-              <path d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
 
           {practitionerStatus !== 'verified' && practitionersLaunched && (
             <button
@@ -5255,6 +5257,8 @@ if (screen === 'settings') {
             </button>
           )}
         </div>
+          </>
+        )}
 
         <p className={`mb-2 mt-6 px-1 text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
           Preferences
