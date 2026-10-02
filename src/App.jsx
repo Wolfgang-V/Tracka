@@ -5,6 +5,7 @@ import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
 import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
+import { calculateRoutineCompletion, calculateStreaks } from './lib/core/skinReport'
 import { generateStreakImage, generateSkinReportImage, isMilestoneStreak } from './lib/shareImage'
 import { flameColorForStreak, FLAME_PATH, lighten, darken } from './lib/core/flameColor'
 const VAPID_PUBLIC_KEY =
@@ -14,6 +15,15 @@ const VAPID_PUBLIC_KEY =
 // resolves alongside the custom domain, so a signup or password reset
 // started from there would otherwise bake that domain into the email link.
 const SITE_URL = 'https://www.trackaplus.app'
+const DAILY_SKIN_TIPS = [
+  ['Did you know?', 'SPF mainly measures protection against UVB, while broad-spectrum sunscreens also protect against UVA.'],
+  ['Skin tip of the day', 'Broad-spectrum sunscreen protects against both UVA and UVB radiation.'],
+  ['Did you know?', "A product's PAO symbol tells you how long it's intended to be used after opening."],
+  ['Skin tip of the day', 'Leave active cleansers on your skin for 1-2 minutes before rinsing.'],
+  ['Did you know?', "The order of your skincare can affect how products are layered, but you don't need a complicated 10-step routine."],
+  ['Did you know?', 'Higher concentration does not automatically mean better results.'],
+  ['Skin tip of the day', 'Wash your face for 30-60 seconds before rinsing.'],
+]
 
 // This is a UX shortcut, not the security boundary — the real enforcement
 // is server-side, in admin_list_users() checking the caller's email
@@ -457,7 +467,6 @@ setRoutineHistory(groupedRoutines)
   const [dayDetailLoading, setDayDetailLoading] = useState(false)
   const [progressMonthOffset, setProgressMonthOffset] = useState(0)
   const [skinLogs, setSkinLogs] = useState([])
-  const todayNoteRef = useRef(null)
   const [monthlyReport, setMonthlyReport] = useState(null)
   const [monthlyReportLoading, setMonthlyReportLoading] = useState(false)
   const [reportMonthOffset, setReportMonthOffset] = useState(0)
@@ -468,6 +477,8 @@ setRoutineHistory(groupedRoutines)
   const [pendingPhoto, setPendingPhoto] = useState(null)
   const [comparePhotos, setComparePhotos] = useState([])
   const [viewingPhoto, setViewingPhoto] = useState(null)
+  const [viewingPhotoNote, setViewingPhotoNote] = useState('')
+  const diaryTouchStartRef = useRef(null)
 
   useEffect(() => {
     // These three only need a user id, not a fresh session lookup — each
@@ -530,7 +541,7 @@ setRoutineHistory(groupedRoutines)
 
       const { data, error } = await supabase
         .from('routine_completions')
-        .select('completed_date, completed_at')
+        .select('completed_date, completed_at, time_of_day')
         .eq('user_id', userId)
         .order('completed_date', { ascending: true })
 
@@ -612,12 +623,8 @@ setRoutineHistory(groupedRoutines)
         ])
 
         if (!isRecovery) {
-          // Verified practitioners don't track their own routine — they
-          // have no reason to ever see Today, so skip it entirely.
           setScreen(
-            practitionerRow?.verified_at
-              ? 'practitionerDashboard'
-              : existingSkinProfile ? 'today' : 'skinProfile'
+            existingSkinProfile || practitionerRow?.verified_at ? 'today' : 'skinProfile'
           )
         }
 
@@ -824,7 +831,7 @@ const loadDayDetails = async (date) => {
 const loadSkinLogs = async () => {
   if (!user) return
 
-  // No date floor — notes now live here too, and the Progress Photos
+  // No date floor — notes now live here too, and the Skin diary
   // timeline shows them the same way it shows photos, which also aren't
   // capped to the last 30 days.
   const { data, error } = await supabase
@@ -858,13 +865,15 @@ const loadMonthlyReport = async (monthOffset = 0) => {
   // the progressCompletions/progressPhotos state — those only get loaded
   // once their own screens have been visited this session, so relying on
   // them here would show 0s for anyone who opens Skin reports (or Today,
-  // where the report also loads) before ever visiting Progress Photos.
+  // where the report also loads) before ever visiting the Skin diary.
   // Upper-bounded with firstOfNextMonth too (not just gte firstOfMonth) —
   // viewing a past month otherwise swept in everything from that month
   // through today, since there was previously no reason to cap it (the
   // report only ever showed the current month, where "today" already is
   // the cap).
-  const [{ data, error }, { data: completions, error: completionsError }, { count: photosAdded, error: photosError }] =
+  const reportEndDate = isCurrentMonth ? addDays(todayString, 1) : firstOfNextMonth
+  const historyStartDate = addDays(firstOfMonth, -7)
+  const [{ data, error }, { data: completions, error: completionsError }, { count: photosAdded, error: photosError }, { data: routines, error: routinesError }, { data: history, error: historyError }] =
     await Promise.all([
       supabase
         .from('routine_step_completions')
@@ -877,21 +886,49 @@ const loadMonthlyReport = async (monthOffset = 0) => {
         `)
         .eq('user_id', user.id)
         .gte('local_date', firstOfMonth)
-        .lt('local_date', firstOfNextMonth),
+        .lt('local_date', reportEndDate),
       supabase
         .from('routine_completions')
-        .select('completed_date')
+        .select('completed_date, time_of_day')
         .eq('user_id', user.id),
       supabase
         .from('progress_photos')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', user.id)
         .gte('local_date', firstOfMonth)
-        .lt('local_date', firstOfNextMonth),
+        .lt('local_date', reportEndDate),
+      supabase
+        .from('routines')
+        .select(`
+          id,
+          time_of_day,
+          routine_steps (
+            id,
+            step_name,
+            step_order,
+            frequency,
+            days_of_week,
+            is_active,
+            user_products (
+              opened_date,
+              pao_months,
+              products ( brand, name, category, ingredients )
+            )
+          )
+        `)
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .eq('routine_steps.is_active', true),
+      supabase
+        .from('routine_step_completions')
+        .select('routine_step_id, local_date')
+        .eq('user_id', user.id)
+        .gte('local_date', historyStartDate)
+        .lt('local_date', reportEndDate),
     ])
 
-  if (error || completionsError || photosError) {
-    console.error('MONTHLY REPORT ERROR:', error || completionsError || photosError)
+  if (error || completionsError || photosError || routinesError || historyError) {
+    console.error('MONTHLY REPORT ERROR:', error || completionsError || photosError || routinesError || historyError)
     setMonthlyReportLoading(false)
     return
   }
@@ -908,50 +945,31 @@ const loadMonthlyReport = async (monthOffset = 0) => {
     rows.map((r) => r.routine_steps.user_products?.product_id).filter(Boolean)
   )
 
-  const amDays = new Set(
-    rows.filter((r) => r.routine_steps.routines?.time_of_day === 'AM').map((r) => r.local_date)
+  const completion = calculateRoutineCompletion({
+    routines: routines || [],
+    history: history || [],
+    completions: completions || [],
+    startDate: firstOfMonth,
+    endDate: reportEndDate,
+    restrictions,
+  })
+  const streaks = calculateStreaks(
+    (completions || [])
+      .filter((entry) => entry.time_of_day === 'PM' || !entry.time_of_day)
+      .map((entry) => entry.completed_date),
+    todayString,
+    firstOfMonth,
+    reportEndDate
   )
-  const pmDays = new Set(
-    rows.filter((r) => r.routine_steps.routines?.time_of_day === 'PM').map((r) => r.local_date)
-  )
-
-  const amVsPm =
-    amDays.size === 0 && pmDays.size === 0
-      ? '—'
-      : Math.abs(amDays.size - pmDays.size) <= 2
-        ? 'Both'
-        : amDays.size > pmDays.size
-          ? 'AM'
-          : 'PM'
-
-  const daysElapsed = isCurrentMonth ? now.getDate() : daysInDisplayedMonth
-  const completionsThisMonth = (completions || []).filter(
-    (c) => c.completed_date >= firstOfMonth && c.completed_date < firstOfNextMonth
-  ).length
-  const routineCompletionPct = daysElapsed > 0 ? Math.round((completionsThisMonth / daysElapsed) * 100) : 0
-
-  // Longest streak is all-time, not scoped to this month — the point is
-  // "your record", not "your record so far in September".
-  const allDates = new Set((completions || []).map((c) => c.completed_date))
-  const sortedDates = [...allDates].sort()
-  let longest = 0
-  let run = 0
-  let prevDate = null
-  for (const d of sortedDates) {
-    run = prevDate && addDays(prevDate, 1) === d ? run + 1 : 1
-    longest = Math.max(longest, run)
-    prevDate = d
-  }
 
   setMonthlyReport({
     monthLabel: displayed.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
     isCurrentMonth,
-    routineCompletionPct,
+    routineCompletionPct: completion.percentage,
     sunscreenDays,
     productsUsed: productIds.size,
-    currentStreak,
-    longestStreak: longest,
-    amVsPm,
+    currentStreak: streaks.current,
+    longestStreak: streaks.longest,
     photosAdded: photosAdded || 0,
   })
   setMonthlyReportLoading(false)
@@ -984,8 +1002,8 @@ const loadProgressPhotos = async () => {
   setPhotoUrls(Object.fromEntries(signedEntries))
 }
 
-const uploadProgressPhoto = async (file, localDate) => {
-  if (!file) return
+const uploadProgressPhoto = async (file, localDate, note = '') => {
+  if (!file) return false
 
   setPhotoError(null)
   setPhotoUploading(true)
@@ -995,14 +1013,14 @@ const uploadProgressPhoto = async (file, localDate) => {
   if (sessionError) {
     setPhotoError("Couldn't reach the server. Check your connection and try again.")
     setPhotoUploading(false)
-    return
+    return false
   }
 
   if (!session?.user) {
     setPhotoError('Your session ended. Please log in again.')
     setPhotoUploading(false)
     setScreen('login')
-    return
+    return false
   }
 
   const ext = file.name.split('.').pop() || 'jpg'
@@ -1016,24 +1034,26 @@ const uploadProgressPhoto = async (file, localDate) => {
     console.error('PHOTO UPLOAD ERROR:', uploadError)
     setPhotoError("Couldn't upload that photo. Try again.")
     setPhotoUploading(false)
-    return
+    return false
   }
 
   const { error: insertError } = await supabase.from('progress_photos').insert({
     user_id: session.user.id,
     path,
     local_date: localDate || localDateString(),
+    note: note.trim() || null,
   })
 
   if (insertError) {
     console.error('PHOTO ROW ERROR:', insertError)
     setPhotoError("Couldn't save that photo. Try again.")
     setPhotoUploading(false)
-    return
+    return false
   }
 
   setPhotoUploading(false)
   await loadProgressPhotos()
+  return true
 }
 
 const deleteProgressPhoto = async (photo) => {
@@ -1066,24 +1086,21 @@ const saveProgressPhotoNote = async (photo, note) => {
 
   if (error) {
     console.error('PHOTO NOTE ERROR:', error)
-    // The textarea this is called from is uncontrolled (defaultValue), so
-    // without this the typed text just sits there looking saved — closing
-    // and reopening the photo would silently revert to the old note.
     notify("That note didn't save. Try again.")
-    return
+    return false
   }
 
   setProgressPhotos((photos) => photos.map((p) => (p.id === photo.id ? { ...p, note } : p)))
-  setViewingPhoto((v) => (v ? { ...v, note } : v))
+  setViewingPhotoNote(note)
+  notify('Diary entry saved.', 'success')
+  return true
 }
 
-// Shared by the Today page's "Daily notes" box (always today's date) and
-// the Progress Photos journey viewer (an arbitrary past date, since a
-// note-only entry there can be edited or cleared after the fact).
+// Saves a diary note on the selected date when an entry has no photo.
 const saveNoteForDate = async (date, note) => {
   if (!user) {
     notify('Please log in again.')
-    return
+    return false
   }
 
   const { error } = await supabase.from('skin_logs').upsert(
@@ -1099,7 +1116,7 @@ const saveNoteForDate = async (date, note) => {
   if (error) {
     console.error('SKIN NOTE SAVE ERROR:', error)
     notify("That note didn't save. Try again.")
-    return
+    return false
   }
 
   setSkinLogs((logs) =>
@@ -1109,36 +1126,33 @@ const saveNoteForDate = async (date, note) => {
   )
 
   notify('Note saved.', 'success')
+  return true
 }
-
-const saveTodayNote = (note) => saveNoteForDate(localDateString(), note)
 
 // Only the night routine counts toward the streak and lights up the
 // calendar — the morning button just confirms and moves on, since a
 // skincare "day" isn't done until the night steps are actually done.
 const finishRoutine = async (slot) => {
-  if (slot === 'PM') {
-    const today = localDateString()
+  const today = localDateString()
 
-    const { error } = await supabase
-      .from('routine_completions')
-      .upsert(
-        { user_id: user.id, completed_date: today },
-        { onConflict: 'user_id,completed_date' }
-      )
-
-    if (error) {
-      console.error('FINISH ROUTINE ERROR:', error)
-      notify('That didn\'t save. Check your connection and try again.')
-      return
-    }
-
-    setProgressCompletions((current) =>
-      current.some((item) => item.completed_date === today)
-        ? current
-        : [...current, { completed_date: today, completed_at: new Date().toISOString() }]
+  const { error } = await supabase
+    .from('routine_completions')
+    .upsert(
+      { user_id: user.id, completed_date: today, time_of_day: slot },
+      { onConflict: 'user_id,completed_date,time_of_day' }
     )
+
+  if (error) {
+    console.error('FINISH ROUTINE ERROR:', error)
+    notify('That didn\'t save. Check your connection and try again.')
+    return
   }
+
+  setProgressCompletions((current) =>
+    current.some((item) => item.completed_date === today && item.time_of_day === slot)
+      ? current
+      : [...current, { completed_date: today, time_of_day: slot, completed_at: new Date().toISOString() }]
+  )
 
   setLastCompletedSlot(slot)
   setScreen('completed')
@@ -1213,7 +1227,7 @@ const inviteFriend = async () => {
     // emails: the old vercel.app URL still resolves, so sharing whatever
     // domain the tab happened to be on would leak that instead of the
     // custom domain.
-    text: 'I track my skincare routine with Tracka+ — join me.',
+    text: 'I track my skincare routine with tracka+. Want to stay consistent too? Join me',
     url: SITE_URL,
   }
 
@@ -1227,7 +1241,7 @@ const inviteFriend = async () => {
   }
 
   if (navigator.clipboard) {
-    await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`)
+    await navigator.clipboard.writeText(`${shareData.text}\n${shareData.url}`)
     notify('Invite link copied — paste it anywhere.', 'success')
   } else {
     notify(shareData.url, 'success')
@@ -1386,6 +1400,8 @@ const shareSkinReport = async () => {
 }
 
 const todayString = localDateString()
+const tipDay = Math.floor(Date.parse(`${todayString}T00:00:00Z`) / 86400000)
+const dailySkinTip = DAILY_SKIN_TIPS[((tipDay % DAILY_SKIN_TIPS.length) + DAILY_SKIN_TIPS.length) % DAILY_SKIN_TIPS.length]
 
 const nightPlan = planNight({
   today: todayString,
@@ -1555,24 +1571,12 @@ const renderBottomTabs = (activeScreen, palette) => (
 
 const completedDates = new Set(
   progressCompletions
+    .filter((item) => item.time_of_day === 'PM' || !item.time_of_day)
     .map((item) => item.completed_date)
     .filter(Boolean)
 )
 
-let currentStreak = 0
-let cursor = completedDates.has(todayString) ? todayString : addDays(todayString, -1)
-
-while (completedDates.has(cursor)) {
-  currentStreak += 1
-  cursor = addDays(cursor, -1)
-}
-
-const todaySkinLog = skinLogs.find((log) => log.local_date === todayString) || {
-  breakouts: 0,
-  dryness: 0,
-  oiliness: 0,
-  redness: 0,
-}
+const currentStreak = calculateStreaks([...completedDates], todayString, '', '').current
 
 const getPaoStatus = (item) => {
   // Sunscreen past its date isn't just inert like a serum would be — it
@@ -1629,6 +1633,10 @@ const getPaoStatus = (item) => {
 const guessCategory = (text) => {
   const lower = (text || '').toLowerCase()
 
+  if (lower.includes('body wash') || lower.includes('shower gel')) return 'body_wash'
+  if (lower.includes('body moisturizer') || lower.includes('body moisturiser') || lower.includes('body lotion')) return 'body_moisturizer'
+  if (lower.includes('body oil')) return 'body_oil'
+  if (lower.includes('body scrub')) return 'body_scrub'
   if (lower.includes('cleans') || lower.includes('wash') || lower.includes('nettoy')) return 'cleanser'
   if (lower.includes('toner') || lower.includes('tonique')) return 'toner'
   if (lower.includes('essence')) return 'essence'
@@ -2608,6 +2616,7 @@ const saveReminderSettings = async () => {
   }
 
   notify('Reminder settings saved.', 'success')
+  setScreen('today')
 }
 
 const CARE_SCOPES = [
@@ -2915,7 +2924,7 @@ const cancelInvitation = async (token) => {
 const shareClientInviteLink = async (link) => {
   const shareData = {
     title: 'Tracka+',
-    text: "I'd like to set up your skincare routine on Tracka+ — tap to get started:",
+    text: 'I track my skincare routine with tracka+. Want to stay consistent too? Join me',
     url: link,
   }
 
@@ -2929,7 +2938,7 @@ const shareClientInviteLink = async (link) => {
   }
 
   if (navigator.clipboard) {
-    await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`)
+    await navigator.clipboard.writeText(`${shareData.text}\n${shareData.url}`)
     notify('Invite link copied — paste it anywhere.', 'success')
   } else {
     notify(shareData.url, 'success')
@@ -3141,7 +3150,7 @@ const submitRecommendation = async () => {
               {[
                 ['My progress', 'progress'],
                 ['Skin reports', 'skinTrends'],
-                ['Progress photos', 'progressPhotos'],
+                ['Skin diary', 'progressPhotos'],
               ].map(([label, target]) => (
                 <button
                   key={target}
@@ -3871,6 +3880,10 @@ const submitRecommendation = async () => {
                 <option value="serum">Serum</option>
                 <option value="treatment">Treatment</option>
                 <option value="moisturizer">Moisturizer</option>
+                <option value="body_wash">Body wash</option>
+                <option value="body_moisturizer">Body moisturizer</option>
+                <option value="body_oil">Body oil</option>
+                <option value="body_scrub">Body scrub</option>
                 <option value="sunscreen">Sunscreen</option>
                 <option value="exfoliant">Exfoliant</option>
                 <option value="mask">Mask</option>
@@ -4846,20 +4859,14 @@ if (screen === 'login') {
                   setOnboardingCompleted(profile.onboarding_completed !== false)
                 }
 
-                // New users land on the skin profile step until they've
-                // filled it in at least once; after that, straight to Today.
-                // Verified practitioners skip both — they have no routine
-                // of their own to track and go straight to their dashboard.
+                // Existing clients and verified professionals land on Today;
+                // new clients complete their profile first.
                 const [{ data: existingSkinProfile }, { data: practitionerRow }] = await Promise.all([
                   supabase.from('skin_profiles').select('id').eq('user_id', data.user.id).limit(1).maybeSingle(),
                   supabase.from('practitioners').select('verified_at').eq('user_id', data.user.id).maybeSingle(),
                 ])
 
-                setScreen(
-                  practitionerRow?.verified_at
-                    ? 'practitionerDashboard'
-                    : existingSkinProfile ? 'today' : 'skinProfile'
-                )
+                setScreen(existingSkinProfile || practitionerRow?.verified_at ? 'today' : 'skinProfile')
               })
             }
             className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
@@ -5041,10 +5048,11 @@ if (screen === 'resetPassword') {
                 setConfirmNewPassword('')
                 setUser(data.user)
 
-                const [{ data: profile, error: profileError }, { data: practitionerRow }] = await Promise.all([
-                  supabase.from('profiles').select('username').eq('id', data.user.id).maybeSingle(),
-                  supabase.from('practitioners').select('verified_at').eq('user_id', data.user.id).maybeSingle(),
-                ])
+                const { data: profile, error: profileError } = await supabase
+                  .from('profiles')
+                  .select('username')
+                  .eq('id', data.user.id)
+                  .maybeSingle()
 
                 setDisplayName(
                   profileError || !profile?.username
@@ -5054,7 +5062,7 @@ if (screen === 'resetPassword') {
 
                 window.history.replaceState({}, '', window.location.pathname)
                 notify('Your password has been updated.', 'success')
-                setScreen(practitionerRow?.verified_at ? 'practitionerDashboard' : 'today')
+                setScreen('today')
               })
             }
             className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
@@ -5179,17 +5187,19 @@ if (screen === 'settings') {
             </button>
           )}
 
-          <button
-            onClick={() => setScreen('careTeam')}
-            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
-          >
-            Care team
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
-              <path d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
+          {practitionersLaunched && (
+            <button
+              onClick={() => setScreen('careTeam')}
+              className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+            >
+              Care team
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
 
           <button
             onClick={() => setScreen('notifications')}
@@ -5210,7 +5220,7 @@ if (screen === 'settings') {
             </svg>
           </button>
 
-          {practitionerStatus !== 'verified' && (practitionersLaunched || practitionerStatus === 'pending') && (
+          {practitionerStatus !== 'verified' && practitionersLaunched && (
             <button
               onClick={() => setScreen('applyPractitioner')}
               className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
@@ -7127,6 +7137,10 @@ if (screen === 'composeRecommendation') {
               <option value="serum">Serum</option>
               <option value="treatment">Treatment</option>
               <option value="moisturizer">Moisturizer</option>
+              <option value="body_wash">Body wash</option>
+              <option value="body_moisturizer">Body moisturizer</option>
+              <option value="body_oil">Body oil</option>
+              <option value="body_scrub">Body scrub</option>
               <option value="sunscreen">Sunscreen</option>
               <option value="exfoliant">Exfoliant</option>
               <option value="mask">Mask</option>
@@ -7407,7 +7421,7 @@ if (screen === 'today') {
                   ['My routine', 'routinePlanner'],
                   ['My progress', 'progress'],
                   ['Skin reports', 'skinTrends'],
-                  ['Progress photos', 'progressPhotos'],
+                  ['Skin diary', 'progressPhotos'],
                 ].map(([label, target]) => (
                   <button
                     key={target}
@@ -7543,8 +7557,8 @@ if (screen === 'today') {
 
               <button
                 onClick={() => {
-                  if (amSteps.length > 0 && amDone === 0) {
-                    notify('Tick off at least one step first.')
+                  if (amSteps.length === 0 || amDone < amSteps.length) {
+                    notify(amSteps.length === 0 ? 'Nothing is scheduled for this routine today.' : 'Complete every scheduled step first.')
                     return
                   }
                   finishRoutine('AM')
@@ -7637,8 +7651,8 @@ if (screen === 'today') {
 
               <button
                 onClick={() => {
-                  if (pmSteps.length > 0 && pmDone === 0) {
-                    notify('Tick off at least one step first.')
+                  if (pmSteps.length === 0 || pmDone < pmSteps.length) {
+                    notify(pmSteps.length === 0 ? 'Nothing is scheduled for this routine today.' : 'Complete every scheduled step first.')
                     return
                   }
                   finishRoutine('PM')
@@ -7652,41 +7666,24 @@ if (screen === 'today') {
 
         <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
           <h2 className={`text-[15px] font-semibold ${t.text}`}>
-            Daily notes
+            Skin diary log
           </h2>
 
           <p className={`mt-1 text-[13px] ${t.muted}`}>
-            How's your skin today? Jot anything worth remembering.
+            How are you feeling today?
           </p>
-
-          <textarea
-            key={todayString}
-            ref={todayNoteRef}
-            defaultValue={todaySkinLog.note || ''}
-            placeholder="You can talk about your day, skin, product or anything else"
-            rows={3}
-            className={`mt-4 w-full rounded-xl border ${t.hair} p-3 text-[14px] outline-none`}
-          />
-
-          <button
-            onClick={() => saveTodayNote(todayNoteRef.current?.value || '')}
-            className={`mt-3 w-full rounded-2xl py-3 text-[14px] font-bold ${t.btn}`}
-          >
-            Save note
-          </button>
 
           <button
             onClick={() => setScreen('progressPhotos')}
-            className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted}`}
+            className={`mt-4 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-[14px] font-bold ${t.btn}`}
           >
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 8a2 2 0 0 1 2-2h1.2l.8-1.6A1 1 0 0 1 8.9 4h6.2a1 1 0 0 1 .9.6L16.8 6H18a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" />
-              <circle cx="12" cy="13" r="3.5" />
-            </svg>
-            Selfie check-in
+            Log skin diary
           </button>
+        </div>
+
+        <div className={`mt-4 rounded-3xl border ${t.hair} p-5`}>
+          <p className={`text-[11px] font-semibold uppercase ${t.mark}`}>{dailySkinTip[0]}</p>
+          <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>{dailySkinTip[1]}</p>
         </div>
 
         {monthlyReport && (
@@ -8671,7 +8668,6 @@ if (screen === 'skinTrends') {
         ['Products used', String(report.productsUsed)],
         ['Current streak', `${report.currentStreak} ${report.currentStreak === 1 ? 'day' : 'days'}`],
         ['Longest streak', `${report.longestStreak} ${report.longestStreak === 1 ? 'day' : 'days'}`],
-        ['AM vs PM consistency', report.amVsPm],
         ['Progress photos added', String(report.photosAdded)],
       ]
     : []
@@ -8818,6 +8814,16 @@ if (screen === 'progressPhotos') {
   const journeyEntries = [...journeyByDate.values()].sort((a, b) =>
     b.local_date.localeCompare(a.local_date)
   )
+  const viewingEntryIndex = journeyEntries.findIndex((entry) => entry.local_date === viewingPhoto?.local_date)
+  const openJourneyEntry = (entry) => {
+    setPhotoError(null)
+    setViewingPhoto(entry)
+    setViewingPhotoNote(entry.hasPhoto ? entry.note || entry.diaryNote || '' : entry.diaryNote || '')
+  }
+  const moveJourneyEntry = (offset) => {
+    const entry = journeyEntries[viewingEntryIndex + offset]
+    if (entry) openJourneyEntry(entry)
+  }
 
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -8837,11 +8843,11 @@ if (screen === 'progressPhotos') {
 
         <div className="mt-5">
           <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Progress photos
+            Skin diary
           </h1>
 
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Capture your skin over time and compare how far you've come.
+            Document your skin journey and see your progress over time.
           </p>
         </div>
 
@@ -8851,7 +8857,7 @@ if (screen === 'progressPhotos') {
               <path d="M4 8a2 2 0 0 1 2-2h1.2l.8-1.6A1 1 0 0 1 8.9 4h6.2a1 1 0 0 1 .9.6L16.8 6H18a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" />
               <circle cx="12" cy="13" r="3.5" />
             </svg>
-            Take a photo
+            Take selfie
             <input
               type="file"
               accept="image/*"
@@ -8860,7 +8866,7 @@ if (screen === 'progressPhotos') {
               onChange={(e) => {
                 const file = e.target.files?.[0]
                 if (!file) return
-                setPendingPhoto({ file, previewUrl: URL.createObjectURL(file), date: localDateString() })
+                setPendingPhoto({ file, previewUrl: URL.createObjectURL(file), date: localDateString(), note: '' })
                 e.target.value = ''
               }}
             />
@@ -8872,7 +8878,7 @@ if (screen === 'progressPhotos') {
               <path d="M3 16l4.5-4.5a2 2 0 0 1 2.8 0L15 16M14 15l1.5-1.5a2 2 0 0 1 2.8 0L21 16" />
               <circle cx="8" cy="9" r="1.4" />
             </svg>
-            Choose from library
+            Upload from library
             <input
               type="file"
               accept="image/*"
@@ -8880,7 +8886,7 @@ if (screen === 'progressPhotos') {
               onChange={(e) => {
                 const file = e.target.files?.[0]
                 if (!file) return
-                setPendingPhoto({ file, previewUrl: URL.createObjectURL(file), date: localDateString() })
+                setPendingPhoto({ file, previewUrl: URL.createObjectURL(file), date: localDateString(), note: '' })
                 e.target.value = ''
               }}
             />
@@ -8902,6 +8908,15 @@ if (screen === 'progressPhotos') {
               className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-[14px] ${t.hair}`}
             />
 
+            <label className="mt-4 block text-[13px] font-semibold">Add notes</label>
+            <textarea
+              value={pendingPhoto.note}
+              onChange={(event) => setPendingPhoto((photo) => ({ ...photo, note: event.target.value }))}
+              placeholder="How are you feeling today?"
+              rows={3}
+              className={`mt-1.5 w-full rounded-xl border ${t.hair} p-3 text-[14px] outline-none`}
+            />
+
             <div className="mt-3 flex gap-2">
               <button
                 onClick={() => {
@@ -8915,9 +8930,11 @@ if (screen === 'progressPhotos') {
               <button
                 disabled={photoUploading}
                 onClick={async () => {
-                  await uploadProgressPhoto(pendingPhoto.file, pendingPhoto.date)
-                  URL.revokeObjectURL(pendingPhoto.previewUrl)
-                  setPendingPhoto(null)
+                  const saved = await uploadProgressPhoto(pendingPhoto.file, pendingPhoto.date, pendingPhoto.note)
+                  if (saved) {
+                    URL.revokeObjectURL(pendingPhoto.previewUrl)
+                    setPendingPhoto(null)
+                  }
                 }}
                 className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn} disabled:opacity-60`}
               >
@@ -8963,23 +8980,20 @@ if (screen === 'progressPhotos') {
           <div className="flex items-center justify-between">
             <h2 className="text-[15px] font-semibold">Your journey</h2>
             {progressPhotos.length > 0 && (
-              <p className={`text-[12px] ${t.faint}`}>Tap a photo to compare</p>
+                <p className={`text-[12px] ${t.faint}`}>Tap an entry to open it</p>
             )}
           </div>
 
           {journeyEntries.length === 0 ? (
             <p className={`mt-3 text-[13px] leading-relaxed ${t.muted}`}>
-              Nothing yet. Take a photo or add a note from Today to start tracking your skin's journey.
+              No entries yet. Take a selfie or upload a photo to start your skin diary.
             </p>
           ) : (
             <div className="mt-3 flex flex-col gap-2.5">
               {journeyEntries.map((entry) => (
                 <button
                   key={entry.local_date}
-                  onClick={() => {
-                    setPhotoError(null)
-                    setViewingPhoto(entry)
-                  }}
+                  onClick={() => openJourneyEntry(entry)}
                   className={`flex w-full items-start gap-3 rounded-2xl border ${t.hair} p-3 text-left`}
                 >
                   <div className="relative shrink-0">
@@ -9021,9 +9035,9 @@ if (screen === 'progressPhotos') {
                         weekday: 'short', day: 'numeric', month: 'short',
                       })}
                     </p>
-                    {entry.diaryNote && (
+                    {(entry.diaryNote || entry.note) && (
                       <p className="mt-0.5 truncate text-[13px] leading-snug">
-                        {entry.diaryNote}
+                        {entry.diaryNote || entry.note}
                       </p>
                     )}
                   </div>
@@ -9034,17 +9048,52 @@ if (screen === 'progressPhotos') {
         </div>
 
         {viewingPhoto && (
-          <div className="fixed inset-0 z-20 flex flex-col overflow-y-auto bg-black/90 px-6 py-8">
+          <div
+            className="fixed inset-0 z-20 flex flex-col overflow-y-auto bg-black/90 px-6 py-8"
+            onTouchStart={(event) => {
+              const touch = event.touches[0]
+              diaryTouchStartRef.current = { x: touch.clientX, y: touch.clientY }
+            }}
+            onTouchEnd={(event) => {
+              const start = diaryTouchStartRef.current
+              const touch = event.changedTouches[0]
+              diaryTouchStartRef.current = null
+              if (!start || Math.abs(touch.clientX - start.x) < 60 || Math.abs(touch.clientY - start.y) > Math.abs(touch.clientX - start.x)) return
+              moveJourneyEntry(touch.clientX < start.x ? 1 : -1)
+            }}
+          >
             <button
               onClick={() => setViewingPhoto(null)}
-              className="self-end text-[15px] font-semibold text-white"
+              className="self-end rounded-full bg-white/10 px-4 py-2 text-[14px] font-semibold text-white"
             >
               Close
             </button>
 
-            {viewingPhoto.hasPhoto && photoUrls[viewingPhoto.path] && (
-              <img src={photoUrls[viewingPhoto.path]} alt="" className="mt-4 max-h-[60vh] w-full rounded-2xl object-contain" />
-            )}
+            <div className="relative mt-4 flex min-h-[45vh] items-center justify-center">
+              {viewingPhoto.hasPhoto && photoUrls[viewingPhoto.path] ? (
+                <img src={photoUrls[viewingPhoto.path]} alt="Skin diary entry" className="max-h-[60vh] w-full object-contain" />
+              ) : (
+                <p className="text-[14px] text-white/70">Diary note</p>
+              )}
+              <button
+                type="button"
+                aria-label="Newer diary entry"
+                disabled={viewingEntryIndex <= 0}
+                onClick={() => moveJourneyEntry(-1)}
+                className="absolute left-0 flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white disabled:opacity-30"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                aria-label="Older diary entry"
+                disabled={viewingEntryIndex < 0 || viewingEntryIndex >= journeyEntries.length - 1}
+                onClick={() => moveJourneyEntry(1)}
+                className="absolute right-0 flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white disabled:opacity-30"
+              >
+                ›
+              </button>
+            </div>
 
             <p className="mt-4 text-center text-[14px] text-white/80">
               {new Date(viewingPhoto.local_date + 'T00:00:00').toLocaleDateString('en-GB', {
@@ -9052,18 +9101,32 @@ if (screen === 'progressPhotos') {
               })}
             </p>
 
-            <textarea
-              key={viewingPhoto.local_date}
-              defaultValue={(viewingPhoto.hasPhoto ? viewingPhoto.note : viewingPhoto.diaryNote) || ''}
-              onBlur={(e) =>
-                viewingPhoto.hasPhoto
-                  ? saveProgressPhotoNote(viewingPhoto, e.target.value)
-                  : saveNoteForDate(viewingPhoto.local_date, e.target.value)
-              }
-              placeholder="Add a note about your skin..."
-              rows={2}
-              className="mt-4 w-full rounded-xl border border-white/20 bg-white/10 p-3 text-[13px] text-white placeholder-white/50"
-            />
+            <div className="mt-auto pt-4">
+              <label htmlFor="diary-entry-note" className="text-[13px] font-semibold text-white">Add notes</label>
+              <textarea
+                id="diary-entry-note"
+                value={viewingPhotoNote}
+                onChange={(event) => setViewingPhotoNote(event.target.value)}
+                placeholder="How are you feeling today?"
+                rows={3}
+                className="mt-2 w-full rounded-xl border border-white/20 bg-white/10 p-3 text-[14px] text-white placeholder-white/50"
+              />
+              <button
+                type="button"
+                disabled={!!busyAction}
+                onClick={() => runBusy('saveDiaryNote', async () => {
+                  const saved = viewingPhoto.hasPhoto
+                    ? await saveProgressPhotoNote(viewingPhoto, viewingPhotoNote)
+                    : await saveNoteForDate(viewingPhoto.local_date, viewingPhotoNote)
+                  if (saved) {
+                    setViewingPhoto((entry) => entry ? { ...entry, note: viewingPhotoNote, diaryNote: viewingPhotoNote } : entry)
+                  }
+                })}
+                className={`mt-3 w-full rounded-xl px-4 py-3 text-[14px] font-bold disabled:opacity-50 ${t.btn}`}
+              >
+                {busyAction === 'saveDiaryNote' ? 'Saving…' : 'Save diary entry'}
+              </button>
+            </div>
 
             {viewingPhoto.hasPhoto ? (
               <button

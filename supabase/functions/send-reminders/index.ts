@@ -1,7 +1,7 @@
 // Runs every few minutes. Finds whoever is due a reminder in their own
 // timezone, works out what their routine actually is, and sends it.
 // Also checks four other things on the same tick: a ~30-minute follow-up
-// for a missed reminder, 3/7-day inactivity nudges, a once-only nudge for
+// for a missed reminder, 24/48-hour login inactivity nudges, a once-only nudge for
 // signups who never finished onboarding, and SPF reapply reminders every
 // 2h after sunscreen was ticked — no separate cron job needed for any of
 // them.
@@ -180,36 +180,30 @@ Deno.serve(async (req) => {
     }
   }
 
-  // --- 3-day / 7-day inactivity nudges ---
+  // --- 24-hour / 48-hour login inactivity nudges ---
 
-  const { data: inactive, error: inactiveError } = await supabase.rpc('due_inactivity_nudges')
+  const { data: inactive, error: inactiveError } = await supabase.rpc('due_login_nudges', { window_minutes: 6 })
 
   if (inactiveError) {
     diag.inactiveError = inactiveError.message
   } else {
-    diag.inactiveDueCount = inactive?.length ?? 0
+    diag.loginNudgesDueCount = inactive?.length ?? 0
 
     for (const row of inactive ?? []) {
-      const name = row.username ? `, ${row.username}` : ''
-      const payload = row.days_inactive === 3
-        ? {
-            title: `Hey${name} 👋`,
-            body: 'Your skincare routine misses you.',
-            url: '/',
-            tag: 'inactivity-3',
-          }
-        : {
-            title: `We haven't seen you in a while${name} 👀`,
-            body: 'Ready to get back on track?',
-            url: '/',
-            tag: 'inactivity-7',
-          }
+      const payload = {
+        title: 'Tracka+',
+        body: row.hours_since_login === 24
+          ? "Hey, where did you go? 👀 You haven't checked in with Tracka+ today"
+          : "You've been gone for 2 days. Ready to get back into your routine?",
+        url: '/',
+        tag: `login-inactivity-${row.hours_since_login}`,
+      }
 
       await sendPush(row.subscription, payload, row.user_id, dryRun, result, async () => {
-        await supabase.from('inactivity_nudge_log').insert({
+        await supabase.from('login_nudge_log').insert({
           user_id: row.user_id,
-          days_inactive: row.days_inactive,
-          last_completed_snapshot: row.last_completed,
+          hours_since_login: row.hours_since_login,
+          login_at: row.login_at,
         })
       })
     }

@@ -322,8 +322,7 @@ export async function generateStreakImage({ streak, routineLabel, dateLabel, pro
  * a list of numbers instead of a routine.
  *
  * @param report  { monthLabel, routineCompletionPct, sunscreenDays,
- *                  productsUsed, currentStreak, longestStreak, amVsPm,
- *                  photosAdded }
+ *                  productsUsed, currentStreak, longestStreak, photosAdded }
  * @param isNight whether the app itself is currently in dark mode
  * @returns Promise<Blob> PNG
  */
@@ -385,7 +384,6 @@ export async function generateSkinReportImage({ report, isNight = true }) {
     ['Products used', String(report.productsUsed)],
     ['Current streak', `${report.currentStreak} ${report.currentStreak === 1 ? 'day' : 'days'}`],
     ['Longest streak', `${report.longestStreak} ${report.longestStreak === 1 ? 'day' : 'days'}`],
-    ['AM vs PM consistency', report.amVsPm],
     ['Progress photos added', String(report.photosAdded)],
   ]
 
