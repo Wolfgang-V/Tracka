@@ -377,6 +377,8 @@ function App() {
   const [routinesLoading, setRoutinesLoading] = useState(true)
   const [routineHistory, setRoutineHistory] = useState([])
   const [routineSaving, setRoutineSaving] = useState(false)
+  const [routineEditMode, setRoutineEditMode] = useState(false)
+  const [addProductReturnScreen, setAddProductReturnScreen] = useState('products')
   const [selectedRoutine, setSelectedRoutine] = useState(null)
   const loadRoutineHistory = async () => {
   if (!user) return
@@ -1339,11 +1341,33 @@ const shareSkinReport = async () => {
   const pmRoutine = (routines || []).find(
     (routine) => routine.time_of_day === 'PM'
   )
+  const editingCurrentRoutine = Boolean(amRoutine || pmRoutine)
+
+  const routineTimes = {}
+  const routineDays = {}
+  for (const routine of [amRoutine, pmRoutine].filter(Boolean)) {
+    for (const step of routine.routine_steps || []) {
+      const productId = step.user_product_id
+      routineTimes[productId] = routineTimes[productId]
+        ? 'BOTH'
+        : routine.time_of_day
+      routineDays[productId] = [...new Set([
+        ...(routineDays[productId] || []),
+        ...(step.days_of_week || [0, 1, 2, 3, 4, 5, 6]),
+      ])]
+    }
+  }
 
   setTodayAmRoutine(amRoutine || null)
   setTodayPmRoutine(pmRoutine || null)
   setTodayAmSteps(amRoutine?.routine_steps || [])
   setTodayPmSteps(pmRoutine?.routine_steps || [])
+  setRoutineEditMode(editingCurrentRoutine)
+  const excludedProducts = editingCurrentRoutine
+    ? Object.fromEntries(products.map((item) => [item.id, 'NONE']))
+    : {}
+  setProductTimes((current) => ({ ...current, ...excludedProducts, ...routineTimes }))
+  setProductDays((current) => ({ ...current, ...routineDays }))
 
   setRoutinesLoading(false)
 }
@@ -1681,7 +1705,7 @@ useEffect(() => {
 
   products.forEach((item) => {
     if (!productTimes[item.id]) {
-      defaultTimes[item.id] = getDefaultProductTime(item)
+      defaultTimes[item.id] = routineEditMode ? 'NONE' : getDefaultProductTime(item)
     }
   })
 
@@ -1691,7 +1715,7 @@ useEffect(() => {
       ...defaultTimes,
     }))
   }
-}, [products])
+}, [products, routineEditMode])
 
 useEffect(() => {
   if (screen === 'today') {
@@ -1701,6 +1725,10 @@ useEffect(() => {
     loadMonthlyReport()
     loadPendingRecommendations()
     loadCareTeam()
+  }
+
+  if (screen === 'routinePlanner') {
+    loadRoutines()
   }
 
   if (screen === 'notifications') {
@@ -3667,7 +3695,10 @@ const submitRecommendation = async () => {
             )}
 
             <button
-              onClick={() => setScreen('addProduct')}
+              onClick={() => {
+                setAddProductReturnScreen('products')
+                setScreen('addProduct')
+              }}
               className={`mt-6 w-full rounded-2xl border py-[18px] text-base font-bold ${t.hair} ${t.muted}`}
             >
               + Add a product
@@ -3713,7 +3744,7 @@ const submitRecommendation = async () => {
         <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
 
           <button
-            onClick={() => setScreen('products')}
+            onClick={() => setScreen(addProductReturnScreen)}
             className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -3721,7 +3752,7 @@ const submitRecommendation = async () => {
               strokeLinecap="round" strokeLinejoin="round">
               <path d="M15 5l-7 7 7 7" />
             </svg>
-            Products
+            {addProductReturnScreen === 'routinePlanner' ? 'Edit routine' : 'Products'}
           </button>
 
           <div className="mt-5">
@@ -4050,6 +4081,17 @@ const submitRecommendation = async () => {
                   console.error(updatedProductsError)
                 } else {
                   setProducts(updatedProducts || [])
+                  const addedProduct = (updatedProducts || []).find((item) => item.product_id === product.id)
+                  if (addedProduct && addProductReturnScreen === 'routinePlanner') {
+                    setProductTimes((current) => ({
+                      ...current,
+                      [addedProduct.id]: getDefaultProductTime(addedProduct),
+                    }))
+                    setProductDays((current) => ({
+                      ...current,
+                      [addedProduct.id]: [0, 1, 2, 3, 4, 5, 6],
+                    }))
+                  }
                 }
 
                 setProductBrand('')
@@ -4060,7 +4102,7 @@ const submitRecommendation = async () => {
                 setProductPaoMonths(0)
                 setProductExpiryDate('')
                 setProductSaving(false)
-                setScreen('products')
+                setScreen(addProductReturnScreen)
               }}
               className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
             >
@@ -7778,15 +7820,15 @@ if (screen === 'routinePlanner') {
 
         <div className="mt-5">
           <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            Step 3 of 3
+            {routineEditMode ? 'Routine settings' : 'Step 3 of 3'}
           </p>
 
           <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Build your routine
+            {routineEditMode ? 'Edit your routine' : 'Build your routine'}
           </h1>
 
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Tell Tracka+ when you want to use each product, and it will organize your morning and night routines.
+            Choose which products belong in your morning and night routines. Products set to “Not in routine” stay in your product list.
           </p>
         </div>
 
@@ -7809,7 +7851,10 @@ if (screen === 'routinePlanner') {
                 </p>
 
                 <button
-                  onClick={() => setScreen('addProduct')}
+                  onClick={() => {
+                    setAddProductReturnScreen('routinePlanner')
+                    setScreen('addProduct')
+                  }}
                   className={`mt-4 rounded-xl px-5 py-3 text-[13px] font-semibold ${t.btn}`}
                 >
                   + Add a product
@@ -7851,6 +7896,10 @@ if (screen === 'routinePlanner') {
                     >
                       <option value="" disabled>
                         Choose time
+                      </option>
+
+                      <option value="NONE">
+                        Not in routine
                       </option>
 
                       <option value="AM">
@@ -7912,10 +7961,21 @@ if (screen === 'routinePlanner') {
             )}
 
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setAddProductReturnScreen('routinePlanner')
+              setScreen('addProduct')
+            }}
+            className={`mt-5 w-full rounded-xl border px-4 py-3 text-[14px] font-semibold ${t.hair} ${t.muted}`}
+          >
+            + Add a product
+          </button>
         </div>
 
         <button
-  disabled={routineSaving}
+  disabled={routineSaving || routinesLoading}
   onClick={async () => {
     // Same double-tap guard as Add product — without it, a second tap
     // while routines/routine_steps were still being inserted created a
@@ -7927,7 +7987,14 @@ if (screen === 'routinePlanner') {
       return
     }
 
-    const missingTime = products.find(
+    const selectedProducts = products.filter((item) => productTimes[item.id] !== 'NONE')
+
+    if (selectedProducts.length === 0) {
+      notify('Choose at least one product for your routine.')
+      return
+    }
+
+    const missingTime = selectedProducts.find(
   (item) => !productTimes[item.id]
 )
 
@@ -7936,7 +8003,7 @@ if (missingTime) {
   return
 }
 
-const missingDays = products.find(
+const missingDays = selectedProducts.find(
   (item) => !productDays[item.id] || productDays[item.id].length === 0
 )
 
@@ -7955,7 +8022,7 @@ if (missingDays) {
     const routineCode = `TRK-${Date.now().toString().slice(-6)}`
 
     const buildSteps = (time) =>
-      products
+      selectedProducts
         .filter((item) => {
           const selectedTime = productTimes[item.id]
           return selectedTime === time || selectedTime === 'BOTH'
@@ -8014,6 +8081,7 @@ if (missingDays) {
       `Your routine is ready, ${displayName}`,
       'Time to stay consistent.'
     )
+    setRoutineEditMode(true)
 
     if (!onboardingCompleted) {
       setOnboardingCompleted(true)
@@ -8030,7 +8098,7 @@ if (missingDays) {
   }}
   className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
 >
-  {routineSaving ? 'Saving…' : 'Create my routine'}
+  {routineSaving ? 'Saving…' : routinesLoading ? 'Loading routine…' : routineEditMode ? 'Save routine changes' : 'Create my routine'}
 </button>
 
         <button
