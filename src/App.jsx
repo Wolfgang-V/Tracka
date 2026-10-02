@@ -5210,24 +5210,6 @@ if (screen === 'settings') {
             </svg>
           </button>
 
-          <button
-            onClick={() => setScreen('notifications')}
-            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
-          >
-            <span>
-              Notifications
-              {(pendingRecommendations.length + careRelationships.filter((r) => r.status === 'invited').length) > 0 && (
-                <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
-                  {pendingRecommendations.length + careRelationships.filter((r) => r.status === 'invited').length}
-                </span>
-              )}
-            </span>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
-              <path d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
         </div>
 
         {practitionersLaunched && (
@@ -7828,7 +7810,7 @@ if (screen === 'routinePlanner') {
           </h1>
 
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Choose which products belong in your morning and night routines. Products set to “Not in routine” stay in your product list.
+            Choose which products belong in your morning and night routines.
           </p>
         </div>
 
@@ -7837,10 +7819,6 @@ if (screen === 'routinePlanner') {
           <h2 className="text-[17px] font-semibold">
             Your products
           </h2>
-
-          <p className={`mt-1 text-[13px] ${t.muted}`}>
-            Choose when you use each product.
-          </p>
 
           <div className="mt-5 flex flex-col gap-3">
 
@@ -8077,8 +8055,9 @@ if (missingDays) {
       return
     }
 
+    notify(routineEditMode ? 'Routine updated.' : 'Your routine is ready.', 'success')
     showLocalNotification(
-      `Your routine is ready, ${displayName}`,
+      routineEditMode ? 'Routine updated' : `Your routine is ready, ${displayName}`,
       'Time to stay consistent.'
     )
     setRoutineEditMode(true)
