@@ -624,7 +624,9 @@ setRoutineHistory(groupedRoutines)
             : supabase.from('practitioners').select('verified_at').eq('user_id', user.id).maybeSingle(),
         ])
 
-        if (!isRecovery) {
+        if (isRecovery) {
+          setScreen('resetPassword')
+        } else {
           setScreen(
             existingSkinProfile || practitionerRow?.verified_at ? 'today' : 'skinProfile'
           )
