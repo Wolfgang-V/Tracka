@@ -600,6 +600,11 @@ setRoutineHistory(groupedRoutines)
       console.error('INVITE PREVIEW ERROR:', error)
     }
 
+    const isRecoveryFlow = () => {
+      const params = new URLSearchParams(window.location.search)
+      return params.get('recovery') === 'true' || params.get('type') === 'recovery'
+    }
+
     const checkUser = async (user) => {
       try {
         setUser(user)
@@ -610,7 +615,8 @@ setRoutineHistory(groupedRoutines)
           return
         }
 
-        const isRecovery = window.location.search.includes('recovery=true')
+        const urlParams = new URLSearchParams(window.location.search)
+        const isRecovery = urlParams.get('recovery') === 'true' || urlParams.get('type') === 'recovery'
 
         const [{ data: profile, error }, { data: existingSkinProfile }, { data: practitionerRow }] = await Promise.all([
           supabase.from('profiles').select('username, onboarding_completed').eq('id', user.id).maybeSingle(),
@@ -655,6 +661,12 @@ setRoutineHistory(groupedRoutines)
       const {
         data: { user },
       } = await supabase.auth.getUser()
+
+      if (isRecoveryFlow()) {
+        setScreen('resetPassword')
+        setAuthReady(true)
+        return
+      }
 
       if (!user) {
         console.log('No logged-in user found')
@@ -4993,7 +5005,7 @@ if (screen === 'forgotPassword') {
                 }
 
                 const { error } = await supabase.auth.resetPasswordForEmail(loginEmail, {
-                  redirectTo: `${SITE_URL}/?recovery=true`,
+                  redirectTo: `${SITE_URL}/?recovery=true&type=recovery`,
                 })
 
                 if (error) {
