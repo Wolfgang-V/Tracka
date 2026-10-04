@@ -601,8 +601,21 @@ setRoutineHistory(groupedRoutines)
     }
 
     const isRecoveryFlow = () => {
-      const params = new URLSearchParams(window.location.search)
-      return params.get('recovery') === 'true' || params.get('type') === 'recovery'
+      const searchParams = new URLSearchParams(window.location.search)
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+
+      return (
+        searchParams.get('recovery') === 'true' ||
+        searchParams.get('type') === 'recovery' ||
+        hashParams.get('recovery') === 'true' ||
+        hashParams.get('type') === 'recovery'
+      )
+    }
+
+    const normalizeRecoveryFlow = () => {
+      if (isRecoveryFlow()) {
+        window.history.replaceState({}, '', window.location.pathname)
+      }
     }
 
     const checkUser = async (user) => {
@@ -663,6 +676,7 @@ setRoutineHistory(groupedRoutines)
       } = await supabase.auth.getUser()
 
       if (isRecoveryFlow()) {
+        normalizeRecoveryFlow()
         setScreen('resetPassword')
         setAuthReady(true)
         return
@@ -729,6 +743,7 @@ setRoutineHistory(groupedRoutines)
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
+        normalizeRecoveryFlow()
         setScreen('resetPassword')
       }
 
