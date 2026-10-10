@@ -725,6 +725,14 @@ setRoutineHistory(groupedRoutines)
       if (localStorage.getItem('pendingInviteToken')) setHasPendingInvite(true)
     } catch {}
 
+    // Shared challenge links. Stashed like invite tokens so the link
+    // survives signup/login; consumed when the person first reaches Today.
+    const challengeMatch = window.location.search.match(/[?&]challenge=([a-z0-9-]{1,64})/i)
+    if (challengeMatch) {
+      try { localStorage.setItem('pendingChallengeSlug', challengeMatch[1].toLowerCase()) } catch {}
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+
     if (window.location.search.includes('confirmed=true')) {
       window.history.replaceState({}, '', window.location.pathname)
 
@@ -1285,6 +1293,35 @@ const inviteFriend = async () => {
   if (navigator.clipboard) {
     await navigator.clipboard.writeText(`${shareData.text}\n${shareData.url}`)
     notify('Invite link copied — paste it anywhere.', 'success')
+  } else {
+    notify(shareData.url, 'success')
+  }
+}
+
+// Same tiered share as inviteFriend. The ?challenge= link opens that
+// challenge's page once the friend is signed in (see openPendingChallenge).
+const shareChallenge = async (challenge, participation) => {
+  const progress = participation
+    ? ` I'm on day ${challengeStats(participation).day} of ${challenge.duration_days}.`
+    : ''
+  const shareData = {
+    title: challenge.title,
+    text: `Join me on the ${challenge.title} challenge on Tracka+!${progress} Let's build the habit together.`,
+    url: `${SITE_URL}/?challenge=${encodeURIComponent(challenge.slug)}`,
+  }
+
+  if (navigator.share) {
+    try {
+      await navigator.share(shareData)
+    } catch (err) {
+      if (err?.name !== 'AbortError') console.error('CHALLENGE SHARE ERROR:', err)
+    }
+    return
+  }
+
+  if (navigator.clipboard) {
+    await navigator.clipboard.writeText(`${shareData.text}\n${shareData.url}`)
+    notify('Challenge link copied — paste it anywhere.', 'success')
   } else {
     notify(shareData.url, 'success')
   }
@@ -1870,6 +1907,7 @@ useEffect(() => {
     loadPendingRecommendations()
     loadCareTeam()
     loadChallenges()
+    openPendingChallenge()
   }
 
   if (screen === 'challenges' || screen === 'challengeDetail') {
@@ -2084,6 +2122,29 @@ const openChallenge = (challengeId, returnTo = 'challenges') => {
   setSelectedChallengeId(challengeId)
   setChallengeReturnScreen(returnTo)
   setScreen('challengeDetail')
+}
+
+// Runs on reaching Today, which only happens once someone is signed in and
+// past onboarding, so a friend who signs up from a shared link still lands
+// on the challenge after setting up their routine.
+const openPendingChallenge = async () => {
+  let slug
+  try {
+    slug = localStorage.getItem('pendingChallengeSlug')
+    if (slug) localStorage.removeItem('pendingChallengeSlug')
+  } catch {
+    return
+  }
+  if (!slug || !user) return
+
+  const { data } = await supabase
+    .from('challenges')
+    .select('id')
+    .eq('slug', slug)
+    .eq('is_published', true)
+    .maybeSingle()
+
+  if (data?.id) openChallenge(data.id, 'today')
 }
 
 const joinChallenge = async (challenge) => {
@@ -6857,18 +6918,34 @@ if (screen === 'challengeDetail') {
           <div className="relative flex items-center justify-between">
             {backButton('Active Challenge')}
 
-            <button
-              type="button"
-              aria-label="Challenge options"
-              onClick={() => setChallengeMenuOpen(!challengeMenuOpen)}
-              className={`flex h-10 w-10 items-center justify-center rounded-full ${t.muted}`}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="5" cy="12" r="1.8" />
-                <circle cx="12" cy="12" r="1.8" />
-                <circle cx="19" cy="12" r="1.8" />
-              </svg>
-            </button>
+            <div className="flex items-center">
+              <button
+                type="button"
+                aria-label="Invite friends to join"
+                onClick={() => shareChallenge(challenge, participation)}
+                className={`flex h-10 w-10 items-center justify-center rounded-full ${t.muted}`}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="1.8"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3v12M7.5 7.5L12 3l4.5 4.5" />
+                  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                aria-label="Challenge options"
+                onClick={() => setChallengeMenuOpen(!challengeMenuOpen)}
+                className={`flex h-10 w-10 items-center justify-center rounded-full ${t.muted}`}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="5" cy="12" r="1.8" />
+                  <circle cx="12" cy="12" r="1.8" />
+                  <circle cx="19" cy="12" r="1.8" />
+                </svg>
+              </button>
+            </div>
 
             {challengeMenuOpen && (
               <>
@@ -6976,6 +7053,20 @@ if (screen === 'challengeDetail') {
             Go to morning routine
           </button>
 
+          <button
+            type="button"
+            onClick={() => shareChallenge(challenge, participation)}
+            className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border py-3.5 text-[15px] font-semibold ${t.hair} ${t.mark}`}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="9" cy="8" r="3.5" />
+              <path d="M2.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6" />
+            </svg>
+            Invite friends to join
+          </button>
+
         </div>
       </main>
     )
@@ -7068,6 +7159,14 @@ if (screen === 'challengeDetail') {
           {busyAction === `joinChallenge-${challenge.id}`
             ? 'Joining…'
             : lastCompleted ? 'Join again' : 'Join challenge'}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => shareChallenge(challenge, null)}
+          className={`mt-3 py-2 text-[14px] font-semibold ${t.mark}`}
+        >
+          Invite a friend to do it with you
         </button>
 
       </div>
