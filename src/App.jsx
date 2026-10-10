@@ -462,6 +462,17 @@ setRoutineHistory(groupedRoutines)
   const [reportSharing, setReportSharing] = useState(false)
   const [stepHistory, setStepHistory] = useState([])
   const [menuOpen, setMenuOpen] = useState(false)
+  const [challenges, setChallenges] = useState([])
+  const [myChallenges, setMyChallenges] = useState([])
+  const [challengesLoading, setChallengesLoading] = useState(true)
+  const [selectedChallengeId, setSelectedChallengeId] = useState(null)
+  const [challengeReturnScreen, setChallengeReturnScreen] = useState('challenges')
+  const [challengeMenuOpen, setChallengeMenuOpen] = useState(false)
+  const [showCompletedChallenges, setShowCompletedChallenges] = useState(false)
+  const [adminChallengeStats, setAdminChallengeStats] = useState([])
+  const [adminChallengeStatsLoading, setAdminChallengeStatsLoading] = useState(true)
+  const [adminChallengeParticipants, setAdminChallengeParticipants] = useState({})
+  const [adminOpenChallengeId, setAdminOpenChallengeId] = useState(null)
   const [pushStatus, setPushStatus] = useState(null)
   const [progressCompletions, setProgressCompletions] = useState([])
   const [selectedProgressDate, setSelectedProgressDate] = useState(null)
@@ -1424,6 +1435,7 @@ const shareSkinReport = async () => {
     // first tap, silently reverting it back to unchecked in the UI even
     // though its row was already saved.
     setCompletedSteps((current) => current.filter((id) => id !== stepId))
+    syncChallengesAfterTick()
 
     return
   }
@@ -1450,6 +1462,21 @@ const shareSkinReport = async () => {
   }
 
   setCompletedSteps((current) => (current.includes(stepId) ? current : [...current, stepId]))
+  syncChallengesAfterTick()
+}
+
+// Challenge progress is written server-side by a trigger on
+// routine_step_completions, so after any tick just re-read it. Only
+// bothers when there's an active challenge to update.
+const syncChallengesAfterTick = async () => {
+  const activeIds = myChallenges.filter((p) => p.status === 'active').map((p) => p.id)
+  if (activeIds.length === 0) return
+
+  const fresh = await loadChallenges()
+  const finished = (fresh || []).find((p) => activeIds.includes(p.id) && p.status === 'completed')
+  if (finished) {
+    notify(`You completed ${finished.challenges?.title || 'your challenge'}! 🎉`, 'success')
+  }
 }
 
 const todayString = localDateString()
@@ -1622,6 +1649,94 @@ const renderBottomTabs = (activeScreen, palette) => (
   </div>
 )
 
+// "Day X" is the challenge day you're working on: completed days, plus
+// today if it isn't ticked yet. Missed days don't advance it, since the
+// challenge is 30 completed days rather than 30 consecutive ones.
+const challengeStats = (participation) => {
+  const total = participation.challenges?.duration_days || 30
+  const done = Math.min(participation.days_completed || 0, total)
+  const doneToday = (participation.challenge_days || []).some((d) => d.local_date === todayString)
+  const day = Math.min(done + (doneToday ? 0 : 1), total)
+  const pct = Math.round((done / total) * 100)
+  return { total, done, doneToday, day, pct }
+}
+
+// Joining requires an AM sunscreen step, but a later routine rebuild (or
+// accepting a practitioner's recommendation, which replaces the AM slot)
+// can remove it — after which the trigger silently stops counting days.
+// Same condition join_challenge checks. Not trusted mid-load, so the
+// warning never flashes up before routines arrive.
+const missingAmSunscreen =
+  !routinesLoading &&
+  !todayAmSteps.some((s) => (s.user_products?.products?.category || '').toLowerCase() === 'sunscreen')
+
+const renderSunscreenMissingNotice = (className = '') => (
+  <button
+    type="button"
+    onClick={() => setScreen('routinePlanner')}
+    className={`${className} w-full rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-left`}
+  >
+    <span className="block text-[13px] font-semibold text-amber-600">
+      Your morning routine has no sunscreen
+    </span>
+    <span className={`mt-0.5 block text-[12px] leading-relaxed ${t.muted}`}>
+      Add one to keep your challenge progress counting. Edit my routine →
+    </span>
+  </button>
+)
+
+// Sponsored challenges carry the brand's product shot in image_url;
+// everything else gets a warm placeholder rather than a broken image.
+const renderChallengeImage = (challenge, className) =>
+  challenge?.image_url ? (
+    <img
+      src={challenge.image_url}
+      alt={challenge.sponsor_name ? `${challenge.sponsor_name} product` : ''}
+      className={`${className} object-cover`}
+    />
+  ) : (
+    <div
+      className={`${className} flex items-center justify-center bg-gradient-to-br from-[#FBEEDB] via-[#F1DDBE] to-[#DDBF94]`}
+      aria-hidden="true"
+    >
+      <svg width="40%" height="40%" viewBox="0 0 24 24" fill="none" stroke="#A8712A"
+        strokeWidth="1.4" strokeLinecap="round" className="max-h-24 max-w-24">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" />
+      </svg>
+    </div>
+  )
+
+const renderChallengeBar = (pct) => (
+  <div className={`h-2 w-full overflow-hidden rounded-full ${t.rail}`}>
+    <div
+      className={`h-full rounded-full ${t.nodeDone}`}
+      style={{ width: `${pct > 0 ? Math.max(pct, 3) : 0}%` }}
+    />
+  </div>
+)
+
+const renderChallengeProgressCard = (participation, returnTo) => {
+  const { total, done, day } = challengeStats(participation)
+  return (
+    <button
+      key={participation.id}
+      type="button"
+      onClick={() => openChallenge(participation.challenge_id, returnTo)}
+      className={`flex w-full gap-4 rounded-2xl ${t.surface} p-3.5 text-left`}
+    >
+      {renderChallengeImage(participation.challenges, 'h-24 w-20 shrink-0 rounded-xl')}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-[16px] font-semibold">{participation.challenges?.title}</span>
+        <span className={`mt-0.5 text-[13px] ${t.muted}`}>Day {day} of {total}</span>
+        <span className="mt-2">{renderChallengeBar(Math.round((done / total) * 100))}</span>
+        <span className={`mt-1.5 text-[12px] ${t.faint}`}>{done} of {total} days completed</span>
+        <span className={`mt-2 text-[13px] font-semibold ${t.mark}`}>Continue challenge →</span>
+      </span>
+    </button>
+  )
+}
+
 const completedDates = new Set(
   progressCompletions
     .filter((item) => item.time_of_day === 'PM' || !item.time_of_day)
@@ -1754,6 +1869,13 @@ useEffect(() => {
     loadMonthlyReport()
     loadPendingRecommendations()
     loadCareTeam()
+    loadChallenges()
+  }
+
+  if (screen === 'challenges' || screen === 'challengeDetail') {
+    loadChallenges()
+    loadRoutines()
+    setChallengeMenuOpen(false)
   }
 
   if (screen === 'routinePlanner') {
@@ -1792,6 +1914,7 @@ useEffect(() => {
     loadAdminUsers()
     loadPendingPractitioners()
     loadVerifiedPractitionersAdmin()
+    loadAdminChallengeStats()
   }
 
   if (screen === 'careTeam') {
@@ -1925,6 +2048,126 @@ const loadSkinProfile = async () => {
     )
     setSensitivity(data.sensitivity || '')
   }
+}
+
+// Returns the user's participation rows so callers (e.g. the post-tick
+// sync) can compare before/after without waiting for a re-render.
+const loadChallenges = async () => {
+  if (!user) return null
+
+  const [catalogue, mine] = await Promise.all([
+    supabase
+      .from('challenges')
+      .select('*')
+      .eq('is_published', true)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('challenge_participants')
+      .select('*, challenges (*), challenge_days (local_date)')
+      .eq('user_id', user.id)
+      .order('joined_at', { ascending: false }),
+  ])
+
+  if (catalogue.error || mine.error) {
+    console.error('LOAD CHALLENGES ERROR:', catalogue.error || mine.error)
+    setChallengesLoading(false)
+    return null
+  }
+
+  setChallenges(catalogue.data || [])
+  setMyChallenges(mine.data || [])
+  setChallengesLoading(false)
+  return mine.data || []
+}
+
+const openChallenge = (challengeId, returnTo = 'challenges') => {
+  setSelectedChallengeId(challengeId)
+  setChallengeReturnScreen(returnTo)
+  setScreen('challengeDetail')
+}
+
+const joinChallenge = async (challenge) => {
+  const { error } = await supabase.rpc('join_challenge', {
+    p_challenge_id: challenge.id,
+    p_local_date: localDateString(),
+  })
+
+  if (error) {
+    if (error.message?.includes('NO_SUNSCREEN_STEP')) {
+      const goAdd = await confirmAction(
+        'Add sunscreen to your morning routine first. This challenge tracks the sunscreen step you tick each morning.',
+        ['Not now', 'Edit my routine']
+      )
+      if (goAdd) setScreen('routinePlanner')
+      return
+    }
+    if (error.message?.includes('ALREADY_JOINED')) {
+      await loadChallenges()
+      return
+    }
+    console.error('JOIN CHALLENGE ERROR:', error)
+    notify('Could not join this challenge. Please try again.')
+    return
+  }
+
+  await loadChallenges()
+  notify('Challenge joined!', 'success')
+}
+
+const leaveChallenge = async (participation) => {
+  const confirmed = await confirmAction(
+    `Leave ${participation.challenges?.title || 'this challenge'}? Your progress so far (${participation.days_completed} days) won't carry over if you join again.`,
+    ['Keep going', 'Leave challenge']
+  )
+  if (!confirmed) return
+
+  const { error } = await supabase.rpc('leave_challenge', { p_participant_id: participation.id })
+  if (error) {
+    console.error('LEAVE CHALLENGE ERROR:', error)
+    notify('Could not leave this challenge.')
+    return
+  }
+
+  await loadChallenges()
+  notify('You left the challenge.', 'success')
+  setScreen('challenges')
+}
+
+// Lands on Today and scrolls to the AM routine, where sunscreen gets
+// ticked as usual. The [screen] effect scrolls to top first, so wait a beat.
+const goToMorningRoutine = () => {
+  setScreen('today')
+  setTimeout(() => {
+    document.getElementById('am-routine')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, 300)
+}
+
+const loadAdminChallengeStats = async () => {
+  setAdminChallengeStatsLoading(true)
+  const { data, error } = await supabase.rpc('admin_challenge_stats')
+  if (error) {
+    console.error('ADMIN CHALLENGE STATS ERROR:', error)
+    setAdminChallengeStatsLoading(false)
+    return
+  }
+  setAdminChallengeStats(data || [])
+  setAdminChallengeStatsLoading(false)
+}
+
+const toggleAdminChallengeParticipants = async (challengeId) => {
+  if (adminOpenChallengeId === challengeId) {
+    setAdminOpenChallengeId(null)
+    return
+  }
+  setAdminOpenChallengeId(challengeId)
+
+  const { data, error } = await supabase.rpc('admin_challenge_participants', { p_challenge_id: challengeId })
+  if (error) {
+    console.error('ADMIN CHALLENGE PARTICIPANTS ERROR:', error)
+    notify('Could not load participants.')
+    return
+  }
+  setAdminChallengeParticipants((current) => ({ ...current, [challengeId]: data || [] }))
 }
 
 const loadAdminUsers = async () => {
@@ -4399,7 +4642,13 @@ if (screen === 'admin') {
               Admin
             </p>
             <h1 className="mt-1 font-display text-[32px] font-light leading-[1.05] tracking-tight">
-              {adminTab === 'signups' ? 'Signups' : adminTab === 'practitioners' ? 'Revoked — awaiting restoration' : 'Verified practitioners'}
+              {adminTab === 'signups'
+                ? 'Signups'
+                : adminTab === 'practitioners'
+                ? 'Revoked — awaiting restoration'
+                : adminTab === 'challenges'
+                ? 'Challenges'
+                : 'Verified practitioners'}
             </h1>
           </div>
 
@@ -4460,6 +4709,7 @@ if (screen === 'admin') {
             ['signups', 'Signups'],
             ['practitioners', `Revoked${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`],
             ['verified', 'Practitioners'],
+            ['challenges', 'Challenges'],
           ].map(([key, label]) => (
             <button
               key={key}
@@ -4739,6 +4989,111 @@ if (screen === 'admin') {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {adminTab === 'challenges' && (
+          <div className="mt-5">
+            {adminChallengeStatsLoading ? (
+              <p className={`text-[15px] ${t.muted}`}>Loading…</p>
+            ) : adminChallengeStats.length === 0 ? (
+              <p className={`text-[13px] leading-relaxed ${t.muted}`}>No challenges yet.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {adminChallengeStats.map((c) => {
+                  const attempts = Number(c.active_count) + Number(c.completed_count) + Number(c.left_count)
+                  const completionRate = attempts > 0 ? Math.round((Number(c.completed_count) / attempts) * 100) : 0
+                  const participants = adminChallengeParticipants[c.challenge_id]
+                  const isOpen = adminOpenChallengeId === c.challenge_id
+                  const STATUS_STYLE = {
+                    active: t.chip,
+                    completed: 'border border-emerald-400/30 bg-emerald-400/10 text-emerald-500',
+                    left: `border border-rose-400/30 bg-rose-400/10 ${t.danger}`,
+                  }
+                  const fmt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+
+                  return (
+                    <div key={c.challenge_id} className={`rounded-2xl border ${t.hair} p-4`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-[15px] font-semibold">{c.title}</p>
+                          <p className={`text-[12px] ${t.faint}`}>{c.duration_days} days</p>
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                          c.is_published ? t.chip : `border ${t.hair} ${t.faint}`
+                        }`}>
+                          {c.is_published ? 'Live' : 'Hidden'}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-4 gap-2">
+                        {[
+                          [c.participants, 'Participants'],
+                          [c.active_count, 'Active'],
+                          [c.completed_count, 'Completed'],
+                          [c.left_count, 'Left'],
+                        ].map(([value, label]) => (
+                          <div key={label} className={`rounded-xl ${t.surface} p-2.5`}>
+                            <p className="text-[18px] font-semibold">{value}</p>
+                            <p className={`text-[10px] ${t.muted}`}>{label}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className={`mt-3 flex flex-col gap-1 text-[12px] ${t.muted}`}>
+                        <span>{completionRate}% of attempts completed</span>
+                        <span>
+                          {c.left_before_half} left before the halfway point
+                          {Number(c.left_count) > 0 && c.avg_days_when_left !== null &&
+                            ` · leavers averaged ${c.avg_days_when_left} days`}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => toggleAdminChallengeParticipants(c.challenge_id)}
+                        className={`mt-3 w-full rounded-xl border px-3 py-2 text-[12px] font-semibold ${t.hair} ${t.muted}`}
+                      >
+                        {isOpen ? 'Hide participants' : 'View participants'}
+                      </button>
+
+                      {isOpen && (
+                        <div className="mt-3 flex flex-col gap-2">
+                          {!participants ? (
+                            <p className={`text-[13px] ${t.muted}`}>Loading…</p>
+                          ) : participants.length === 0 ? (
+                            <p className={`text-[13px] ${t.muted}`}>No one has joined yet.</p>
+                          ) : (
+                            participants.map((p) => (
+                              <div key={p.participant_id} className={`rounded-xl ${t.surface} p-3`}>
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-[14px] font-semibold">
+                                      {p.username || 'No username'}
+                                    </p>
+                                    <p className={`truncate text-[12px] ${t.muted}`}>{p.email}</p>
+                                  </div>
+                                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize ${STATUS_STYLE[p.status] || t.chip}`}>
+                                    {p.status}
+                                  </span>
+                                </div>
+                                <div className={`mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] ${t.faint}`}>
+                                  <span>{p.days_completed}/{c.duration_days} days</span>
+                                  <span>Joined {fmt(p.joined_at)}</span>
+                                  {p.last_day && <span>Last tick {fmt(p.last_day)}</span>}
+                                  {p.completed_at && <span>Finished {fmt(p.completed_at)}</span>}
+                                  {p.left_at && <span>Left {fmt(p.left_at)}</span>}
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -6312,6 +6667,414 @@ if (screen === 'notifications') {
     </main>
   )
 }
+if (screen === 'challenges') {
+  const active = myChallenges.filter((p) => p.status === 'active')
+  const activeIds = new Set(active.map((p) => p.challenge_id))
+  const discoverable = challenges.filter((c) => !activeIds.has(c.id))
+  const completed = myChallenges.filter((p) => p.status === 'completed')
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+
+        <button
+          onClick={() => setScreen('today')}
+          className={`-ml-2 flex items-center gap-1 self-start py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Today
+        </button>
+
+        <div className="mt-5">
+          <h1 className="font-display text-[34px] font-light leading-[1.05] tracking-tight">
+            Challenges
+          </h1>
+          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
+            Small habits, built one day at a time.
+          </p>
+        </div>
+
+        {challengesLoading && challenges.length === 0 ? (
+          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
+        ) : (
+          <>
+            {active.length > 0 && (
+              <section className="mt-8">
+                <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+                  Your active challenges
+                </p>
+                <div className="mt-3 flex flex-col gap-3">
+                  {active.map((p) => renderChallengeProgressCard(p, 'challenges'))}
+                </div>
+              </section>
+            )}
+
+            <section className="mt-9">
+              <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+                Discover challenges
+              </p>
+
+              {discoverable.length === 0 ? (
+                <p className={`mt-3 text-[14px] leading-relaxed ${t.muted}`}>
+                  You've joined every challenge available right now. New ones are on the way.
+                </p>
+              ) : (
+                <div className="mt-3 flex flex-col gap-5">
+                  {discoverable.map((c) => (
+                    <div key={c.id} className={`overflow-hidden rounded-3xl ${t.surface}`}>
+                      {renderChallengeImage(c, 'h-48 w-full')}
+                      <div className="p-5">
+                        <p className={`text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
+                          {c.duration_days} days
+                        </p>
+                        <h2 className="mt-1 text-[20px] font-semibold">{c.title}</h2>
+                        {c.tagline && (
+                          <p className={`mt-1.5 text-[14px] leading-relaxed ${t.muted}`}>{c.tagline}</p>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => openChallenge(c.id, 'challenges')}
+                          className={`mt-4 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn}`}
+                        >
+                          View challenge
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {completed.length > 0 && (
+              <section className="mt-9">
+                <button
+                  type="button"
+                  onClick={() => setShowCompletedChallenges(!showCompletedChallenges)}
+                  className={`flex w-full items-center justify-between rounded-2xl border ${t.hair} px-4 py-3.5 text-left`}
+                >
+                  <span className="text-[14px] font-semibold">
+                    Completed challenges ({completed.length})
+                  </span>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round"
+                    className={`transition ${showCompletedChallenges ? 'rotate-90' : ''}`}>
+                    <path d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+
+                {showCompletedChallenges && (
+                  <div className="mt-3 flex flex-col gap-2.5">
+                    {completed.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => openChallenge(p.challenge_id, 'challenges')}
+                        className={`flex items-center gap-3 rounded-2xl ${t.surface} p-3.5 text-left`}
+                      >
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-400/10 text-emerald-500">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="9" r="5" />
+                            <path d="M8.5 13.5L7 21l5-2.5 5 2.5-1.5-7.5" />
+                          </svg>
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[15px] font-semibold">{p.challenges?.title}</span>
+                          <span className={`block text-[12px] ${t.faint}`}>
+                            Completed {new Date(p.completed_at).toLocaleDateString('en-GB', {
+                              day: 'numeric', month: 'short', year: 'numeric',
+                            })}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+          </>
+        )}
+
+      </div>
+    </main>
+  )
+}
+
+if (screen === 'challengeDetail') {
+  const participation = myChallenges.find(
+    (p) => p.challenge_id === selectedChallengeId && p.status === 'active'
+  )
+  const lastCompleted = myChallenges.find(
+    (p) => p.challenge_id === selectedChallengeId && p.status === 'completed'
+  )
+  const challenge =
+    challenges.find((c) => c.id === selectedChallengeId) ||
+    participation?.challenges ||
+    lastCompleted?.challenges
+
+  const backLabel = challengeReturnScreen === 'today' ? 'Today' : 'Challenges'
+
+  const backButton = (label) => (
+    <button
+      onClick={() => setScreen(challengeReturnScreen)}
+      className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="1.8"
+        strokeLinecap="round" strokeLinejoin="round">
+        <path d="M15 5l-7 7 7 7" />
+      </svg>
+      {label}
+    </button>
+  )
+
+  if (!challenge) {
+    return (
+      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+          {backButton(backLabel)}
+          <p className={`mt-8 text-[14px] ${t.muted}`}>
+            {challengesLoading ? 'Loading…' : "This challenge isn't available any more."}
+          </p>
+        </div>
+      </main>
+    )
+  }
+
+  // Active challenge dashboard.
+  if (participation) {
+    const { total, done, doneToday, day, pct } = challengeStats(participation)
+
+    return (
+      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+
+          <div className="relative flex items-center justify-between">
+            {backButton('Active Challenge')}
+
+            <button
+              type="button"
+              aria-label="Challenge options"
+              onClick={() => setChallengeMenuOpen(!challengeMenuOpen)}
+              className={`flex h-10 w-10 items-center justify-center rounded-full ${t.muted}`}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="12" r="1.8" />
+                <circle cx="12" cy="12" r="1.8" />
+                <circle cx="19" cy="12" r="1.8" />
+              </svg>
+            </button>
+
+            {challengeMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-[5]"
+                  aria-hidden="true"
+                  onClick={() => setChallengeMenuOpen(false)}
+                />
+                <div className={`absolute right-0 top-11 z-10 w-48 overflow-hidden rounded-2xl ${t.surface} shadow-xl`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setChallengeMenuOpen(false)
+                      leaveChallenge(participation)
+                    }}
+                    className={`block w-full px-5 py-3.5 text-left text-[15px] ${t.danger}`}
+                  >
+                    Leave challenge
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {renderChallengeImage(challenge, 'mt-4 h-52 w-full rounded-3xl')}
+
+          <div className="mt-5 flex items-start justify-between gap-3">
+            <h1 className="text-[26px] font-semibold leading-tight">{challenge.title}</h1>
+            <span className="mt-1 shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[12px] font-semibold text-emerald-500">
+              Active
+            </span>
+          </div>
+          {challenge.active_subtitle && (
+            <p className={`mt-1.5 text-[15px] leading-relaxed ${t.muted}`}>{challenge.active_subtitle}</p>
+          )}
+
+          <div className={`mt-6 border-t ${t.hair}`} aria-hidden="true" />
+
+          <div className="mt-6">
+            <div className="flex items-baseline justify-between">
+              <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.muted}`}>
+                Day {day} of {total}
+              </p>
+              <p className="text-[18px] font-semibold">{done}/{total} days</p>
+            </div>
+            <div className="mt-3">{renderChallengeBar(pct)}</div>
+            <p className={`mt-2 text-[13px] ${t.faint}`}>
+              {done}/{total} days completed · {pct}% complete
+            </p>
+          </div>
+
+          {missingAmSunscreen && challenge.rule === 'am_sunscreen' && !doneToday &&
+            renderSunscreenMissingNotice('mt-6')}
+
+          <div className={`mt-6 rounded-3xl border ${t.hair} ${t.surface} p-5`}>
+            {doneToday ? (
+              <>
+                <p className="flex items-center gap-2.5 text-[17px] font-semibold">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                    strokeLinejoin="round" className="shrink-0 text-emerald-500">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M8 12.5l2.7 2.7L16 10" />
+                  </svg>
+                  Today's goal completed!
+                </p>
+                <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>
+                  You've ticked sunscreen in your morning routine. Your challenge progress has been updated automatically.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-[17px] font-semibold">Today's goal</p>
+                <p className="mt-2 text-[15px] leading-relaxed">
+                  {challenge.goal_text || 'Complete the sunscreen step in your morning routine.'}
+                </p>
+                <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>
+                  Your progress updates automatically when you tick sunscreen.
+                </p>
+              </>
+            )}
+          </div>
+
+          {doneToday && (
+            <div className="mt-7 text-center">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C08A3E"
+                strokeWidth="1.6" strokeLinecap="round" className="mx-auto">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" />
+              </svg>
+              <p className="mt-2 text-[17px] font-semibold">
+                {done === 1 ? 'One day down.' : `${done} days down.`} Keep going.
+              </p>
+              <p className={`mt-1 text-[14px] ${t.muted}`}>Come back tomorrow and tick sunscreen again.</p>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={goToMorningRoutine}
+            className={`mt-7 w-full rounded-2xl py-[18px] text-base font-bold ${
+              doneToday ? `border ${t.hair} ${t.muted}` : t.btn
+            }`}
+          >
+            Go to morning routine
+          </button>
+
+        </div>
+      </main>
+    )
+  }
+
+  // Before joining (or after completing / leaving — they can join again).
+  const HOW_IT_WORKS = [
+    ['Apply your sunscreen', 'Follow your usual morning skincare routine.'],
+    ['Tick it in Tracka+', 'Complete the sunscreen step in your existing morning routine. Your challenge progress updates automatically.'],
+    [`Keep going for ${challenge.duration_days} days`, 'Track your progress as you build the habit.'],
+  ]
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+
+        {backButton(challengeReturnScreen === 'today' ? 'Today' : 'Discover Challenges')}
+
+        {renderChallengeImage(challenge, 'mt-4 h-60 w-full rounded-3xl')}
+
+        {challenge.sponsor_name && (
+          <p className={`mt-3 text-[12px] font-medium ${t.faint}`}>
+            In partnership with {challenge.sponsor_name}
+          </p>
+        )}
+
+        <h1 className="mt-5 font-display text-[34px] font-light leading-[1.05] tracking-tight">
+          {challenge.title}
+        </h1>
+        <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>
+          A little consistency goes a long way.
+        </p>
+
+        {lastCompleted && (
+          <div className="mt-5 flex items-center gap-3 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="9" r="5" />
+                <path d="M8.5 13.5L7 21l5-2.5 5 2.5-1.5-7.5" />
+              </svg>
+            </span>
+            <span>
+              <span className="block text-[15px] font-semibold">Challenge complete!</span>
+              <span className={`block text-[13px] ${t.muted}`}>
+                You finished all {challenge.duration_days} days on{' '}
+                {new Date(lastCompleted.completed_at).toLocaleDateString('en-GB', {
+                  day: 'numeric', month: 'long', year: 'numeric',
+                })}.
+              </span>
+            </span>
+          </div>
+        )}
+
+        {challenge.description && (
+          <section className="mt-7">
+            <h2 className="text-[17px] font-semibold">What's the challenge?</h2>
+            <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>{challenge.description}</p>
+          </section>
+        )}
+
+        <section className="mt-7">
+          <h2 className="text-[17px] font-semibold">How it works</h2>
+          <ol className="mt-3 flex flex-col gap-4">
+            {HOW_IT_WORKS.map(([title, body], i) => (
+              <li key={title} className="flex gap-3.5">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${t.node}`}>
+                  {i + 1}
+                </span>
+                <span>
+                  <span className="block text-[15px] font-semibold">{title}</span>
+                  <span className={`mt-0.5 block text-[14px] leading-relaxed ${t.muted}`}>{body}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <div className={`mt-7 flex items-center justify-between rounded-2xl border ${t.hair} px-4 py-3.5`}>
+          <span className={`text-[14px] ${t.muted}`}>Duration</span>
+          <span className="text-[15px] font-semibold">{challenge.duration_days} days</span>
+        </div>
+
+        <button
+          type="button"
+          disabled={!!busyAction}
+          onClick={() => runBusy(`joinChallenge-${challenge.id}`, () => joinChallenge(challenge))}
+          className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
+        >
+          {busyAction === `joinChallenge-${challenge.id}`
+            ? 'Joining…'
+            : lastCompleted ? 'Join again' : 'Join challenge'}
+        </button>
+
+      </div>
+    </main>
+  )
+}
+
 if (screen === 'recommendationHistory') {
   const STATUS_LABEL = {
     accepted: 'Accepted',
@@ -7479,6 +8242,7 @@ if (screen === 'today') {
                   ['My progress', 'progress'],
                   ['Skin reports', 'skinTrends'],
                   ['Skin diary', 'progressPhotos'],
+                  ['Challenges', 'challenges'],
                 ].map(([label, target]) => (
                   <button
                     key={target}
@@ -7558,7 +8322,67 @@ if (screen === 'today') {
           )
         })()}
 
-        <div className="mt-10">
+        {(() => {
+          const activeChallenges = myChallenges.filter((p) => p.status === 'active')
+
+          return (
+            <div className={`mt-8 rounded-3xl border ${t.hair} p-4`}>
+              <button
+                type="button"
+                onClick={() => setScreen('challenges')}
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <span className="flex items-center gap-2.5">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
+                    strokeLinejoin="round" className={t.mark}>
+                    <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z" />
+                    <path d="M17 5h2.5a1.5 1.5 0 0 1 0 3H17M7 5H4.5a1.5 1.5 0 0 0 0 3H7" />
+                  </svg>
+                  <span className="text-[16px] font-semibold">Active Challenges</span>
+                </span>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="1.8"
+                  strokeLinecap="round" strokeLinejoin="round" className={t.muted}>
+                  <path d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+
+              {challengesLoading && myChallenges.length === 0 ? null : activeChallenges.length === 0 ? (
+                <div className="mt-3">
+                  <p className={`text-[14px] leading-relaxed ${t.muted}`}>
+                    You're not participating in any challenges yet. Explore challenges and find one that fits your routine.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setScreen('challenges')}
+                    className={`mt-3 text-[14px] font-semibold ${t.mark}`}
+                  >
+                    Explore challenges →
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-3.5 flex flex-col gap-3">
+                  {missingAmSunscreen &&
+                    activeChallenges.some((p) => p.challenges?.rule === 'am_sunscreen') &&
+                    renderSunscreenMissingNotice()}
+                  {activeChallenges.slice(0, 2).map((p) => renderChallengeProgressCard(p, 'today'))}
+                  {activeChallenges.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setScreen('challenges')}
+                      className={`text-left text-[13px] font-semibold ${t.mark}`}
+                    >
+                      View all ({activeChallenges.length})
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
+        <div id="am-routine" className="mt-10 scroll-mt-6">
           <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
             Morning
           </p>
