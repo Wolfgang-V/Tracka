@@ -6921,7 +6921,7 @@ if (screen === 'challengeDetail') {
             <div className="flex items-center">
               <button
                 type="button"
-                aria-label="Invite friends to join"
+                aria-label="Invite a friend"
                 onClick={() => shareChallenge(challenge, participation)}
                 className={`flex h-10 w-10 items-center justify-center rounded-full ${t.muted}`}
               >
@@ -7064,7 +7064,7 @@ if (screen === 'challengeDetail') {
               <circle cx="9" cy="8" r="3.5" />
               <path d="M2.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6" />
             </svg>
-            Invite friends to join
+            Invite a friend
           </button>
 
         </div>
@@ -7166,7 +7166,7 @@ if (screen === 'challengeDetail') {
           onClick={() => shareChallenge(challenge, null)}
           className={`mt-3 py-2 text-[14px] font-semibold ${t.mark}`}
         >
-          Invite a friend to do it with you
+          Invite a friend
         </button>
 
       </div>
