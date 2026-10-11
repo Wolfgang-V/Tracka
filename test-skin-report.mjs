@@ -46,7 +46,13 @@ assert.deepEqual(calculateStreaks(completed, '2026-10-04', '2026-10-01', '2026-1
   current: 4,
   longest: 4,
 })
+// Today not finished yet — streak is still alive from yesterday.
 assert.deepEqual(calculateStreaks(completed, '2026-10-05', '2026-10-01', '2026-11-01'), {
+  current: 4,
+  longest: 4,
+})
+// A whole day missed — streak is broken.
+assert.deepEqual(calculateStreaks(completed, '2026-10-06', '2026-10-01', '2026-11-01'), {
   current: 0,
   longest: 4,
 })

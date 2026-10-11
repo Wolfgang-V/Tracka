@@ -6,7 +6,8 @@ import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
 import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
 import { calculateRoutineCompletion, calculateStreaks } from './lib/core/skinReport'
-import { generateStreakImage, generateSkinReportImage, isMilestoneStreak } from './lib/shareImage'
+import { generateStreakImage, generateSkinReportImage, generateAwardImage, isMilestoneStreak } from './lib/shareImage'
+import { challengeAwards, challengeStreak, challengePoints, POINTS_PER_DAY, METALS, CUP_SHAPES, MEDAL_SHAPES } from './lib/core/awards'
 import { flameColorForStreak, FLAME_PATH, lighten, darken } from './lib/core/flameColor'
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
@@ -469,6 +470,9 @@ setRoutineHistory(groupedRoutines)
   const [challengeReturnScreen, setChallengeReturnScreen] = useState('challenges')
   const [challengeMenuOpen, setChallengeMenuOpen] = useState(false)
   const [showCompletedChallenges, setShowCompletedChallenges] = useState(false)
+  // The completed participation being celebrated (full-screen cup), or null.
+  const [celebration, setCelebration] = useState(null)
+  const [awardSaving, setAwardSaving] = useState(null)
   const [adminChallengeStats, setAdminChallengeStats] = useState([])
   const [adminChallengeStatsLoading, setAdminChallengeStatsLoading] = useState(true)
   const [adminChallengeParticipants, setAdminChallengeParticipants] = useState({})
@@ -1509,11 +1513,9 @@ const syncChallengesAfterTick = async () => {
   const activeIds = myChallenges.filter((p) => p.status === 'active').map((p) => p.id)
   if (activeIds.length === 0) return
 
-  const fresh = await loadChallenges()
-  const finished = (fresh || []).find((p) => activeIds.includes(p.id) && p.status === 'completed')
-  if (finished) {
-    notify(`You completed ${finished.challenges?.title || 'your challenge'}! 🎉`, 'success')
-  }
+  // loadChallenges itself raises the full-screen celebration if this tick
+  // just finished a challenge.
+  await loadChallenges()
 }
 
 const todayString = localDateString()
@@ -1744,14 +1746,89 @@ const renderChallengeImage = (challenge, className) =>
     </div>
   )
 
-const renderChallengeBar = (pct) => (
+const renderChallengeBar = (pct, fillClass = t.nodeDone) => (
   <div className={`h-2 w-full overflow-hidden rounded-full ${t.rail}`}>
     <div
-      className={`h-full rounded-full ${t.nodeDone}`}
+      className={`h-full rounded-full ${fillClass}`}
       style={{ width: `${pct > 0 ? Math.max(pct, 3) : 0}%` }}
     />
   </div>
 )
+
+// Same artwork as the saved PNG (shapes from core/awards). Locked awards
+// render as a flat grey silhouette so the next goal is visible.
+const renderAwardIcon = (award, size, locked = false) => {
+  const metal = METALS[award.metal] || METALS.gold
+  const gradId = `award-${award.key}`
+  const fill = locked ? (isNight ? '#2A3B52' : '#D5DDE8') : `url(#${gradId})`
+
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <linearGradient id={gradId} x1="0.2" y1="0.1" x2="0.8" y2="0.95">
+          <stop offset="0" stopColor={metal.light} />
+          <stop offset="0.45" stopColor={metal.mid} />
+          <stop offset="1" stopColor={metal.dark} />
+        </linearGradient>
+      </defs>
+      {award.kind === 'cup' ? (
+        <>
+          <path d={CUP_SHAPES.handles} fill="none" stroke={locked ? fill : metal.mid}
+            strokeWidth="5" strokeLinecap="round" />
+          <path d={CUP_SHAPES.stem} fill={fill} />
+          <path d={CUP_SHAPES.base} fill={fill} />
+          <path d={CUP_SHAPES.bowl} fill={fill} />
+          {!locked && <path d={CUP_SHAPES.star} fill="rgba(255,255,255,0.75)" />}
+        </>
+      ) : (
+        <>
+          <path d={MEDAL_SHAPES.ribbonLeft} fill={locked ? fill : metal.ribbon} />
+          <path d={MEDAL_SHAPES.ribbonRight} fill={locked ? fill : '#1B3FB0'} />
+          <circle cx="50" cy="64" r="30" fill={fill} />
+          <circle cx="50" cy="64" r="23" fill="none"
+            stroke={locked ? 'transparent' : 'rgba(255,255,255,0.55)'} strokeWidth="2" />
+          <text x="50" y="65" textAnchor="middle" dominantBaseline="middle"
+            fontFamily="Inter, sans-serif" fontWeight="700" fontSize="26"
+            fill={locked ? (isNight ? '#5F7593' : '#7488A3') : metal.dark}>
+            {award.badge}
+          </text>
+        </>
+      )}
+    </svg>
+  )
+}
+
+const renderAchievements = (participation) => {
+  const awards = challengeAwards(
+    (participation.challenge_days || []).map((d) => d.local_date),
+    participation.challenges?.duration_days || 30
+  )
+
+  return (
+    <div className="mt-7">
+      <p className="text-[17px] font-semibold">Your achievements</p>
+      <p className={`mt-0.5 text-[12px] ${t.faint}`}>Tap an earned one to save it.</p>
+      <div className="mt-3 grid grid-cols-4 gap-2">
+        {awards.map((award) => (
+          <button
+            key={award.key}
+            type="button"
+            disabled={!award.earned || !!awardSaving}
+            onClick={() => saveAward(award, participation)}
+            className={`flex flex-col items-center gap-1.5 rounded-2xl border ${t.hair} px-1 py-3 text-center ${
+              award.earned ? '' : 'opacity-70'
+            }`}
+          >
+            {renderAwardIcon(award, 44, !award.earned)}
+            <span className={`text-[11px] font-semibold leading-tight ${award.earned ? '' : t.faint}`}>
+              {awardSaving === award.key ? 'Saving…' : award.label}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 const renderChallengeProgressCard = (participation, returnTo) => {
   const { total, done, day } = challengeStats(participation)
@@ -2115,7 +2192,70 @@ const loadChallenges = async () => {
   setChallenges(catalogue.data || [])
   setMyChallenges(mine.data || [])
   setChallengesLoading(false)
+
+  // Celebrate each completion once per device, wherever the person happens
+  // to be when it's first seen (ticking day 30 on Today, or opening the app
+  // after finishing elsewhere).
+  let celebrated = []
+  try { celebrated = JSON.parse(localStorage.getItem('celebratedChallenges') || '[]') } catch { /* fresh */ }
+  const uncelebrated = (mine.data || []).find((p) => p.status === 'completed' && !celebrated.includes(p.id))
+  if (uncelebrated) setCelebration(uncelebrated)
+
   return mine.data || []
+}
+
+const dismissCelebration = () => {
+  if (celebration) {
+    try {
+      const celebrated = JSON.parse(localStorage.getItem('celebratedChallenges') || '[]')
+      localStorage.setItem('celebratedChallenges', JSON.stringify([...celebrated, celebration.id]))
+    } catch { /* worst case it celebrates again next time */ }
+  }
+  setCelebration(null)
+}
+
+// Saves a cup/medal as an image — same share-sheet-then-download tiers as
+// shareStreak, so on phones it can go straight to Photos/Instagram/WhatsApp.
+const saveAward = async (award, participation) => {
+  if (awardSaving) return
+  setAwardSaving(award.key)
+
+  try {
+    const challengeTitle = participation.challenges?.title || 'Challenge'
+    const earnedOn = award.kind === 'cup' && participation.completed_at
+      ? new Date(participation.completed_at)
+      : new Date()
+    const blob = await generateAwardImage({
+      award,
+      challengeTitle,
+      dateLabel: earnedOn.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+      isNight,
+    })
+    const fileName = `tracka-${award.kind === 'cup' ? 'cup' : `medal-${award.key}`}.png`
+    const file = new File([blob], fileName, { type: 'image/png' })
+    const caption = award.kind === 'cup'
+      ? `🏆 I completed ${challengeTitle} on Tracka+`
+      : `🏅 ${award.label} — ${challengeTitle} on Tracka+`
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Tracka+', text: caption })
+    } else {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      a.click()
+      URL.revokeObjectURL(url)
+      notify('Saved — find it in your downloads.', 'success')
+    }
+  } catch (err) {
+    if (err?.name !== 'AbortError') {
+      console.error('SAVE AWARD ERROR:', err)
+      notify('Could not save the image. Please try again.')
+    }
+  } finally {
+    setAwardSaving(null)
+  }
 }
 
 const openChallenge = (challengeId, returnTo = 'challenges') => {
@@ -6837,12 +6977,8 @@ if (screen === 'challenges') {
                         onClick={() => openChallenge(p.challenge_id, 'challenges')}
                         className={`flex items-center gap-3 rounded-2xl ${t.surface} p-3.5 text-left`}
                       >
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-400/10 text-emerald-500">
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="9" r="5" />
-                            <path d="M8.5 13.5L7 21l5-2.5 5 2.5-1.5-7.5" />
-                          </svg>
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-400/15">
+                          {renderAwardIcon({ key: 'complete', kind: 'cup', metal: 'gold' }, 30)}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[15px] font-semibold">{p.challenges?.title}</span>
@@ -6982,76 +7118,201 @@ if (screen === 'challengeDetail') {
             <p className={`mt-1.5 text-[15px] leading-relaxed ${t.muted}`}>{challenge.active_subtitle}</p>
           )}
 
-          <div className={`mt-6 border-t ${t.hair}`} aria-hidden="true" />
 
-          <div className="mt-6">
-            <div className="flex items-baseline justify-between">
-              <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.muted}`}>
-                Day {day} of {total}
-              </p>
-              <p className="text-[18px] font-semibold">{done}/{total} days</p>
-            </div>
-            <div className="mt-3">{renderChallengeBar(pct)}</div>
-            <p className={`mt-2 text-[13px] ${t.faint}`}>
-              {done}/{total} days completed · {pct}% complete
-            </p>
-          </div>
+          {(() => {
+            const dates = (participation.challenge_days || []).map((d) => d.local_date).sort()
+            const streak = challengeStreak(dates, todayString)
+            const best = (() => {
+              let longest = 0, run = 0, prev = null
+              for (const d of dates) {
+                run = prev && addDays(prev, 1) === d ? run + 1 : 1
+                longest = Math.max(longest, run)
+                prev = d
+              }
+              return longest
+            })()
+            const points = challengePoints(done)
+            const awards = challengeAwards(dates, total)
+            const half = Math.ceil(total / 2)
 
-          {missingAmSunscreen && challenge.rule === 'am_sunscreen' && !doneToday &&
-            renderSunscreenMissingNotice('mt-6')}
+            // The nearest unearned reward, phrased as what it takes to get it.
+            // Next milestone, shown quietly under the track. Skipped before
+            // the first day — the check-in card below already covers that.
+            const nextAward = awards.find((a) => !a.earned && a.key !== 'first')
+            const remaining = !nextAward
+              ? 0
+              : nextAward.key === 'week'
+              ? 7 - streak
+              : (nextAward.key === 'half' ? half : total) - done
+            const nextLine = !nextAward || done === 0
+              ? null
+              : {
+                  name: nextAward.key === 'week' ? 'Silver medal' : nextAward.key === 'half' ? 'Gold medal' : 'The cup',
+                  detail: nextAward.key === 'week'
+                    ? `${remaining} ${remaining === 1 ? 'day' : 'days'} in a row`
+                    : `${remaining} ${remaining === 1 ? 'day' : 'days'} to go`,
+                }
 
-          <div className={`mt-6 rounded-3xl border ${t.hair} ${t.surface} p-5`}>
-            {doneToday ? (
+            // Progress ring geometry.
+            const R = 52
+            const C = 2 * Math.PI * R
+
+            return (
               <>
-                <p className="flex items-center gap-2.5 text-[17px] font-semibold">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                    strokeLinejoin="round" className="shrink-0 text-emerald-500">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M8 12.5l2.7 2.7L16 10" />
-                  </svg>
-                  Today's goal completed!
-                </p>
-                <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>
-                  You've ticked sunscreen in your morning routine. Your challenge progress has been updated automatically.
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="text-[17px] font-semibold">Today's goal</p>
-                <p className="mt-2 text-[15px] leading-relaxed">
-                  {challenge.goal_text || 'Complete the sunscreen step in your morning routine.'}
-                </p>
-                <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>
-                  Your progress updates automatically when you tick sunscreen.
-                </p>
-              </>
-            )}
-          </div>
+                <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
+                  <div className="flex items-center gap-5">
+                    <div className="relative h-[124px] w-[124px] shrink-0">
+                      <svg width="124" height="124" viewBox="0 0 124 124" className="-rotate-90">
+                        <defs>
+                          <linearGradient id="challenge-ring" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0" stopColor="#F5C451" />
+                            <stop offset="1" stopColor="#E08A1E" />
+                          </linearGradient>
+                        </defs>
+                        <circle cx="62" cy="62" r={R} fill="none" strokeWidth="10"
+                          className={isNight ? 'stroke-white/10' : 'stroke-[#101B2D]/8'} />
+                        <circle cx="62" cy="62" r={R} fill="none" strokeWidth="10"
+                          stroke="url(#challenge-ring)" strokeLinecap="round"
+                          strokeDasharray={C}
+                          strokeDashoffset={C * (1 - done / total)}
+                          style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-[30px] font-semibold leading-none">{done}</span>
+                        <span className={`mt-1 text-[11px] font-medium ${t.faint}`}>of {total} days</span>
+                      </div>
+                    </div>
 
-          {doneToday && (
-            <div className="mt-7 text-center">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C08A3E"
-                strokeWidth="1.6" strokeLinecap="round" className="mx-auto">
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" />
-              </svg>
-              <p className="mt-2 text-[17px] font-semibold">
-                {done === 1 ? 'One day down.' : `${done} days down.`} Keep going.
-              </p>
-              <p className={`mt-1 text-[14px] ${t.muted}`}>Come back tomorrow and tick sunscreen again.</p>
-            </div>
-          )}
+                    <div className="flex min-w-0 flex-1 flex-col gap-3">
+                      <div>
+                        <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Points</p>
+                        <p className="text-[22px] font-semibold leading-tight text-amber-500">{points}</p>
+                      </div>
+                      <div className="flex gap-5">
+                        <div>
+                          <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Streak</p>
+                          <p className="flex items-center gap-1 text-[17px] font-semibold leading-tight">
+                            {streak}
+                            {streak > 0 && (
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill={flameColorForStreak(streak)}>
+                                <path d={FLAME_PATH} />
+                              </svg>
+                            )}
+                          </p>
+                        </div>
+                        <div>
+                          <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Best</p>
+                          <p className="text-[17px] font-semibold leading-tight">{best}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-          <button
-            type="button"
-            onClick={goToMorningRoutine}
-            className={`mt-7 w-full rounded-2xl py-[18px] text-base font-bold ${
-              doneToday ? `border ${t.hair} ${t.muted}` : t.btn
-            }`}
-          >
-            Go to morning routine
-          </button>
+                  <p className={`mt-4 text-[13px] ${t.muted}`}>
+                    Day {day} of {total} · {pct}% complete
+                  </p>
+
+                  {/* 30-dot journey. The halfway medal and the cup sit on the
+                      track itself so the distance to each is visible. */}
+                  <div className="mt-3 grid grid-cols-10 gap-1.5">
+                    {Array.from({ length: total }).map((_, i) => {
+                      const n = i + 1
+                      const filled = n <= done
+                      const isNext = n === done + 1 && !doneToday
+                      if (n === half || n === total) {
+                        const award = awards.find((a) => a.key === (n === total ? 'complete' : 'half'))
+                        return (
+                          <span key={n} className="flex aspect-square items-center justify-center"
+                            title={award.label}>
+                            {renderAwardIcon(award, 26, !award.earned)}
+                          </span>
+                        )
+                      }
+                      return (
+                        <span key={n} className="flex aspect-square items-center justify-center">
+                          <span
+                            className={`block h-3.5 w-3.5 rounded-full transition ${
+                              filled
+                                ? 'bg-gradient-to-br from-[#F5C451] to-[#E08A1E]'
+                                : isNext
+                                ? 'animate-pulse border-2 border-amber-500'
+                                : isNight ? 'bg-white/10' : 'bg-[#101B2D]/8'
+                            }`}
+                          />
+                        </span>
+                      )
+                    })}
+                  </div>
+
+                  {nextLine && (
+                    <div className={`mt-5 flex items-center justify-between gap-3 border-t pt-4 ${t.hair}`}>
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="shrink-0">{renderAwardIcon(nextAward, 28, true)}</span>
+                        <div className="min-w-0">
+                          <p className={`text-[10px] font-semibold uppercase tracking-[0.18em] ${t.faint}`}>Next</p>
+                          <p className="truncate text-[14px] font-medium">{nextLine.name}</p>
+                        </div>
+                      </div>
+                      <p className={`shrink-0 text-[13px] ${t.muted}`}>{nextLine.detail}</p>
+                    </div>
+                  )}
+                </div>
+
+                {missingAmSunscreen && challenge.rule === 'am_sunscreen' && !doneToday &&
+                  renderSunscreenMissingNotice('mt-4')}
+
+                <div className={`mt-4 rounded-3xl border p-5 ${
+                  doneToday ? 'border-emerald-400/30 bg-emerald-400/5' : `${t.hair} ${t.surface}`
+                }`}>
+                  <div className="flex items-start gap-3">
+                    <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                      doneToday ? 'bg-emerald-500 text-white' : 'bg-amber-400/15 text-amber-500'
+                    }`}>
+                      {doneToday ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 12.5l4.5 4.5L19 7.5" />
+                        </svg>
+                      ) : (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                          <circle cx="12" cy="12" r="4" />
+                          <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" />
+                        </svg>
+                      )}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[16px] font-semibold">Today's sunscreen check-in</p>
+                      <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                        {doneToday
+                          ? `+${POINTS_PER_DAY} points. ${done === 1 ? 'One day down' : `${done} days down`} — come back tomorrow and tick sunscreen again.`
+                          : challenge.goal_text || 'Complete the sunscreen step in your morning routine.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {doneToday ? (
+                    <p className="mt-4 rounded-2xl bg-emerald-500/10 py-3 text-center text-[14px] font-semibold text-emerald-600">
+                      Checked in for today ✓
+                    </p>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={goToMorningRoutine}
+                        className={`mt-4 w-full rounded-2xl py-4 text-[15px] font-bold ${t.btn}`}
+                      >
+                        Go to morning routine
+                      </button>
+                      <p className={`mt-2 text-center text-[12px] ${t.faint}`}>
+                        Progress updates automatically when you tick sunscreen.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </>
+            )
+          })()}
 
           <button
             type="button"
@@ -7066,6 +7327,8 @@ if (screen === 'challengeDetail') {
             </svg>
             Invite a friend
           </button>
+
+          {renderAchievements(participation)}
 
         </div>
       </main>
@@ -7100,26 +7363,36 @@ if (screen === 'challengeDetail') {
           A little consistency goes a long way.
         </p>
 
-        {lastCompleted && (
-          <div className="mt-5 flex items-center gap-3 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="9" r="5" />
-                <path d="M8.5 13.5L7 21l5-2.5 5 2.5-1.5-7.5" />
-              </svg>
-            </span>
-            <span>
-              <span className="block text-[15px] font-semibold">Challenge complete!</span>
-              <span className={`block text-[13px] ${t.muted}`}>
-                You finished all {challenge.duration_days} days on{' '}
-                {new Date(lastCompleted.completed_at).toLocaleDateString('en-GB', {
-                  day: 'numeric', month: 'long', year: 'numeric',
-                })}.
-              </span>
-            </span>
-          </div>
-        )}
+        {lastCompleted && (() => {
+          const cup = challengeAwards(
+            (lastCompleted.challenge_days || []).map((d) => d.local_date),
+            challenge.duration_days
+          ).find((a) => a.kind === 'cup')
+
+          return (
+            <>
+              <div className="mt-5 rounded-3xl border border-amber-400/40 bg-amber-400/10 p-5 text-center">
+                <div className="flex justify-center">{renderAwardIcon(cup, 96)}</div>
+                <p className="mt-2 text-[18px] font-semibold">Challenge complete!</p>
+                <p className={`mt-1 text-[13px] ${t.muted}`}>
+                  You finished all {challenge.duration_days} days on{' '}
+                  {new Date(lastCompleted.completed_at).toLocaleDateString('en-GB', {
+                    day: 'numeric', month: 'long', year: 'numeric',
+                  })}.
+                </p>
+                <button
+                  type="button"
+                  disabled={!!awardSaving}
+                  onClick={() => saveAward(cup, lastCompleted)}
+                  className={`mt-4 w-full rounded-2xl py-3 text-[14px] font-bold ${t.btn} disabled:opacity-60`}
+                >
+                  {awardSaving === 'complete' ? 'Preparing…' : 'Save my cup'}
+                </button>
+              </div>
+              {renderAchievements(lastCompleted)}
+            </>
+          )
+        })()}
 
         {challenge.description && (
           <section className="mt-7">
@@ -10292,6 +10565,82 @@ if (screen === 'progressPhotos') {
           </div>
         </div>
       )}
+
+      {celebration && (() => {
+        const cup = challengeAwards(
+          (celebration.challenge_days || []).map((d) => d.local_date),
+          celebration.challenges?.duration_days || 30
+        ).find((a) => a.kind === 'cup')
+        const CONFETTI = ['#E8B931', '#2554EB', '#F2C59A', '#8FB8E8', '#E86A5C', '#4CAF7A']
+
+        return (
+          <div className={`fixed inset-0 z-40 flex flex-col items-center justify-center overflow-hidden px-6 ${t.page}`}>
+            <style>{`
+              @keyframes tracka-confetti { 0% { transform: translateY(-10vh) rotate(0deg); opacity: 1 } 100% { transform: translateY(110vh) rotate(720deg); opacity: 0.9 } }
+              @keyframes tracka-cup-pop { 0% { transform: scale(0.3) rotate(-8deg); opacity: 0 } 60% { transform: scale(1.12) rotate(3deg); opacity: 1 } 100% { transform: scale(1) rotate(0) } }
+              @keyframes tracka-glow { 0%, 100% { opacity: 0.55 } 50% { opacity: 1 } }
+              @media (prefers-reduced-motion: reduce) { .tracka-anim { animation: none !important } }
+            `}</style>
+
+            {Array.from({ length: 36 }).map((_, i) => (
+              <span
+                key={i}
+                aria-hidden="true"
+                className="tracka-anim pointer-events-none absolute top-0 block rounded-sm"
+                style={{
+                  left: `${(i * 37) % 100}%`,
+                  width: i % 3 === 0 ? 6 : 9,
+                  height: i % 3 === 0 ? 14 : 9,
+                  background: CONFETTI[i % CONFETTI.length],
+                  animation: `tracka-confetti ${2.6 + (i % 5) * 0.45}s linear ${(i % 9) * 0.18}s infinite`,
+                }}
+              />
+            ))}
+
+            <div className="relative flex items-center justify-center">
+              <div
+                aria-hidden="true"
+                className="tracka-anim absolute h-72 w-72 rounded-full"
+                style={{
+                  background: 'radial-gradient(circle, rgba(232,185,49,0.45) 0%, rgba(232,185,49,0) 70%)',
+                  animation: 'tracka-glow 2.4s ease-in-out infinite',
+                }}
+              />
+              <div className="tracka-anim relative" style={{ animation: 'tracka-cup-pop 0.9s cubic-bezier(.2,.9,.3,1.2) both' }}>
+                {renderAwardIcon(cup, 220)}
+              </div>
+            </div>
+
+            <p className="relative mt-6 text-[13px] font-semibold uppercase tracking-[0.2em] text-amber-500">
+              Challenge complete
+            </p>
+            <h2 className="relative mt-2 text-center font-display text-[40px] font-light leading-[1.05] tracking-tight">
+              {celebration.challenges?.title}
+            </h2>
+            <p className={`relative mt-3 max-w-xs text-center text-[15px] leading-relaxed ${t.muted}`}>
+              You showed up for all {celebration.challenges?.duration_days || 30} days. That's a real habit now — well done.
+            </p>
+
+            <div className="relative mt-8 flex w-full max-w-sm flex-col gap-3">
+              <button
+                type="button"
+                disabled={!!awardSaving}
+                onClick={() => saveAward(cup, celebration)}
+                className={`w-full rounded-2xl py-4 text-base font-bold ${t.btn} disabled:opacity-60`}
+              >
+                {awardSaving === 'complete' ? 'Preparing…' : 'Save my cup'}
+              </button>
+              <button
+                type="button"
+                onClick={dismissCelebration}
+                className={`w-full rounded-2xl border py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        )
+      })()}
 
       {confirmState && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6">

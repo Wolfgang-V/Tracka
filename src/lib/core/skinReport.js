@@ -61,12 +61,13 @@ export function calculateStreaks(completedDates, today, monthStart, monthEnd) {
   const allDates = new Set(completedDates)
   let current = 0
 
-  if (allDates.has(today)) {
-    let date = today
-    while (allDates.has(date)) {
-      current += 1
-      date = addDays(date, -1)
-    }
+  // Today not done *yet* doesn't break a streak — it only breaks once a
+  // whole day is missed. Counting only from today used to show 0 every
+  // morning until that day's routine was finished.
+  let date = allDates.has(today) ? today : addDays(today, -1)
+  while (allDates.has(date)) {
+    current += 1
+    date = addDays(date, -1)
   }
 
   const monthDates = [...allDates]

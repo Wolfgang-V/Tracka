@@ -7,6 +7,7 @@
 // share card too, not a surprise dark one.
 
 import { flameColorForStreak, FLAME_PATH, lighten, darken } from './core/flameColor'
+import { METALS, CUP_SHAPES, MEDAL_SHAPES } from './core/awards'
 
 const WIDTH = 1080
 const HEIGHT = 1920
@@ -426,6 +427,164 @@ export async function generateSkinReportImage({ report, isNight = true }) {
   ctx.textAlign = 'center'
   hairline(ctx, WIDTH / 2, HEIGHT - 150, 60, `rgba(${p.accentRgb},0.4)`)
 
+  ctx.fillStyle = p.faint
+  ctx.font = '500 30px Inter'
+  ctx.letterSpacing = '2px'
+  ctx.fillText('TRACKAPLUS.APP', WIDTH / 2, HEIGHT - 96)
+  ctx.letterSpacing = '0px'
+
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+}
+
+// Draws a cup or medal from the shared shapes in core/awards.js, centred on
+// (cx, cy) at `size` px across. Same artwork as the in-app icons.
+function drawAward(ctx, award, cx, cy, size) {
+  const metal = METALS[award.metal] || METALS.gold
+  ctx.save()
+  ctx.translate(cx - size / 2, cy - size / 2)
+  ctx.scale(size / 100, size / 100)
+
+  const shine = ctx.createLinearGradient(20, 10, 80, 95)
+  shine.addColorStop(0, metal.light)
+  shine.addColorStop(0.45, metal.mid)
+  shine.addColorStop(1, metal.dark)
+
+  if (award.kind === 'cup') {
+    ctx.strokeStyle = metal.mid
+    ctx.lineWidth = 5
+    ctx.lineCap = 'round'
+    ctx.stroke(new Path2D(CUP_SHAPES.handles))
+    ctx.fillStyle = shine
+    ctx.fill(new Path2D(CUP_SHAPES.stem))
+    ctx.fill(new Path2D(CUP_SHAPES.base))
+    ctx.fill(new Path2D(CUP_SHAPES.bowl))
+    ctx.fillStyle = 'rgba(255,255,255,0.75)'
+    ctx.fill(new Path2D(CUP_SHAPES.star))
+    // Gloss on the bowl.
+    ctx.beginPath()
+    ctx.ellipse(37, 30, 3.5, 10, -0.15, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'
+    ctx.fill()
+  } else {
+    ctx.fillStyle = metal.ribbon
+    ctx.fill(new Path2D(MEDAL_SHAPES.ribbonLeft))
+    ctx.fillStyle = darken(metal.ribbon, 0.25)
+    ctx.fill(new Path2D(MEDAL_SHAPES.ribbonRight))
+
+    ctx.beginPath()
+    ctx.arc(50, 64, 30, 0, Math.PI * 2)
+    ctx.fillStyle = shine
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(50, 64, 23, 0, Math.PI * 2)
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+    ctx.lineWidth = 2
+    ctx.stroke()
+
+    ctx.fillStyle = metal.dark
+    ctx.font = '700 26px Inter'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(award.badge, 50, 65)
+  }
+
+  ctx.restore()
+}
+
+/**
+ * A saveable cup/medal card — same frame as the streak share.
+ *
+ * @param award          one entry from challengeAwards()
+ * @param challengeTitle e.g. "30 Days of SPF"
+ * @param dateLabel      when it was earned
+ * @param isNight        whether the app itself is currently in dark mode
+ * @returns Promise<Blob> PNG
+ */
+export async function generateAwardImage({ award, challengeTitle, dateLabel, isNight = true }) {
+  await document.fonts.load('600 64px Inter')
+  await document.fonts.load('700 26px Inter')
+  await document.fonts.load('500 96px "Cormorant Garamond"')
+  await document.fonts.ready
+
+  const p = isNight ? PALETTES.dark : PALETTES.light
+
+  const canvas = document.createElement('canvas')
+  canvas.width = WIDTH
+  canvas.height = HEIGHT
+  const ctx = canvas.getContext('2d')
+
+  ctx.fillStyle = p.bg
+  ctx.fillRect(0, 0, WIDTH, HEIGHT)
+
+  // Warm gold glow behind the award instead of the usual blue.
+  const glow = ctx.createRadialGradient(WIDTH / 2, 760, 40, WIDTH / 2, 760, 700)
+  glow.addColorStop(0, 'rgba(232,185,49,0.28)')
+  glow.addColorStop(1, 'rgba(232,185,49,0)')
+  ctx.fillStyle = glow
+  ctx.fillRect(0, 0, WIDTH, HEIGHT)
+
+  // Rays.
+  ctx.save()
+  ctx.translate(WIDTH / 2, 760)
+  ctx.strokeStyle = 'rgba(232,185,49,0.18)'
+  ctx.lineWidth = 6
+  ctx.lineCap = 'round'
+  for (let i = 0; i < 16; i++) {
+    ctx.rotate((Math.PI * 2) / 16)
+    ctx.beginPath()
+    ctx.moveTo(0, -400)
+    ctx.lineTo(0, -470)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  try {
+    const icon = await loadImage('/icons/icon-192.png')
+    ctx.save()
+    roundRect(ctx, 72, 96, 56, 56, 14)
+    ctx.clip()
+    ctx.drawImage(icon, 72, 96, 56, 56)
+    ctx.restore()
+  } catch {
+    // Wordmark text alone is enough if the icon fails to load.
+  }
+
+  ctx.fillStyle = p.ink
+  ctx.font = '600 34px Inter'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText('TRACKA+', 148, 124)
+
+  drawAward(ctx, award, WIDTH / 2, 760, award.kind === 'cup' ? 620 : 560)
+
+  ctx.textAlign = 'center'
+  hairline(ctx, WIDTH / 2, 1170, 100, '#E8B931')
+
+  ctx.fillStyle = '#C99A1E'
+  ctx.font = '500 30px Inter'
+  ctx.letterSpacing = '6px'
+  ctx.fillText(award.kind === 'cup' ? 'CHALLENGE COMPLETE' : 'MEDAL EARNED', WIDTH / 2, 1235)
+  ctx.letterSpacing = '0px'
+
+  ctx.fillStyle = p.ink
+  ctx.font = '500 92px "Cormorant Garamond"'
+  let y = 1350
+  for (const line of wrapText(ctx, award.kind === 'cup' ? challengeTitle : award.label, 900)) {
+    ctx.fillText(line, WIDTH / 2, y)
+    y += 100
+  }
+
+  ctx.fillStyle = p.muted
+  ctx.font = '500 38px Inter'
+  ctx.fillText(award.kind === 'cup' ? award.blurb : `${challengeTitle} · ${award.blurb}`, WIDTH / 2, y + 10)
+
+  if (dateLabel) {
+    ctx.fillStyle = p.faint
+    ctx.font = '500 30px Inter'
+    ctx.fillText(dateLabel, WIDTH / 2, y + 80)
+  }
+
+  hairline(ctx, WIDTH / 2, HEIGHT - 150, 60, `rgba(${p.accentRgb},0.4)`)
   ctx.fillStyle = p.faint
   ctx.font = '500 30px Inter'
   ctx.letterSpacing = '2px'
