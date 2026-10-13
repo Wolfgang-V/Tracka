@@ -473,6 +473,9 @@ setRoutineHistory(groupedRoutines)
   // The completed participation being celebrated (full-screen cup), or null.
   const [celebration, setCelebration] = useState(null)
   const [awardSaving, setAwardSaving] = useState(null)
+  const [leaderboard, setLeaderboard] = useState([])
+  const [leaderboardLoading, setLeaderboardLoading] = useState(true)
+  const [leaderboardNoticeDismissed, setLeaderboardNoticeDismissed] = useState(false)
   const [adminChallengeStats, setAdminChallengeStats] = useState([])
   const [adminChallengeStatsLoading, setAdminChallengeStatsLoading] = useState(true)
   const [adminChallengeParticipants, setAdminChallengeParticipants] = useState({})
@@ -1987,6 +1990,12 @@ useEffect(() => {
     openPendingChallenge()
   }
 
+  if (screen === 'challengeLeaderboard') {
+    setLeaderboardNoticeDismissed(false)
+    loadLeaderboard()
+    loadChallenges()
+  }
+
   if (screen === 'challenges' || screen === 'challengeDetail') {
     loadChallenges()
     loadRoutines()
@@ -2285,6 +2294,34 @@ const openPendingChallenge = async () => {
     .maybeSingle()
 
   if (data?.id) openChallenge(data.id, 'today')
+}
+
+const loadLeaderboard = async (challengeId = selectedChallengeId) => {
+  if (!challengeId) return
+  setLeaderboardLoading(true)
+  const { data, error } = await supabase.rpc('challenge_leaderboard', { p_challenge_id: challengeId })
+  if (error) {
+    console.error('LEADERBOARD ERROR:', error)
+    notify('Could not load the leaderboard.')
+    setLeaderboardLoading(false)
+    return
+  }
+  setLeaderboard(data || [])
+  setLeaderboardLoading(false)
+}
+
+const setLeaderboardHidden = async (challengeId, hidden) => {
+  const { error } = await supabase.rpc('set_leaderboard_visibility', {
+    p_challenge_id: challengeId,
+    p_hidden: hidden,
+  })
+  if (error) {
+    console.error('LEADERBOARD VISIBILITY ERROR:', error)
+    notify('Could not update your leaderboard setting.')
+    return
+  }
+  await Promise.all([loadLeaderboard(challengeId), loadChallenges()])
+  notify(hidden ? 'Your name is now private on the leaderboard.' : 'Your name is now shown on the leaderboard.', 'success')
 }
 
 const joinChallenge = async (challenge) => {
@@ -5257,7 +5294,7 @@ if (screen === 'admin') {
                         onClick={() => toggleAdminChallengeParticipants(c.challenge_id)}
                         className={`mt-3 w-full rounded-xl border px-3 py-2 text-[12px] font-semibold ${t.hair} ${t.muted}`}
                       >
-                        {isOpen ? 'Hide participants' : 'View participants'}
+                        {isOpen ? 'Hide leaderboard' : 'Leaderboard & participants'}
                       </button>
 
                       {isOpen && (
@@ -5271,8 +5308,18 @@ if (screen === 'admin') {
                               <div key={p.participant_id} className={`rounded-xl ${t.surface} p-3`}>
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
-                                    <p className="truncate text-[14px] font-semibold">
-                                      {p.username || 'No username'}
+                                    <p className="flex items-center gap-2 truncate text-[14px] font-semibold">
+                                      {p.rank && (
+                                        <span className="shrink-0 rounded-md bg-amber-400/15 px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-amber-600">
+                                          #{p.rank}
+                                        </span>
+                                      )}
+                                      <span className="truncate">{p.username || 'No username'}</span>
+                                      {p.hidden && (
+                                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${t.hair} ${t.faint}`}>
+                                          Hidden
+                                        </span>
+                                      )}
                                     </p>
                                     <p className={`truncate text-[12px] ${t.muted}`}>{p.email}</p>
                                   </div>
@@ -7314,19 +7361,33 @@ if (screen === 'challengeDetail') {
             )
           })()}
 
-          <button
-            type="button"
-            onClick={() => shareChallenge(challenge, participation)}
-            className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border py-3.5 text-[15px] font-semibold ${t.hair} ${t.mark}`}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="9" cy="8" r="3.5" />
-              <path d="M2.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6" />
-            </svg>
-            Invite a friend
-          </button>
+          <div className="mt-4 grid grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setScreen('challengeLeaderboard')}
+              className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair}`}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                <path d="M4 20V13h4v7M10 20V8h4v12M16 20v-9h4v9M3 20h18" />
+              </svg>
+              Leaderboard
+            </button>
+            <button
+              type="button"
+              onClick={() => shareChallenge(challenge, participation)}
+              className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} ${t.mark}`}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="9" cy="8" r="3.5" />
+                <path d="M2.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6" />
+              </svg>
+              Invite a friend
+            </button>
+          </div>
 
           {renderAchievements(participation)}
 
@@ -7423,6 +7484,10 @@ if (screen === 'challengeDetail') {
           <span className="text-[15px] font-semibold">{challenge.duration_days} days</span>
         </div>
 
+        <p className={`mt-4 text-[12px] leading-relaxed ${t.faint}`}>
+          Joining adds your username and days to this challenge's public leaderboard. You can hide your name at any time from the leaderboard.
+        </p>
+
         <button
           type="button"
           disabled={!!busyAction}
@@ -7434,13 +7499,251 @@ if (screen === 'challengeDetail') {
             : lastCompleted ? 'Join again' : 'Join challenge'}
         </button>
 
+        <div className="mt-3 flex items-center justify-center gap-6">
+          <button
+            type="button"
+            onClick={() => setScreen('challengeLeaderboard')}
+            className={`py-2 text-[14px] font-semibold ${t.mark}`}
+          >
+            See the leaderboard
+          </button>
+          <button
+            type="button"
+            onClick={() => shareChallenge(challenge, null)}
+            className={`py-2 text-[14px] font-semibold ${t.mark}`}
+          >
+            Invite a friend
+          </button>
+        </div>
+
+      </div>
+    </main>
+  )
+}
+
+if (screen === 'challengeLeaderboard') {
+  const challenge =
+    challenges.find((c) => c.id === selectedChallengeId) ||
+    myChallenges.find((p) => p.challenge_id === selectedChallengeId)?.challenges
+  const total = challenge?.duration_days || 30
+  const me = leaderboard.find((r) => r.is_me)
+  const myParticipation = myChallenges.find(
+    (p) => p.challenge_id === selectedChallengeId && p.status !== 'left'
+  )
+  const podium = leaderboard.slice(0, 3)
+  const rest = leaderboard.slice(3)
+  const PODIUM_METAL = ['gold', 'silver', 'bronze']
+
+  const nameFor = (row) =>
+    row.is_me ? 'You' : row.display_name || 'Private participant'
+
+  // Everyone who joined before the leaderboard existed is listed by name by
+  // default, so the first visit says so, with the switch right there.
+  const noticeKey = `leaderboardNoticeSeen-${selectedChallengeId}`
+  let noticeSeen = leaderboardNoticeDismissed
+  if (!noticeSeen) {
+    try { noticeSeen = localStorage.getItem(noticeKey) === '1' } catch { noticeSeen = true }
+  }
+  const dismissNotice = () => {
+    try { localStorage.setItem(noticeKey, '1') } catch { /* still hidden for this session */ }
+    setLeaderboardNoticeDismissed(true)
+  }
+
+  return (
+    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
+
         <button
-          type="button"
-          onClick={() => shareChallenge(challenge, null)}
-          className={`mt-3 py-2 text-[14px] font-semibold ${t.mark}`}
+          onClick={() => setScreen('challengeDetail')}
+          className={`-ml-2 flex items-center gap-1 self-start py-2 text-[15px] ${t.muted}`}
         >
-          Invite a friend
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          {challenge?.title || 'Challenge'}
         </button>
+
+        <div className="mt-5">
+          <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${t.faint}`}>
+            {challenge?.title}
+          </p>
+          <h1 className="mt-1 font-display text-[36px] font-light leading-[1.05] tracking-tight">
+            Leaderboard
+          </h1>
+          <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>
+            Ranked by days completed. Ties go to whoever got there first.
+          </p>
+        </div>
+
+        {myParticipation && !noticeSeen && (
+          <div className={`mt-6 rounded-3xl border ${t.hair} ${t.surface} p-5`}>
+            <p className="text-[15px] font-semibold">
+              {myParticipation.hide_from_leaderboard ? 'Your name is hidden here' : 'Your name shows here'}
+            </p>
+            <p className={`mt-1.5 text-[13px] leading-relaxed ${t.muted}`}>
+              {myParticipation.hide_from_leaderboard
+                ? 'Other people see you as "Private participant". Your position and days still count.'
+                : `Other Tracka+ members can see your username and days on this leaderboard. You can hide your name — you'll keep your place as "Private participant".`}
+            </p>
+            <div className="mt-4 flex gap-2.5">
+              {!myParticipation.hide_from_leaderboard && (
+                <button
+                  type="button"
+                  disabled={!!busyAction}
+                  onClick={() =>
+                    runBusy('leaderboardVisibility', async () => {
+                      await setLeaderboardHidden(selectedChallengeId, true)
+                      dismissNotice()
+                    })
+                  }
+                  className={`flex-1 rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-60`}
+                >
+                  Hide my name
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={dismissNotice}
+                className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn}`}
+              >
+                {myParticipation.hide_from_leaderboard ? 'Got it' : "That's fine"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {me && (
+          <div className="mt-6 flex items-center justify-between rounded-3xl bg-gradient-to-br from-[#F5C451]/20 to-[#E08A1E]/10 px-5 py-4">
+            <div>
+              <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${t.faint}`}>Your position</p>
+              <p className="mt-0.5 text-[26px] font-semibold leading-tight">
+                #{me.rank}
+                <span className={`ml-1.5 text-[14px] font-normal ${t.muted}`}>of {leaderboard.length}</span>
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[20px] font-semibold leading-tight">{me.days_completed}</p>
+              <p className={`text-[12px] ${t.muted}`}>of {total} days</p>
+            </div>
+          </div>
+        )}
+
+        {leaderboardLoading && leaderboard.length === 0 ? (
+          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
+        ) : leaderboard.length === 0 ? (
+          <p className={`mt-8 text-[14px] leading-relaxed ${t.muted}`}>
+            No one's on the board yet. Join and tick sunscreen tomorrow morning to take the top spot.
+          </p>
+        ) : (
+          <>
+            <div className="mt-6 grid grid-cols-3 items-end gap-2.5">
+              {[1, 0, 2].map((i) => {
+                const row = podium[i]
+                if (!row) return <span key={i} />
+                return (
+                  <div
+                    key={i}
+                    className={`flex flex-col items-center rounded-3xl px-2 pb-4 text-center ${
+                      row.is_me ? 'ring-2 ring-amber-400/60' : ''
+                    } ${t.surface} ${i === 0 ? 'pt-6' : 'pt-4'}`}
+                  >
+                    {renderAwardIcon(
+                      { key: `podium-${i}`, kind: 'medal', metal: PODIUM_METAL[i], badge: String(row.rank) },
+                      i === 0 ? 64 : 50
+                    )}
+                    <p className={`mt-2 w-full truncate text-[13px] font-semibold ${
+                      !row.is_me && !row.display_name ? `italic ${t.faint}` : ''
+                    }`}>
+                      {nameFor(row)}
+                    </p>
+                    <p className={`text-[12px] ${t.muted}`}>
+                      {row.days_completed}/{total} days
+                    </p>
+                    {row.status === 'completed' && (
+                      <span className="mt-1.5 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
+                        Completed
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {rest.length > 0 && (
+              <div className={`mt-4 overflow-hidden rounded-3xl ${t.surface}`}>
+                {rest.map((row, idx) => (
+                  <div
+                    key={row.rank}
+                    className={`flex items-center gap-3.5 px-4 py-3.5 ${
+                      idx > 0 ? `border-t ${t.hair}` : ''
+                    } ${row.is_me ? 'bg-amber-400/10' : ''}`}
+                  >
+                    <span className={`w-7 shrink-0 text-center text-[13px] font-semibold tabular-nums ${t.faint}`}>
+                      {row.rank}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className={`truncate text-[14px] font-medium ${
+                          !row.is_me && !row.display_name ? `italic ${t.faint}` : ''
+                        }`}>
+                          {nameFor(row)}
+                        </p>
+                        {row.status === 'completed' && (
+                          <span className="shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
+                            Completed
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1.5">
+                        {renderChallengeBar(
+                          Math.round((row.days_completed / total) * 100),
+                          'bg-gradient-to-r from-[#F5C451] to-[#E08A1E]'
+                        )}
+                      </div>
+                    </div>
+                    <span className="w-12 shrink-0 text-right text-[13px] font-semibold tabular-nums">
+                      {row.days_completed}
+                      <span className={`font-normal ${t.faint}`}>/{total}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {myParticipation && (
+          <div className={`mt-6 flex items-center justify-between gap-4 rounded-2xl border ${t.hair} px-4 py-3.5`}>
+            <div>
+              <p className="text-[14px] font-semibold">Show my name</p>
+              <p className={`mt-0.5 text-[12px] leading-relaxed ${t.muted}`}>
+                Turning this off hides your name only. Your position and days stay on the board as "Private participant", so the ranking stays complete.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!myParticipation.hide_from_leaderboard}
+              disabled={!!busyAction}
+              onClick={() =>
+                runBusy('leaderboardVisibility', () =>
+                  setLeaderboardHidden(selectedChallengeId, !myParticipation.hide_from_leaderboard)
+                )
+              }
+              className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-60 ${
+                myParticipation.hide_from_leaderboard ? (isNight ? 'bg-white/15' : 'bg-[#101B2D]/15') : 'bg-amber-500'
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                  myParticipation.hide_from_leaderboard ? 'left-1' : 'left-6'
+                }`}
+              />
+            </button>
+          </div>
+        )}
 
       </div>
     </main>
