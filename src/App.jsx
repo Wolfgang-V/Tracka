@@ -2737,7 +2737,7 @@ const exportAdminUsersCsv = (users) => {
     u.username || '',
     u.onboarding_completed ? 'Yes' : 'No',
     u.created_at,
-    u.last_sign_in_at || '',
+    u.last_active_at || u.last_sign_in_at || 'Never',
     u.email_confirmed_at ? 'Yes' : 'No',
     isSuspended(u) ? 'Yes' : 'No',
   ])
@@ -5002,11 +5002,11 @@ if (screen === 'admin') {
                     })}
                   </span>
                   <span>
-                    {u.last_sign_in_at
-                      ? `Last active ${new Date(u.last_sign_in_at).toLocaleDateString('en-GB', {
+                    {(u.last_active_at || u.last_sign_in_at)
+                      ? `Last active ${new Date(u.last_active_at || u.last_sign_in_at).toLocaleDateString('en-GB', {
                           day: 'numeric', month: 'short', year: 'numeric',
                         })}`
-                      : 'Never signed in again'}
+                      : 'Never active'}
                   </span>
                   {!u.email_confirmed_at && (
                     <span className={t.danger}>Email not confirmed</span>
