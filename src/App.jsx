@@ -7,7 +7,7 @@ import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigeria
 import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
 import { calculateRoutineCompletion, calculateStreaks } from './lib/core/skinReport'
 import { generateStreakImage, generateSkinReportImage, generateAwardImage, isMilestoneStreak } from './lib/shareImage'
-import { challengeAwards, challengeStreak, challengePoints, POINTS_PER_DAY, METALS, CUP_SHAPES, MEDAL_SHAPES } from './lib/core/awards'
+import { challengeAwards, challengeStreak, challengePoints, POINTS_PER_DAY, METALS, CUP_SHAPES, MEDAL_SHAPES, LAUREL_LEAF, LAUREL_STAR, laurelLeaves, laurelStems } from './lib/core/awards'
 import { flameColorForStreak, FLAME_PATH, lighten, darken } from './lib/core/flameColor'
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
@@ -1696,11 +1696,63 @@ const renderBottomTabs = (activeScreen, palette) => (
 // challenge is 30 completed days rather than 30 consecutive ones.
 const challengeStats = (participation) => {
   const total = participation.challenges?.duration_days || 30
+  const target = challengeTarget(participation.challenges)
   const done = Math.min(participation.days_completed || 0, total)
   const doneToday = (participation.challenge_days || []).some((d) => d.local_date === todayString)
-  const day = Math.min(done + (doneToday ? 0 : 1), total)
-  const pct = Math.round((done / total) * 100)
-  return { total, done, doneToday, day, pct }
+  const win = challengeWindow(participation.challenges)
+  // A shared-window challenge is on the same calendar day for everyone;
+  // a per-person one counts the day you're working on.
+  const day = win.hasWindow
+    ? Math.min(Math.max(win.challengeDay, 1), total)
+    : Math.min(done + (doneToday ? 0 : 1), total)
+  const pct = Math.min(100, Math.round((done / target) * 100))
+  return { total, target, done, doneToday, day, pct, ...win }
+}
+
+// The finish line. Can be below the length (30 Days of SPF completes at 25
+// of 30) so late joiners can still finish and one missed day isn't fatal.
+const challengeTarget = (challenge) =>
+  challenge?.target_days || challenge?.duration_days || 30
+
+// For challenges with starts_on/ends_on (one window for everyone): which
+// day of the challenge today is, how many days can still be ticked
+// (including today), and whether it's over. Uses the app's 4am-cutoff date.
+const challengeWindow = (challenge) => {
+  if (!challenge?.starts_on || !challenge?.ends_on) {
+    return { hasWindow: false, ended: false, notStarted: false, daysLeft: null, challengeDay: null }
+  }
+  const dayNumber = (d) => Math.round(Date.parse(`${d}T00:00:00Z`) / 86400000)
+  const today = dayNumber(todayString)
+  const start = dayNumber(challenge.starts_on)
+  const end = dayNumber(challenge.ends_on)
+  return {
+    hasWindow: true,
+    ended: today > end,
+    notStarted: today < start,
+    daysLeft: Math.max(0, end - Math.max(today, start) + 1),
+    challengeDay: today - start + 1,
+  }
+}
+
+// Shared-window challenge still running: reaching the target is "over the
+// line", not the end — you keep ticking, winners come after it closes.
+const challengeInProgress = (challenge) => {
+  const w = challengeWindow(challenge)
+  return w.hasWindow && !w.ended
+}
+
+const formatChallengeDate = (d, withYear = false) =>
+  new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', ...(withYear ? { year: 'numeric' } : {}),
+  })
+
+// Still running for this person. Inside a shared window, completing doesn't
+// stop you — you keep ticking for the leaderboard until it closes. Once the
+// window closes (or the row is 'ended'), it's a final result.
+const isLiveParticipation = (p) => {
+  const win = challengeWindow(p.challenges)
+  if (win.ended) return false
+  return p.status === 'active' || (p.status === 'completed' && win.hasWindow)
 }
 
 // Joining requires an AM sunscreen step, but a later routine rebuild (or
@@ -1801,10 +1853,41 @@ const renderAwardIcon = (award, size, locked = false) => {
   )
 }
 
+// Gold laurel wreath — the leaderboard's mark. Geometry in core/awards.
+const renderLaurelIcon = (size) => {
+  const compact = size < 28
+  const gradId = `laurel-${size}`
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className="shrink-0">
+      <defs>
+        <linearGradient id={gradId} x1="0.1" y1="0" x2="0.9" y2="1">
+          <stop offset="0" stopColor="#F8D978" />
+          <stop offset="0.5" stopColor="#E2A632" />
+          <stop offset="1" stopColor="#B5741A" />
+        </linearGradient>
+      </defs>
+      <g fill="none" stroke={`url(#${gradId})`} strokeWidth={compact ? 1.15 : 0.8} strokeLinecap="round">
+        {laurelStems().map((d) => <path key={d} d={d} />)}
+      </g>
+      <g fill={`url(#${gradId})`}>
+        {laurelLeaves(compact).map((l, i) => (
+          <path
+            key={i}
+            d={LAUREL_LEAF}
+            transform={`translate(${l.x.toFixed(2)} ${l.y.toFixed(2)}) rotate(${l.rot.toFixed(1)}) scale(${l.len.toFixed(2)})`}
+          />
+        ))}
+        <path d={LAUREL_STAR} />
+      </g>
+    </svg>
+  )
+}
+
 const renderAchievements = (participation) => {
   const awards = challengeAwards(
     (participation.challenge_days || []).map((d) => d.local_date),
-    participation.challenges?.duration_days || 30
+    challengeTarget(participation.challenges),
+    { overTheLine: challengeInProgress(participation.challenges) }
   )
 
   return (
@@ -1834,7 +1917,7 @@ const renderAchievements = (participation) => {
 }
 
 const renderChallengeProgressCard = (participation, returnTo) => {
-  const { total, done, day } = challengeStats(participation)
+  const { total, target, done, day, pct } = challengeStats(participation)
   return (
     <button
       key={participation.id}
@@ -1846,8 +1929,12 @@ const renderChallengeProgressCard = (participation, returnTo) => {
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-[16px] font-semibold">{participation.challenges?.title}</span>
         <span className={`mt-0.5 text-[13px] ${t.muted}`}>Day {day} of {total}</span>
-        <span className="mt-2">{renderChallengeBar(Math.round((done / total) * 100))}</span>
-        <span className={`mt-1.5 text-[12px] ${t.faint}`}>{done} of {total} days completed</span>
+        <span className="mt-2">{renderChallengeBar(pct)}</span>
+        <span className={`mt-1.5 text-[12px] ${t.faint}`}>
+          {done >= target
+            ? (challengeInProgress(participation.challenges) ? `Over the line · ${done} days` : `Completed · ${done} days ticked`)
+            : `${done} of ${target} days completed`}
+        </span>
         <span className={`mt-2 text-[13px] font-semibold ${t.mark}`}>Continue challenge →</span>
       </span>
     </button>
@@ -2337,6 +2424,15 @@ const joinChallenge = async (challenge) => {
         ['Not now', 'Edit my routine']
       )
       if (goAdd) setScreen('routinePlanner')
+      return
+    }
+    if (error.message?.includes('CHALLENGE_ENDED')) {
+      notify('This challenge has ended. See the final results on the leaderboard.')
+      await loadChallenges()
+      return
+    }
+    if (error.message?.includes('CHALLENGE_NOT_STARTED')) {
+      notify("This challenge hasn't started yet.")
       return
     }
     if (error.message?.includes('ALREADY_JOINED')) {
@@ -5249,6 +5345,7 @@ if (screen === 'admin') {
                     active: t.chip,
                     completed: 'border border-emerald-400/30 bg-emerald-400/10 text-emerald-500',
                     left: `border border-rose-400/30 bg-rose-400/10 ${t.danger}`,
+                    ended: `border ${t.hair} ${t.muted}`,
                   }
                   const fmt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 
@@ -5257,7 +5354,7 @@ if (screen === 'admin') {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-[15px] font-semibold">{c.title}</p>
-                          <p className={`text-[12px] ${t.faint}`}>{c.duration_days} days</p>
+                          <p className={`text-[12px] ${t.faint}`}>{c.duration_days} days{c.target_days && c.target_days !== c.duration_days ? ` · complete at ${c.target_days}` : ""}</p>
                         </div>
                         <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                           c.is_published ? t.chip : `border ${t.hair} ${t.faint}`
@@ -5266,11 +5363,12 @@ if (screen === 'admin') {
                         </span>
                       </div>
 
-                      <div className="mt-3 grid grid-cols-4 gap-2">
+                      <div className="mt-3 grid grid-cols-5 gap-1.5">
                         {[
-                          [c.participants, 'Participants'],
+                          [c.participants, 'People'],
                           [c.active_count, 'Active'],
                           [c.completed_count, 'Completed'],
+                          [c.ended_count ?? 0, 'Ended'],
                           [c.left_count, 'Left'],
                         ].map(([value, label]) => (
                           <div key={label} className={`rounded-xl ${t.surface} p-2.5`}>
@@ -6916,10 +7014,16 @@ if (screen === 'notifications') {
   )
 }
 if (screen === 'challenges') {
-  const active = myChallenges.filter((p) => p.status === 'active')
+  const active = myChallenges.filter(isLiveParticipation)
   const activeIds = new Set(active.map((p) => p.challenge_id))
-  const discoverable = challenges.filter((c) => !activeIds.has(c.id))
-  const completed = myChallenges.filter((p) => p.status === 'completed')
+  const discoverable = challenges.filter((c) => !activeIds.has(c.id) && !challengeWindow(c).ended)
+  // Completed ones, plus ones that were still going when the window closed.
+  const completed = myChallenges.filter(
+    (p) => !isLiveParticipation(p) && (p.status === 'completed' || p.status === 'ended' || (p.status === 'active' && challengeWindow(p.challenges).ended))
+  )
+  const joinedIds = new Set(myChallenges.map((p) => p.challenge_id))
+  // Ended challenges this person never joined — still worth seeing the results.
+  const pastChallenges = challenges.filter((c) => challengeWindow(c).ended && !joinedIds.has(c.id))
 
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -6977,7 +7081,12 @@ if (screen === 'challenges') {
                       {renderChallengeImage(c, 'h-48 w-full')}
                       <div className="p-5">
                         <p className={`text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
-                          {c.duration_days} days
+                          {(() => {
+                            const w = challengeWindow(c)
+                            if (!w.hasWindow) return `${c.duration_days} days`
+                            if (w.notStarted) return `Starts ${formatChallengeDate(c.starts_on)}`
+                            return `${formatChallengeDate(c.starts_on)} – ${formatChallengeDate(c.ends_on)} · ${w.daysLeft} ${w.daysLeft === 1 ? 'day' : 'days'} left`
+                          })()}
                         </p>
                         <h2 className="mt-1 text-[20px] font-semibold">{c.title}</h2>
                         {c.tagline && (
@@ -6997,7 +7106,7 @@ if (screen === 'challenges') {
               )}
             </section>
 
-            {completed.length > 0 && (
+            {completed.length + pastChallenges.length > 0 && (
               <section className="mt-9">
                 <button
                   type="button"
@@ -7005,7 +7114,7 @@ if (screen === 'challenges') {
                   className={`flex w-full items-center justify-between rounded-2xl border ${t.hair} px-4 py-3.5 text-left`}
                 >
                   <span className="text-[14px] font-semibold">
-                    Completed challenges ({completed.length})
+                    Finished challenges ({completed.length + pastChallenges.length})
                   </span>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="1.8"
@@ -7017,22 +7126,47 @@ if (screen === 'challenges') {
 
                 {showCompletedChallenges && (
                   <div className="mt-3 flex flex-col gap-2.5">
-                    {completed.map((p) => (
+                    {completed.map((p) => {
+                      const finishedAll = p.status === 'completed'
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => openChallenge(p.challenge_id, 'challenges')}
+                          className={`flex items-center gap-3 rounded-2xl ${t.surface} p-3.5 text-left`}
+                        >
+                          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${
+                            finishedAll ? 'bg-amber-400/15' : isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'
+                          }`}>
+                            {renderAwardIcon({ key: 'complete', kind: 'cup', metal: 'gold' }, 30, !finishedAll)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[15px] font-semibold">{p.challenges?.title}</span>
+                            <span className={`block text-[12px] ${t.faint}`}>
+                              {finishedAll
+                                ? `Completed ${new Date(p.completed_at).toLocaleDateString('en-GB', {
+                                    day: 'numeric', month: 'short', year: 'numeric',
+                                  })}`
+                                : `Ended ${formatChallengeDate(p.challenges.ends_on, true)} · ${p.days_completed}/${p.challenges.duration_days} days`}
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                    {pastChallenges.map((c) => (
                       <button
-                        key={p.id}
+                        key={c.id}
                         type="button"
-                        onClick={() => openChallenge(p.challenge_id, 'challenges')}
-                        className={`flex items-center gap-3 rounded-2xl ${t.surface} p-3.5 text-left`}
+                        onClick={() => openChallenge(c.id, 'challenges')}
+                        className={`flex items-center gap-3 rounded-2xl border ${t.hair} p-3.5 text-left`}
                       >
-                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-400/15">
-                          {renderAwardIcon({ key: 'complete', kind: 'cup', metal: 'gold' }, 30)}
+                        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'}`}>
+                          {renderAwardIcon({ key: 'complete', kind: 'cup', metal: 'gold' }, 30, true)}
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[15px] font-semibold">{p.challenges?.title}</span>
+                          <span className="block truncate text-[15px] font-semibold">{c.title}</span>
                           <span className={`block text-[12px] ${t.faint}`}>
-                            Completed {new Date(p.completed_at).toLocaleDateString('en-GB', {
-                              day: 'numeric', month: 'short', year: 'numeric',
-                            })}
+                            Ended {formatChallengeDate(c.ends_on, true)} · See results
                           </span>
                         </span>
                       </button>
@@ -7050,16 +7184,19 @@ if (screen === 'challenges') {
 }
 
 if (screen === 'challengeDetail') {
-  const participation = myChallenges.find(
-    (p) => p.challenge_id === selectedChallengeId && p.status === 'active'
-  )
-  const lastCompleted = myChallenges.find(
-    (p) => p.challenge_id === selectedChallengeId && p.status === 'completed'
-  )
+  const mine = myChallenges.filter((p) => p.challenge_id === selectedChallengeId)
+  // Live = still ticking: active, or completed inside a running window.
+  const participation = mine.find(isLiveParticipation) || null
+  const lastCompleted = participation ? null : mine.find((p) => p.status === 'completed')
+  // Didn't reach the finish line before the window closed — final result.
+  // ('ended' once the database has closed it; still 'active' until then.)
+  const endedRow = participation
+    ? null
+    : mine.find((p) => p.status === 'ended' || (p.status === 'active' && challengeWindow(p.challenges).ended)) || null
   const challenge =
     challenges.find((c) => c.id === selectedChallengeId) ||
-    participation?.challenges ||
-    lastCompleted?.challenges
+    mine[0]?.challenges
+  const win = challengeWindow(challenge)
 
   const backLabel = challengeReturnScreen === 'today' ? 'Today' : 'Challenges'
 
@@ -7092,7 +7229,8 @@ if (screen === 'challengeDetail') {
 
   // Active challenge dashboard.
   if (participation) {
-    const { total, done, doneToday, day, pct } = challengeStats(participation)
+    const { total, target, done, doneToday, day, pct, hasWindow, daysLeft } = challengeStats(participation)
+    const reachedTarget = done >= target
 
     return (
       <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -7157,9 +7295,15 @@ if (screen === 'challengeDetail') {
 
           <div className="mt-5 flex items-start justify-between gap-3">
             <h1 className="text-[26px] font-semibold leading-tight">{challenge.title}</h1>
-            <span className="mt-1 shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[12px] font-semibold text-emerald-500">
-              Active
-            </span>
+            {reachedTarget ? (
+              <span className="mt-1 shrink-0 rounded-full bg-gradient-to-r from-[#F5C451] to-[#E08A1E] px-3 py-1 text-[12px] font-semibold text-white">
+                {hasWindow ? 'Over the line' : 'Completed'}
+              </span>
+            ) : (
+              <span className="mt-1 shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[12px] font-semibold text-emerald-500">
+                Active
+              </span>
+            )}
           </div>
           {challenge.active_subtitle && (
             <p className={`mt-1.5 text-[15px] leading-relaxed ${t.muted}`}>{challenge.active_subtitle}</p>
@@ -7179,18 +7323,21 @@ if (screen === 'challengeDetail') {
               return longest
             })()
             const points = challengePoints(done)
-            const awards = challengeAwards(dates, total)
-            const half = Math.ceil(total / 2)
+            const awards = challengeAwards(dates, target, { overTheLine: hasWindow })
+            const half = Math.ceil(target / 2)
 
             // The nearest unearned reward, phrased as what it takes to get it.
             // Next milestone, shown quietly under the track. Skipped before
             // the first day — the check-in card below already covers that.
-            const nextAward = awards.find((a) => !a.earned && a.key !== 'first')
-            const remaining = !nextAward
-              ? 0
-              : nextAward.key === 'week'
-              ? 7 - streak
-              : (nextAward.key === 'half' ? half : total) - done
+            // In a shared-window challenge, late joiners can't reach every
+            // award — only point at ones still reachable in the days left.
+            const tickableLeft = hasWindow ? daysLeft - (doneToday ? 1 : 0) : Infinity
+            const needed = (a) =>
+              a.key === 'week' ? 7 - streak : (a.key === 'half' ? half : target) - done
+            const nextAward = awards.find(
+              (a) => !a.earned && a.key !== 'first' && needed(a) <= tickableLeft
+            )
+            const remaining = nextAward ? needed(nextAward) : 0
             const nextLine = !nextAward || done === 0
               ? null
               : {
@@ -7221,12 +7368,12 @@ if (screen === 'challengeDetail') {
                         <circle cx="62" cy="62" r={R} fill="none" strokeWidth="10"
                           stroke="url(#challenge-ring)" strokeLinecap="round"
                           strokeDasharray={C}
-                          strokeDashoffset={C * (1 - done / total)}
+                          strokeDashoffset={C * (1 - Math.min(done, target) / target)}
                           style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
                       </svg>
                       <div className="absolute inset-0 flex flex-col items-center justify-center">
                         <span className="text-[30px] font-semibold leading-none">{done}</span>
-                        <span className={`mt-1 text-[11px] font-medium ${t.faint}`}>of {total} days</span>
+                        <span className={`mt-1 text-[11px] font-medium ${t.faint}`}>{reachedTarget ? `days · goal ${target}` : `of ${target} days`}</span>
                       </div>
                     </div>
 
@@ -7256,7 +7403,7 @@ if (screen === 'challengeDetail') {
                   </div>
 
                   <p className={`mt-4 text-[13px] ${t.muted}`}>
-                    Day {day} of {total} · {pct}% complete
+                    Day {day} of {total} · {hasWindow ? `${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left` : `${pct}% complete`}
                   </p>
 
                   {/* 30-dot journey. The halfway medal and the cup sit on the
@@ -7266,8 +7413,8 @@ if (screen === 'challengeDetail') {
                       const n = i + 1
                       const filled = n <= done
                       const isNext = n === done + 1 && !doneToday
-                      if (n === half || n === total) {
-                        const award = awards.find((a) => a.key === (n === total ? 'complete' : 'half'))
+                      if (n === half || n === target) {
+                        const award = awards.find((a) => a.key === (n === target ? 'complete' : 'half'))
                         return (
                           <span key={n} className="flex aspect-square items-center justify-center"
                             title={award.label}>
@@ -7302,6 +7449,12 @@ if (screen === 'challengeDetail') {
                       </div>
                       <p className={`shrink-0 text-[13px] ${t.muted}`}>{nextLine.detail}</p>
                     </div>
+                  )}
+
+                  {hasWindow && !reachedTarget && done + tickableLeft < target && (
+                    <p className={`mt-4 border-t pt-4 text-[13px] leading-relaxed ${t.hair} ${t.muted}`}>
+                      Not enough days left to reach {target} this round — every day you tick still counts on the leaderboard.
+                    </p>
                   )}
                 </div>
 
@@ -7367,11 +7520,7 @@ if (screen === 'challengeDetail') {
               onClick={() => setScreen('challengeLeaderboard')}
               className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair}`}
             >
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="1.8"
-                strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-                <path d="M4 20V13h4v7M10 20V8h4v12M16 20v-9h4v9M3 20h18" />
-              </svg>
+              {renderLaurelIcon(22)}
               Leaderboard
             </button>
             <button
@@ -7400,8 +7549,11 @@ if (screen === 'challengeDetail') {
   const HOW_IT_WORKS = [
     ['Apply your sunscreen', 'Follow your usual morning skincare routine.'],
     ['Tick it in Tracka+', 'Complete the sunscreen step in your existing morning routine. Your challenge progress updates automatically.'],
-    [`Keep going for ${challenge.duration_days} days`, 'Track your progress as you build the habit.'],
+    win.hasWindow
+      ? [`Keep going until ${formatChallengeDate(challenge.ends_on)}`, `Everyone takes part in the same ${challenge.duration_days} days. Tick sunscreen on ${challengeTarget(challenge)} of them to get over the line — missed days are fine. Keep going after that: the challenge runs the full ${challenge.duration_days} days, and the winners are declared when it ends.`]
+      : [`Keep going for ${challenge.duration_days} days`, 'Track your progress as you build the habit.'],
   ]
+  const canJoin = !win.ended && !(win.hasWindow && lastCompleted)
 
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -7427,7 +7579,7 @@ if (screen === 'challengeDetail') {
         {lastCompleted && (() => {
           const cup = challengeAwards(
             (lastCompleted.challenge_days || []).map((d) => d.local_date),
-            challenge.duration_days
+            challengeTarget(challenge)
           ).find((a) => a.kind === 'cup')
 
           return (
@@ -7436,7 +7588,7 @@ if (screen === 'challengeDetail') {
                 <div className="flex justify-center">{renderAwardIcon(cup, 96)}</div>
                 <p className="mt-2 text-[18px] font-semibold">Challenge complete!</p>
                 <p className={`mt-1 text-[13px] ${t.muted}`}>
-                  You finished all {challenge.duration_days} days on{' '}
+                  You reached {challengeTarget(challenge)} days on{' '}
                   {new Date(lastCompleted.completed_at).toLocaleDateString('en-GB', {
                     day: 'numeric', month: 'long', year: 'numeric',
                   })}.
@@ -7454,6 +7606,21 @@ if (screen === 'challengeDetail') {
             </>
           )
         })()}
+
+        {win.ended && !lastCompleted && (
+          <div className={`mt-5 rounded-3xl border ${t.hair} ${t.surface} p-5`}>
+            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${t.faint}`}>
+              Ended {formatChallengeDate(challenge.ends_on, true)}
+            </p>
+            <p className="mt-1.5 text-[18px] font-semibold">This challenge is over</p>
+            <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+              {endedRow
+                ? `You finished with ${endedRow.days_completed} of ${challenge.duration_days} days. Winners are picked from the final leaderboard.`
+                : 'Winners are picked from the final leaderboard.'}
+            </p>
+          </div>
+        )}
+        {endedRow && renderAchievements(endedRow)}
 
         {challenge.description && (
           <section className="mt-7">
@@ -7479,42 +7646,82 @@ if (screen === 'challengeDetail') {
           </ol>
         </section>
 
-        <div className={`mt-7 flex items-center justify-between rounded-2xl border ${t.hair} px-4 py-3.5`}>
-          <span className={`text-[14px] ${t.muted}`}>Duration</span>
-          <span className="text-[15px] font-semibold">{challenge.duration_days} days</span>
+        <div className={`mt-7 overflow-hidden rounded-2xl border ${t.hair}`}>
+          <div className="flex items-center justify-between px-4 py-3.5">
+            <span className={`text-[14px] ${t.muted}`}>{win.hasWindow ? 'Runs' : 'Duration'}</span>
+            <span className="text-[15px] font-semibold">
+              {win.hasWindow
+                ? `${formatChallengeDate(challenge.starts_on)} – ${formatChallengeDate(challenge.ends_on)}`
+                : `${challenge.duration_days} days`}
+            </span>
+          </div>
+          {win.hasWindow && !win.ended && (
+            <div className={`flex items-center justify-between border-t px-4 py-3.5 ${t.hair}`}>
+              <span className={`text-[14px] ${t.muted}`}>{win.notStarted ? 'Starts in' : 'Days left'}</span>
+              <span className="text-[15px] font-semibold text-amber-600">
+                {win.notStarted
+                  ? `${1 - win.challengeDay} ${1 - win.challengeDay === 1 ? 'day' : 'days'}`
+                  : `${win.daysLeft} of ${challenge.duration_days}`}
+              </span>
+            </div>
+          )}
         </div>
 
-        <p className={`mt-4 text-[12px] leading-relaxed ${t.faint}`}>
-          Joining adds your username and days to this challenge's public leaderboard. You can hide your name at any time from the leaderboard.
-        </p>
+        {canJoin ? (
+          <>
+            {win.hasWindow && !win.notStarted && win.daysLeft < challengeTarget(challenge) && (
+              <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3.5">
+                <p className="text-[14px] font-semibold text-amber-700">
+                  Too late to get over the line this time
+                </p>
+                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                  Only {win.daysLeft} {win.daysLeft === 1 ? 'day is' : 'days are'} left, and getting over the line takes {challengeTarget(challenge)}. Every day you tick still counts on the leaderboard — join anyway to build the habit.
+                </p>
+              </div>
+            )}
 
-        <button
-          type="button"
-          disabled={!!busyAction}
-          onClick={() => runBusy(`joinChallenge-${challenge.id}`, () => joinChallenge(challenge))}
-          className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
-        >
-          {busyAction === `joinChallenge-${challenge.id}`
-            ? 'Joining…'
-            : lastCompleted ? 'Join again' : 'Join challenge'}
-        </button>
+            <p className={`mt-4 text-[12px] leading-relaxed ${t.faint}`}>
+              Joining adds your username and days to this challenge's public leaderboard. You can hide your name at any time from the leaderboard.
+            </p>
 
-        <div className="mt-3 flex items-center justify-center gap-6">
+            <button
+              type="button"
+              disabled={!!busyAction}
+              onClick={() => runBusy(`joinChallenge-${challenge.id}`, () => joinChallenge(challenge))}
+              className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
+            >
+              {busyAction === `joinChallenge-${challenge.id}`
+                ? 'Joining…'
+                : lastCompleted ? 'Join again' : 'Join challenge'}
+            </button>
+
+            <div className="mt-3 flex items-center justify-center gap-6">
+              <button
+                type="button"
+                onClick={() => setScreen('challengeLeaderboard')}
+                className={`flex items-center gap-1.5 py-2 text-[14px] font-semibold ${t.mark}`}
+              >
+                {renderLaurelIcon(20)}
+                See the leaderboard
+              </button>
+              <button
+                type="button"
+                onClick={() => shareChallenge(challenge, null)}
+                className={`py-2 text-[14px] font-semibold ${t.mark}`}
+              >
+                Invite a friend
+              </button>
+            </div>
+          </>
+        ) : (
           <button
             type="button"
             onClick={() => setScreen('challengeLeaderboard')}
-            className={`py-2 text-[14px] font-semibold ${t.mark}`}
+            className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
           >
-            See the leaderboard
+            {win.ended ? 'See final results' : 'See the leaderboard'}
           </button>
-          <button
-            type="button"
-            onClick={() => shareChallenge(challenge, null)}
-            className={`py-2 text-[14px] font-semibold ${t.mark}`}
-          >
-            Invite a friend
-          </button>
-        </div>
+        )}
 
       </div>
     </main>
@@ -7526,6 +7733,7 @@ if (screen === 'challengeLeaderboard') {
     challenges.find((c) => c.id === selectedChallengeId) ||
     myChallenges.find((p) => p.challenge_id === selectedChallengeId)?.challenges
   const total = challenge?.duration_days || 30
+  const lbWindow = challengeWindow(challenge)
   const me = leaderboard.find((r) => r.is_me)
   const myParticipation = myChallenges.find(
     (p) => p.challenge_id === selectedChallengeId && p.status !== 'left'
@@ -7566,28 +7774,33 @@ if (screen === 'challengeLeaderboard') {
         </button>
 
         <div className="mt-5">
+          <div className="mb-3">{renderLaurelIcon(56)}</div>
           <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${t.faint}`}>
             {challenge?.title}
           </p>
           <h1 className="mt-1 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Leaderboard
+            {lbWindow.ended ? 'Final results' : 'Leaderboard'}
           </h1>
-          <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>
-            Ranked by days completed. Ties go to whoever got there first.
+          <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>
+            {lbWindow.ended
+              ? `The challenge ended on ${formatChallengeDate(challenge.ends_on)}. Winners are picked from this ranking.`
+              : 'See where you stand.'}
           </p>
         </div>
 
         {myParticipation && !noticeSeen && (
-          <div className={`mt-6 rounded-3xl border ${t.hair} ${t.surface} p-5`}>
-            <p className="text-[15px] font-semibold">
-              {myParticipation.hide_from_leaderboard ? 'Your name is hidden here' : 'Your name shows here'}
-            </p>
-            <p className={`mt-1.5 text-[13px] leading-relaxed ${t.muted}`}>
+          <div className="mt-6 border-l-2 border-amber-400/80 pl-3.5">
+            <p className="text-[13px] font-medium">
               {myParticipation.hide_from_leaderboard
-                ? 'Other people see you as "Private participant". Your position and days still count.'
-                : `Other Tracka+ members can see your username and days on this leaderboard. You can hide your name — you'll keep your place as "Private participant".`}
+                ? 'Your name is hidden on this leaderboard'
+                : 'Your name shows on this leaderboard'}
             </p>
-            <div className="mt-4 flex gap-2.5">
+            <p className={`mt-1 text-[12px] leading-relaxed ${t.muted}`}>
+              {myParticipation.hide_from_leaderboard
+                ? 'Others see you as “Private participant”. Your place and days still count.'
+                : 'Hiding it keeps your place and days — you’ll appear as “Private participant”.'}
+            </p>
+            <div className="mt-2.5 flex items-center gap-5 text-[12px] font-semibold">
               {!myParticipation.hide_from_leaderboard && (
                 <button
                   type="button"
@@ -7598,17 +7811,13 @@ if (screen === 'challengeLeaderboard') {
                       dismissNotice()
                     })
                   }
-                  className={`flex-1 rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-60`}
+                  className="text-amber-600 disabled:opacity-50"
                 >
                   Hide my name
                 </button>
               )}
-              <button
-                type="button"
-                onClick={dismissNotice}
-                className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn}`}
-              >
-                {myParticipation.hide_from_leaderboard ? 'Got it' : "That's fine"}
+              <button type="button" onClick={dismissNotice} className={t.faint}>
+                {myParticipation.hide_from_leaderboard ? 'Got it' : 'Keep it visible'}
               </button>
             </div>
           </div>
@@ -7661,9 +7870,13 @@ if (screen === 'challengeLeaderboard') {
                     <p className={`text-[12px] ${t.muted}`}>
                       {row.days_completed}/{total} days
                     </p>
-                    {row.status === 'completed' && (
+                    {lbWindow.ended && row.rank === 1 ? (
+                      <span className="mt-1.5 rounded-full bg-gradient-to-r from-[#F5C451] to-[#E08A1E] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                        Winner
+                      </span>
+                    ) : row.status === 'completed' && (
                       <span className="mt-1.5 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
-                        Completed
+                        {lbWindow.hasWindow && !lbWindow.ended ? 'Over the line' : 'Completed'}
                       </span>
                     )}
                   </div>
@@ -7692,7 +7905,7 @@ if (screen === 'challengeLeaderboard') {
                         </p>
                         {row.status === 'completed' && (
                           <span className="shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
-                            Completed
+                            {lbWindow.hasWindow && !lbWindow.ended ? 'Over the line' : 'Completed'}
                           </span>
                         )}
                       </div>
@@ -7715,11 +7928,11 @@ if (screen === 'challengeLeaderboard') {
         )}
 
         {myParticipation && (
-          <div className={`mt-6 flex items-center justify-between gap-4 rounded-2xl border ${t.hair} px-4 py-3.5`}>
+          <div className={`mt-8 flex items-center justify-between gap-6 border-t pt-4 ${t.hair}`}>
             <div>
-              <p className="text-[14px] font-semibold">Show my name</p>
-              <p className={`mt-0.5 text-[12px] leading-relaxed ${t.muted}`}>
-                Turning this off hides your name only. Your position and days stay on the board as "Private participant", so the ranking stays complete.
+              <p className="text-[13px] font-medium">Show my name</p>
+              <p className={`mt-0.5 text-[11px] leading-relaxed ${t.faint}`}>
+                Off hides your name only — your place and days stay on the board.
               </p>
             </div>
             <button
@@ -7732,13 +7945,15 @@ if (screen === 'challengeLeaderboard') {
                   setLeaderboardHidden(selectedChallengeId, !myParticipation.hide_from_leaderboard)
                 )
               }
-              className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-60 ${
-                myParticipation.hide_from_leaderboard ? (isNight ? 'bg-white/15' : 'bg-[#101B2D]/15') : 'bg-amber-500'
+              className={`relative h-[18px] w-8 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
+                myParticipation.hide_from_leaderboard
+                  ? isNight ? 'bg-white/10 ring-1 ring-inset ring-white/20' : 'bg-[#101B2D]/8 ring-1 ring-inset ring-[#101B2D]/20'
+                  : 'bg-amber-500'
               }`}
             >
               <span
-                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                  myParticipation.hide_from_leaderboard ? 'left-1' : 'left-6'
+                className={`absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow-sm transition-all ${
+                  myParticipation.hide_from_leaderboard ? 'left-[2px]' : 'left-4'
                 }`}
               />
             </button>
@@ -8998,7 +9213,7 @@ if (screen === 'today') {
         })()}
 
         {(() => {
-          const activeChallenges = myChallenges.filter((p) => p.status === 'active')
+          const activeChallenges = myChallenges.filter(isLiveParticipation)
 
           return (
             <div className={`mt-8 rounded-3xl border ${t.hair} p-4`}>
@@ -10872,8 +11087,10 @@ if (screen === 'progressPhotos') {
       {celebration && (() => {
         const cup = challengeAwards(
           (celebration.challenge_days || []).map((d) => d.local_date),
-          celebration.challenges?.duration_days || 30
+          challengeTarget(celebration.challenges),
+          { overTheLine: challengeInProgress(celebration.challenges) }
         ).find((a) => a.kind === 'cup')
+        const stillRunning = challengeInProgress(celebration.challenges)
         const CONFETTI = ['#E8B931', '#2554EB', '#F2C59A', '#8FB8E8', '#E86A5C', '#4CAF7A']
 
         return (
@@ -10915,13 +11132,15 @@ if (screen === 'progressPhotos') {
             </div>
 
             <p className="relative mt-6 text-[13px] font-semibold uppercase tracking-[0.2em] text-amber-500">
-              Challenge complete
+              {stillRunning ? 'Over the line' : 'Challenge complete'}
             </p>
             <h2 className="relative mt-2 text-center font-display text-[40px] font-light leading-[1.05] tracking-tight">
               {celebration.challenges?.title}
             </h2>
             <p className={`relative mt-3 max-w-xs text-center text-[15px] leading-relaxed ${t.muted}`}>
-              You showed up for all {celebration.challenges?.duration_days || 30} days. That's a real habit now — well done.
+              {stillRunning
+                ? `${challengeTarget(celebration.challenges)} days ticked — you're over the line. Keep going until ${formatChallengeDate(celebration.challenges.ends_on)}: every extra day lifts you up the leaderboard, and winners are declared when the challenge ends.`
+                : `You showed up for ${challengeTarget(celebration.challenges)} days. That's a real habit now — well done.`}
             </p>
 
             <div className="relative mt-8 flex w-full max-w-sm flex-col gap-3">
@@ -10938,7 +11157,7 @@ if (screen === 'progressPhotos') {
                 onClick={dismissCelebration}
                 className={`w-full rounded-2xl border py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
               >
-                Done
+                {stillRunning ? 'Keep going' : 'Done'}
               </button>
             </div>
           </div>

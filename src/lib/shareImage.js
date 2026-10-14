@@ -563,7 +563,7 @@ export async function generateAwardImage({ award, challengeTitle, dateLabel, isN
   ctx.fillStyle = '#C99A1E'
   ctx.font = '500 30px Inter'
   ctx.letterSpacing = '6px'
-  ctx.fillText(award.kind === 'cup' ? 'CHALLENGE COMPLETE' : 'MEDAL EARNED', WIDTH / 2, 1235)
+  ctx.fillText(award.kind === 'cup' ? (award.headline || 'CHALLENGE COMPLETE') : 'MEDAL EARNED', WIDTH / 2, 1235)
   ctx.letterSpacing = '0px'
 
   ctx.fillStyle = p.ink

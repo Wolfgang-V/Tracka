@@ -60,7 +60,10 @@ export function challengeStreak(sortedDates, today) {
   return current
 }
 
-export function challengeAwards(dates, duration) {
+// overTheLine: in a shared-window challenge that is still running, reaching
+// the target means "over the line" — you keep going, and winners are only
+// declared once the window closes — so the cup is not called "complete" yet.
+export function challengeAwards(dates, duration, { overTheLine = false } = {}) {
   const sorted = [...new Set(dates)].sort()
   const done = sorted.length
   const half = Math.ceil(duration / 2)
@@ -73,7 +76,51 @@ export function challengeAwards(dates, duration) {
       blurb: 'Seven days in a row.' },
     { key: 'half', kind: 'medal', metal: 'gold', badge: String(half), label: 'Halfway', earned: done >= half,
       blurb: `${half} days in — halfway there.` },
-    { key: 'complete', kind: 'cup', metal: 'gold', badge: '', label: 'Challenge complete', earned: done >= duration,
-      blurb: `All ${duration} days complete.` },
+    { key: 'complete', kind: 'cup', metal: 'gold', badge: '',
+      label: overTheLine ? 'Over the line' : 'Challenge complete',
+      headline: overTheLine ? 'OVER THE LINE' : 'CHALLENGE COMPLETE',
+      earned: done >= duration,
+      blurb: overTheLine ? `${duration} days ticked.` : `${duration} days complete.` },
   ]
+}
+
+// Laurel wreath (leaderboard icon), 24x24 grid. Leaves are generated along
+// an arc so the wreath stays balanced; `compact` uses fewer, larger leaves
+// so it still reads at button size (~22px).
+export const LAUREL_LEAF = 'M0 0 C0.32 -0.28 0.34 -0.72 0 -1 C-0.34 -0.72 -0.32 -0.28 0 0 Z'
+export const LAUREL_STAR = 'M12 7.4 L12.82 9.9 L15.45 9.92 L13.33 11.48 L14.12 13.98 L12 12.45 L9.88 13.98 L10.67 11.48 L8.55 9.92 L11.18 9.9 Z'
+const LAUREL_C = { x: 12, y: 11.2, r: 8.3 }
+
+export function laurelLeaves(compact) {
+  const nodes = compact ? 4 : 5
+  const start = 108
+  const end = 222
+  const left = []
+  for (let k = 0; k < nodes; k++) {
+    const deg = start + (k * (end - start)) / (nodes - 1)
+    const rad = (deg * Math.PI) / 180
+    const x = LAUREL_C.x + LAUREL_C.r * Math.cos(rad)
+    const y = LAUREL_C.y + LAUREL_C.r * Math.sin(rad)
+    const along = deg + 180 // tip follows the stem upwards
+    const len = compact ? 4.4 - k * 0.25 : 3.6 - k * 0.22
+    left.push({ x, y, rot: along - 38, len }) // outer leaf
+    left.push(k < nodes - 1
+      ? { x, y, rot: along + 40, len: len * 0.78 } // inner leaf
+      : { x, y, rot: along + 4, len: len * 0.95 }) // tip leaf
+  }
+  // Right side is the mirror image.
+  return [...left, ...left.map((l) => ({ ...l, x: 24 - l.x, rot: -l.rot }))]
+}
+
+export function laurelStems() {
+  const pt = (deg, mirror) => {
+    const rad = (deg * Math.PI) / 180
+    const x = LAUREL_C.x + LAUREL_C.r * Math.cos(rad)
+    return [(mirror ? 24 - x : x).toFixed(2), (LAUREL_C.y + LAUREL_C.r * Math.sin(rad)).toFixed(2)]
+  }
+  return [false, true].map((mirror) => {
+    const [x0, y0] = pt(96, mirror)
+    const [x1, y1] = pt(222, mirror)
+    return `M${x0} ${y0} A${LAUREL_C.r} ${LAUREL_C.r} 0 0 ${mirror ? 0 : 1} ${x1} ${y1}`
+  })
 }
