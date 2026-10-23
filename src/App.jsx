@@ -5,6 +5,7 @@ import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
 import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
+import { analyzeIngredients } from './lib/core/inciAnalysis'
 import { calculateRoutineCompletion, calculateStreaks } from './lib/core/skinReport'
 import { generateStreakImage, generateSkinReportImage, generateAwardImage, isMilestoneStreak } from './lib/shareImage'
 import { challengeAwards, challengeStreak, challengePoints, POINTS_PER_DAY, METALS, CUP_SHAPES, MEDAL_SHAPES, LAUREL_LEAF, LAUREL_STAR, laurelLeaves, laurelStems } from './lib/core/awards'
@@ -74,6 +75,23 @@ const registerServiceWorker = async () => {
     console.error('SERVICE WORKER ERROR:', error)
     return null
   }
+}
+
+// Where is this person running Tracka+? Drives the setup guide's
+// instructions — the steps to install a PWA differ per platform/browser.
+const getInstallEnv = () => {
+  const ua = navigator.userAgent || ''
+  const isIOS =
+    /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  const isAndroid = /Android/i.test(ua)
+  const standalone =
+    window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true
+  // In-app browsers (Instagram, Facebook, TikTok…) can't install anything —
+  // the link has to be opened in the real browser first.
+  const inAppBrowser = /FBAN|FBAV|Instagram|Line\/|Twitter|TikTok|Snapchat|musical_ly/i.test(ua)
+  const iosSafari = isIOS && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua) && !inAppBrowser
+  const notifications = !('Notification' in window) ? 'unsupported' : Notification.permission
+  return { isIOS, isAndroid, standalone, inAppBrowser, iosSafari, notifications }
 }
 
 const subscribeToPushNotifications = async () => {
@@ -361,6 +379,12 @@ function App() {
   const [productCategory, setProductCategory] = useState('')
   const [productIngredients, setProductIngredients] = useState('')
   const [ingredientQuery, setIngredientQuery] = useState('')
+  // Ingredient checker: 'product' breaks down one of your products (or a
+  // pasted list); 'lookup' explains a single ingredient.
+  const [checkerMode, setCheckerMode] = useState('product')
+  const [checkerProductId, setCheckerProductId] = useState(null)
+  const [checkerPasted, setCheckerPasted] = useState('')
+  const [checkerShowAll, setCheckerShowAll] = useState(false)
   const [productOpenedDate, setProductOpenedDate] = useState('')
   const [productPaoMonths, setProductPaoMonths] = useState(0)
   const [productExpiryDate, setProductExpiryDate] = useState('')
@@ -476,6 +500,12 @@ setRoutineHistory(groupedRoutines)
   const [leaderboard, setLeaderboard] = useState([])
   const [leaderboardLoading, setLeaderboardLoading] = useState(true)
   const [leaderboardNoticeDismissed, setLeaderboardNoticeDismissed] = useState(false)
+  // Home-screen + reminders setup guide (most users never found either,
+  // and stopped coming back).
+  const [setupGuideOpen, setSetupGuideOpen] = useState(false)
+  const [installPromptEvent, setInstallPromptEvent] = useState(null)
+  const [setupGuideStatus, setSetupGuideStatus] = useState(null)
+  const setupGuideShownRef = useRef(false)
   const [adminChallengeStats, setAdminChallengeStats] = useState([])
   const [adminChallengeStatsLoading, setAdminChallengeStatsLoading] = useState(true)
   const [adminChallengeParticipants, setAdminChallengeParticipants] = useState({})
@@ -2150,6 +2180,85 @@ useEffect(() => {
 
 }, [screen])
 
+// Android/desktop Chrome offer a real one-tap install; hold on to the event
+// so the setup guide can trigger it from a button.
+useEffect(() => {
+  const onPrompt = (e) => {
+    e.preventDefault()
+    setInstallPromptEvent(e)
+  }
+  const onInstalled = () => setInstallPromptEvent(null)
+  window.addEventListener('beforeinstallprompt', onPrompt)
+  window.addEventListener('appinstalled', onInstalled)
+  return () => {
+    window.removeEventListener('beforeinstallprompt', onPrompt)
+    window.removeEventListener('appinstalled', onInstalled)
+  }
+}, [])
+
+// Offer the setup guide on Today when either step is missing — once per
+// session, a beat after landing, and not again for 3 days after "Not now".
+useEffect(() => {
+  if (screen !== 'today' || !user || setupGuideShownRef.current) return
+  const env = getInstallEnv()
+  if (env.standalone && env.notifications === 'granted') return
+  let snoozedUntil = 0
+  let dismissals = 0
+  try {
+    snoozedUntil = Number(localStorage.getItem('setupGuideSnoozeUntil') || 0)
+    dismissals = Number(localStorage.getItem('setupGuideDismissals') || 0)
+  } catch { /* show it */ }
+  // After three "Not now"s it stops popping up; the Today banner and the
+  // Settings row stay, so it's never out of reach.
+  if (Date.now() < snoozedUntil || dismissals >= 3) return
+
+  const timer = setTimeout(() => {
+    setupGuideShownRef.current = true
+    setSetupGuideStatus(null)
+    setSetupGuideOpen(true)
+  }, 1500)
+  return () => clearTimeout(timer)
+}, [screen, user])
+
+const openSetupGuide = () => {
+  setSetupGuideStatus(null)
+  setSetupGuideOpen(true)
+}
+
+const snoozeSetupGuide = () => {
+  try {
+    localStorage.setItem('setupGuideSnoozeUntil', String(Date.now() + 3 * 86400000))
+    const n = Number(localStorage.getItem('setupGuideDismissals') || 0)
+    localStorage.setItem('setupGuideDismissals', String(n + 1))
+  } catch { /* fine */ }
+  setSetupGuideOpen(false)
+}
+
+const installFromPrompt = async () => {
+  if (!installPromptEvent) return
+  installPromptEvent.prompt()
+  const { outcome } = await installPromptEvent.userChoice
+  setInstallPromptEvent(null)
+  if (outcome === 'accepted') {
+    setSetupGuideStatus('Installed — open Tracka+ from your home screen, then turn on reminders.')
+  }
+}
+
+const turnOnRemindersFromGuide = async () => {
+  const result = await subscribeToPushNotifications()
+  setSetupGuideStatus(
+    result.ok
+      ? 'reminders_on'
+      : result.reason === 'needs_install'
+      ? 'Open Tracka+ from your home screen first — on iPhone, reminders only work there.'
+      : result.reason === 'denied'
+      ? 'Notifications are blocked for Tracka+. Turn them on in your phone settings, then try again.'
+      : result.reason === 'unsupported'
+      ? "This browser can't send reminders. Try Chrome on Android or Safari on iPhone."
+      : "That didn't work. Try again in a moment."
+  )
+}
+
 // Live brand search against Open Beauty Facts, debounced so it doesn't
 // fire on every keystroke. Merged with the local BRANDS list in the UI.
 useEffect(() => {
@@ -2970,6 +3079,34 @@ const declinePreviewedInvite = () => {
 // Wrapped in an IIFE so the toast/confirm overlay below can render once,
 // on top of whichever screen this resolves to, instead of being pasted
 // into every one of the ~20 screen branches individually.
+// Defined outside screenContent: the setup guide overlay (rendered outside
+// the screens) also opens Reminders.
+const loadReminderSettings = async () => {
+  if (!user) return
+
+  const { data, error } = await supabase
+    .from('reminder_settings')
+    .select(
+      'morning_enabled, morning_time, night_enabled, night_time, spf_reapply_enabled, diary_nudge_enabled'
+    )
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (error) {
+    console.error('REMINDER SETTINGS ERROR:', error)
+    return
+  }
+
+  if (data) {
+    setMorningReminderEnabled(data.morning_enabled)
+    setMorningReminderTime(data.morning_time?.slice(0, 5) || '07:00')
+    setNightReminderEnabled(data.night_enabled)
+    setNightReminderTime(data.night_time?.slice(0, 5) || '21:00')
+    setSpfReapplyEnabled(data.spf_reapply_enabled ?? false)
+    setDiaryNudgeEnabled(data.diary_nudge_enabled ?? false)
+  }
+}
+
 const screenContent = (() => {
 
 if (!authReady) {
@@ -3184,31 +3321,6 @@ if (screen === 'auth') {
   )
 }
 
-const loadReminderSettings = async () => {
-  if (!user) return
-
-  const { data, error } = await supabase
-    .from('reminder_settings')
-    .select(
-      'morning_enabled, morning_time, night_enabled, night_time, spf_reapply_enabled, diary_nudge_enabled'
-    )
-    .eq('user_id', user.id)
-    .maybeSingle()
-
-  if (error) {
-    console.error('REMINDER SETTINGS ERROR:', error)
-    return
-  }
-
-  if (data) {
-    setMorningReminderEnabled(data.morning_enabled)
-    setMorningReminderTime(data.morning_time?.slice(0, 5) || '07:00')
-    setNightReminderEnabled(data.night_enabled)
-    setNightReminderTime(data.night_time?.slice(0, 5) || '21:00')
-    setSpfReapplyEnabled(data.spf_reapply_enabled ?? false)
-    setDiaryNudgeEnabled(data.diary_nudge_enabled ?? false)
-  }
-}
 
 const saveReminderSettings = async () => {
   const { data: { session }, error: sessionError } = await supabase.auth.getSession()
@@ -4744,19 +4856,262 @@ const submitRecommendation = async () => {
           </button>
 
           <div className="mt-5">
-            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
+            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${t.mark}`}>
               Ingredient checker
             </p>
 
-            <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-              Know what you're using
+            <h1 className="mt-1.5 font-display text-[36px] font-light leading-[1.05] tracking-tight">
+              Know what's inside
             </h1>
-
-            <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-              Learn what's inside your skincare routine and how to use it.
-            </p>
           </div>
 
+          <div className={`mt-5 grid grid-cols-2 rounded-xl p-0.5 ${isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'}`}>
+            {[['product', 'My products'], ['lookup', 'Look up an ingredient']].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setCheckerMode(key)}
+                className={`rounded-[10px] py-2 text-[12px] font-semibold transition ${
+                  checkerMode === key ? `${t.surface} shadow-sm` : t.faint
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {checkerMode === 'product' && (() => {
+            const withIngredients = products.filter((p) => (p.products?.ingredients || '').trim().length > 0)
+            const selected = checkerProductId === 'paste'
+              ? null
+              : withIngredients.find((p) => p.id === checkerProductId) || withIngredients[0] || null
+            const pasting = checkerProductId === 'paste' || withIngredients.length === 0
+            const sourceText = pasting ? checkerPasted : selected?.products?.ingredients || ''
+            const analysis = sourceText.trim() ? analyzeIngredients(sourceText) : null
+
+            const TONE = {
+              active: { bar: 'bg-emerald-500', drop: 'text-emerald-500', label: 'Key actives' },
+              helpful: { bar: 'bg-teal-300', drop: 'text-teal-400', label: 'Helpful' },
+              flag: { bar: 'bg-amber-400', drop: 'text-amber-500', label: 'Worth knowing' },
+              neutral: { bar: isNight ? 'bg-white/15' : 'bg-[#101B2D]/15', drop: t.faint, label: 'Base & texture' },
+            }
+            const CONTAINS = {
+              fragrance: 'Contains fragrance',
+              alcohol: 'Contains drying alcohol',
+              essentialOil: 'Contains essential oils',
+              paraben: 'Contains parabens',
+              sulfate: 'Contains sulfates',
+              silicone: 'Contains silicones',
+            }
+            const visible = analysis
+              ? (checkerShowAll ? analysis.items : analysis.items.slice(0, 8))
+              : []
+
+            return (
+              <>
+                {withIngredients.length > 0 && (
+                  <div className="-mx-6 mt-5 flex gap-2 overflow-x-auto px-6 pb-1 [scrollbar-width:none]">
+                    {withIngredients.map((p) => {
+                      const on = !pasting && selected?.id === p.id
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => { setCheckerProductId(p.id); setCheckerShowAll(false) }}
+                          className={`max-w-[160px] shrink-0 rounded-xl border px-3 py-2 text-left transition ${
+                            on ? 'border-emerald-500/60 bg-emerald-500/10' : `${t.hair}`
+                          }`}
+                        >
+                          <span className={`block truncate text-[10px] font-semibold uppercase tracking-wide ${t.faint}`}>
+                            {p.products?.brand}
+                          </span>
+                          <span className="block truncate text-[13px] font-medium">{p.products?.name}</span>
+                        </button>
+                      )
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => { setCheckerProductId('paste'); setCheckerShowAll(false) }}
+                      className={`shrink-0 rounded-xl border border-dashed px-3 py-2 text-[13px] font-medium ${
+                        pasting ? 'border-emerald-500/60 bg-emerald-500/10' : `${t.hair} ${t.muted}`
+                      }`}
+                    >
+                      + Paste a list
+                    </button>
+                  </div>
+                )}
+
+                {pasting && (
+                  <div className="mt-4">
+                    {withIngredients.length === 0 && (
+                      <p className={`mb-3 text-[13px] leading-relaxed ${t.muted}`}>
+                        None of your products has an ingredient list saved yet. Paste one from the packaging or the brand's website:
+                      </p>
+                    )}
+                    <textarea
+                      value={checkerPasted}
+                      onChange={(e) => { setCheckerPasted(e.target.value); setCheckerShowAll(false) }}
+                      rows={4}
+                      placeholder="Water, Glycerin, Niacinamide, …"
+                      className={`w-full resize-none rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 text-[14px] leading-relaxed outline-none`}
+                    />
+                  </div>
+                )}
+
+                {analysis && analysis.items.length > 0 && (
+                  <>
+                    <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
+                      {!pasting && selected && (
+                        <>
+                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${t.faint}`}>
+                            {selected.products?.brand}
+                          </p>
+                          <p className="mt-0.5 text-[19px] font-semibold leading-snug">{selected.products?.name}</p>
+                        </>
+                      )}
+                      <div className={`grid grid-cols-3 gap-2 ${!pasting && selected ? 'mt-4' : ''}`}>
+                        {[
+                          [analysis.composition.total, 'Ingredients', ''],
+                          [analysis.composition.active, 'Key actives', 'text-emerald-500'],
+                          [analysis.composition.flag, 'Worth knowing', analysis.composition.flag ? 'text-amber-500' : ''],
+                        ].map(([value, label, color]) => (
+                          <div key={label}>
+                            <p className={`text-[24px] font-semibold leading-none tabular-nums ${color}`}>{value}</p>
+                            <p className={`mt-1 text-[11px] ${t.faint}`}>{label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-7">
+                      <h2 className="text-[17px] font-semibold">What's inside</h2>
+                      <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2.5">
+                        {analysis.freeFrom.map((f) => (
+                          <div key={f.key} className="flex items-center gap-2">
+                            {f.ok ? (
+                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                  strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M5 12.5l4.5 4.5L19 7.5" />
+                                </svg>
+                              </span>
+                            ) : (
+                              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-400/20 ${isNight ? "text-amber-300" : "text-amber-600"}`}>
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                  strokeWidth="3" strokeLinecap="round">
+                                  <path d="M12 6v8M12 18v.01" />
+                                </svg>
+                              </span>
+                            )}
+                            <span className={`text-[13px] ${f.ok ? '' : t.muted}`}>
+                              {f.ok ? f.label : CONTAINS[f.key]}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className={`mt-7 overflow-hidden rounded-3xl ${t.surface}`}>
+                      <div className="px-5 pt-5">
+                        <div className="flex items-baseline justify-between">
+                          <h2 className="text-[17px] font-semibold">Ingredients</h2>
+                          <span className={`text-[12px] ${t.faint}`}>In label order</span>
+                        </div>
+
+                        <div className="mt-3 flex h-2 gap-[3px] overflow-hidden rounded-full">
+                          {['active', 'helpful', 'flag', 'neutral'].map((tone) =>
+                            analysis.composition[tone] > 0 ? (
+                              <span
+                                key={tone}
+                                className={`h-full ${TONE[tone].bar}`}
+                                style={{ flexGrow: analysis.composition[tone] }}
+                              />
+                            ) : null
+                          )}
+                        </div>
+                        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1">
+                          {['active', 'helpful', 'flag', 'neutral'].map((tone) =>
+                            analysis.composition[tone] > 0 ? (
+                              <span key={tone} className={`flex items-center gap-1.5 text-[11px] ${t.muted}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${TONE[tone].bar}`} />
+                                {TONE[tone].label} · {analysis.composition[tone]}
+                              </span>
+                            ) : null
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        {visible.map((item) => {
+                          const clickable = !!item.guide
+                          const Row = clickable ? 'button' : 'div'
+                          return (
+                            <Row
+                              key={item.index}
+                              type={clickable ? 'button' : undefined}
+                              onClick={clickable ? () => {
+                                setIngredientQuery(item.guide.ingredient)
+                                setCheckerMode('lookup')
+                                window.scrollTo(0, 0)
+                              } : undefined}
+                              className={`flex w-full items-center gap-3 border-t px-5 py-3 text-left ${t.hair} ${
+                                item.tone === 'active' ? 'bg-emerald-500/[0.07]' : ''
+                              }`}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
+                                className={`shrink-0 ${TONE[item.tone].drop}`}>
+                                <path d="M12 2.5c3.6 4.4 6.5 8.2 6.5 11.7a6.5 6.5 0 0 1-13 0c0-3.5 2.9-7.3 6.5-11.7Z" />
+                              </svg>
+                              <span className="min-w-0 flex-1">
+                                <span className={`block truncate text-[14px] ${
+                                  item.tone === 'active' ? `font-semibold ${isNight ? 'text-emerald-400' : 'text-emerald-700'}` : 'font-medium'
+                                }`}>
+                                  {item.name}
+                                </span>
+                                {item.role && (
+                                  <span className={`block truncate text-[11px] ${t.faint}`}>{item.role}</span>
+                                )}
+                              </span>
+                              {item.tone === 'active' && (
+                                <span className="flex shrink-0 items-center gap-1 text-[11px] font-semibold text-emerald-600">
+                                  Learn
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M9 5l7 7-7 7" />
+                                  </svg>
+                                </span>
+                              )}
+                              {item.tone === 'flag' && (
+                                <span className={`shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold ${isNight ? "text-amber-300" : "text-amber-700"}`}>
+                                  {item.flag}
+                                </span>
+                              )}
+                            </Row>
+                          )
+                        })}
+                      </div>
+
+                      {analysis.items.length > 8 && (
+                        <button
+                          type="button"
+                          onClick={() => setCheckerShowAll(!checkerShowAll)}
+                          className={`w-full border-t py-3.5 text-center text-[13px] font-semibold ${t.hair}`}
+                        >
+                          {checkerShowAll ? 'Show fewer' : `Show all ${analysis.items.length} ingredients`}
+                        </button>
+                      )}
+                    </div>
+
+                    <p className={`mt-4 text-[11px] leading-relaxed ${t.faint}`}>
+                      Based on the ingredient list only. "Worth knowing" flags common irritants for sensitive skin — they're not necessarily bad for you.
+                    </p>
+                  </>
+                )}
+              </>
+            )
+          })()}
+
+          {checkerMode === 'lookup' && (<>
           <div className="mt-6">
             <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
               Search ingredients
@@ -4914,6 +5269,7 @@ const submitRecommendation = async () => {
               </p>
             </div>
           )}
+          </>)}
 
 
         </div>
@@ -5940,6 +6296,18 @@ if (screen === 'settings') {
             </svg>
           </button>
 
+          <button
+            onClick={openSetupGuide}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            Home screen & reminders
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
         </div>
 
         {practitionersLaunched && (
@@ -6644,6 +7012,16 @@ if (screen === 'reminders') {
 
           {pushStatus && (
             <p className={`mt-4 text-[13px] ${t.muted}`}>{pushStatus}</p>
+          )}
+
+          {!getInstallEnv().standalone && (
+            <button
+              type="button"
+              onClick={openSetupGuide}
+              className={`mt-3 text-[13px] font-semibold ${t.mark}`}
+            >
+              How to add Tracka+ to your home screen →
+            </button>
           )}
         </div>
 
@@ -9213,6 +9591,30 @@ if (screen === 'today') {
         })()}
 
         {(() => {
+          const env = getInstallEnv()
+          if (env.standalone && env.notifications === 'granted') return null
+          return (
+            <button
+              type="button"
+              onClick={openSetupGuide}
+              className={`mt-6 flex w-full items-center gap-3 border-l-2 border-amber-400/80 py-1 pl-3.5 text-left`}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium">
+                  {env.standalone ? 'Turn on reminders' : 'Add Tracka+ to your home screen'}
+                </span>
+                <span className={`block text-[12px] ${t.muted}`}>
+                  {env.standalone
+                    ? 'Get a nudge when it’s time for your routine.'
+                    : 'One tap to open, plus morning and night reminders.'}
+                </span>
+              </span>
+              <span className="shrink-0 text-[12px] font-semibold text-amber-600">Show me how</span>
+            </button>
+          )
+        })()}
+
+        {(() => {
           const activeChallenges = myChallenges.filter(isLiveParticipation)
 
           return (
@@ -11083,6 +11485,188 @@ if (screen === 'progressPhotos') {
           </div>
         </div>
       )}
+
+      {setupGuideOpen && (() => {
+        const env = getInstallEnv()
+        const installed = env.standalone
+        const remindersOn = setupGuideStatus === 'reminders_on' || env.notifications === 'granted'
+
+        const ShareIcon = (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="inline -mt-0.5 mx-0.5">
+            <path d="M12 3v12M8 7l4-4 4 4" />
+            <path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" />
+          </svg>
+        )
+
+        const stepMarker = (n, done) => (
+          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold ${
+            done ? 'bg-emerald-500 text-white' : `border ${t.hair} ${t.muted}`
+          }`}>
+            {done ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12.5l4.5 4.5L19 7.5" />
+              </svg>
+            ) : n}
+          </span>
+        )
+
+        const instruction = (items) => (
+          <ol className={`mt-2 flex flex-col gap-1.5 text-[13px] leading-relaxed ${t.muted}`}>
+            {items.map((item, i) => (
+              <li key={i} className="flex gap-2">
+                <span className={`shrink-0 tabular-nums ${t.faint}`}>{i + 1}.</span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ol>
+        )
+
+        let installBody
+        if (installed) {
+          installBody = <p className={`mt-1 text-[13px] ${t.muted}`}>Done — you're using the home-screen app.</p>
+        } else if (env.inAppBrowser) {
+          installBody = (
+            <>
+              <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                You're inside another app's browser, which can't install Tracka+. Open it in {env.isIOS ? 'Safari' : 'Chrome'} first:
+              </p>
+              {instruction([
+                <>Tap the <b>⋯</b> menu and choose <b>Open in {env.isIOS ? 'Safari' : 'browser'}</b>, or copy the link below.</>,
+                'Then come back to this guide there.',
+              ])}
+            </>
+          )
+        } else if (env.isIOS && !env.iosSafari) {
+          installBody = (
+            <>
+              <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>On iPhone this works best in Safari:</p>
+              {instruction([
+                <>Open <b>trackaplus.app</b> in <b>Safari</b>.</>,
+                <>Tap the Share button {ShareIcon} at the bottom.</>,
+                <>Tap <b>Add to Home Screen</b>, then <b>Add</b>.</>,
+              ])}
+            </>
+          )
+        } else if (env.isIOS) {
+          installBody = instruction([
+            <>Tap the Share button {ShareIcon} at the bottom of Safari.</>,
+            <>Scroll down and tap <b>Add to Home Screen</b>.</>,
+            <>Tap <b>Add</b>, then open Tracka+ from your home screen.</>,
+          ])
+        } else if (installPromptEvent) {
+          installBody = (
+            <button
+              type="button"
+              onClick={installFromPrompt}
+              className={`mt-3 rounded-xl px-4 py-2.5 text-[13px] font-semibold ${t.btn}`}
+            >
+              Install Tracka+
+            </button>
+          )
+        } else if (env.isAndroid) {
+          installBody = instruction([
+            <>Tap the <b>⋮</b> menu at the top right of Chrome.</>,
+            <>Tap <b>Add to Home screen</b> (or <b>Install app</b>).</>,
+            <>Tap <b>Install</b>, then open Tracka+ from your home screen.</>,
+          ])
+        } else {
+          installBody = (
+            <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+              Open trackaplus.app on your phone — or use the install icon in your browser's address bar.
+            </p>
+          )
+        }
+
+        // iPhone only allows reminders inside the installed app.
+        const remindersBlocked = env.isIOS && !installed
+
+        return (
+          <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center"
+            onClick={snoozeSetupGuide}>
+            <div
+              className={`w-full max-w-md rounded-t-3xl px-6 pb-[max(24px,env(safe-area-inset-bottom))] pt-6 sm:rounded-3xl ${t.page}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={`mx-auto mb-5 h-1 w-10 rounded-full sm:hidden ${isNight ? 'bg-white/15' : 'bg-[#101B2D]/15'}`} />
+
+              <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${t.mark}`}>Two quick steps</p>
+              <h2 className="mt-1.5 font-display text-[28px] font-light leading-[1.1] tracking-tight">
+                Never miss your routine
+              </h2>
+              <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>
+                Keep Tracka+ one tap away, and let it remind you morning and night.
+              </p>
+
+              <div className="mt-6 flex gap-3.5">
+                {stepMarker(1, installed)}
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px] font-semibold">Add Tracka+ to your home screen</p>
+                  {installBody}
+                </div>
+              </div>
+
+              <div className={`my-5 border-t ${t.hair}`} />
+
+              <div className={`flex gap-3.5 ${remindersBlocked ? 'opacity-60' : ''}`}>
+                {stepMarker(2, remindersOn)}
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px] font-semibold">Turn on reminders</p>
+                  {remindersOn ? (
+                    <>
+                      <p className={`mt-1 text-[13px] ${t.muted}`}>Reminders are on.</p>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setSetupGuideOpen(false)
+                          await loadReminderSettings()
+                          setScreen('reminders')
+                        }}
+                        className={`mt-2 text-[13px] font-semibold ${t.mark}`}
+                      >
+                        Choose your reminder times →
+                      </button>
+                    </>
+                  ) : remindersBlocked ? (
+                    <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                      Do step 1 first, then open Tracka+ from your home screen — on iPhone, reminders only work there.
+                    </p>
+                  ) : (
+                    <>
+                      <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                        A gentle nudge when it's time for your routine.
+                      </p>
+                      <button
+                        type="button"
+                        disabled={busyAction === 'guidePush'}
+                        onClick={() => runBusy('guidePush', turnOnRemindersFromGuide)}
+                        className={`mt-3 rounded-xl px-4 py-2.5 text-[13px] font-semibold ${t.btn} disabled:opacity-60`}
+                      >
+                        {busyAction === 'guidePush' ? 'Turning on…' : 'Turn on reminders'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {setupGuideStatus && setupGuideStatus !== 'reminders_on' && (
+                <p className="mt-5 border-l-2 border-amber-400/80 pl-3 text-[12px] leading-relaxed text-amber-700">
+                  {setupGuideStatus}
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={installed && remindersOn ? () => setSetupGuideOpen(false) : snoozeSetupGuide}
+                className={`mt-7 w-full py-2 text-center text-[13px] font-semibold ${t.faint}`}
+              >
+                {installed && remindersOn ? 'Done' : 'Not now'}
+              </button>
+            </div>
+          </div>
+        )
+      })()}
 
       {celebration && (() => {
         const cup = challengeAwards(

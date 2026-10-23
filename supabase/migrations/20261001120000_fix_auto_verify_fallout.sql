@@ -119,6 +119,11 @@ grant execute on function admin_list_pending_practitioners() to authenticated;
 --    email had an account. If it did, a direct relationship is created too
 --    (as before) in addition to the token.
 -- ---------------------------------------------------------------
+-- Return type changes jsonb → uuid, which create-or-replace can't do; drop
+-- first (grants are re-applied below). Added after the fact so a fresh
+-- `supabase db reset` replays cleanly — live already has this applied.
+drop function if exists practitioner_invite_by_email(text, text[]);
+
 create or replace function practitioner_invite_by_email(p_email text, p_scopes text[])
 returns uuid -- always an invitation token, regardless of which branch fired
 language plpgsql
