@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { supabase } from './lib/supabase'
+import { supabase, OPENED_FROM_RECOVERY_LINK } from './lib/supabase'
 import { planNight, localDateString, addDays, addMonths, dayOfWeek, PREGNANCY_NOTE } from './lib/core/planNight'
 import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
@@ -165,6 +165,10 @@ function App() {
   const [screen, setScreen] = useState('welcome')
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
+  // True from the moment a password-reset link opens the app until the new
+  // password is saved. Startup routing must not send the person anywhere
+  // else meanwhile (it used to race and land them on onboarding/Today).
+  const recoveryActiveRef = useRef(OPENED_FROM_RECOVERY_LINK)
 
   // Shared busy-tracker for buttons that kick off an async action with no
   // dedicated loading state of their own. An impatient user re-tapping a
@@ -671,13 +675,15 @@ setRoutineHistory(groupedRoutines)
         setUser(user)
         redeemPendingInvite()
 
-        if (user.email === ADMIN_EMAIL) {
+        const isRecovery = recoveryActiveRef.current || isRecoveryFlow()
+
+        if (isRecovery) {
+          recoveryActiveRef.current = true
+          setScreen('resetPassword')
+        } else if (user.email === ADMIN_EMAIL) {
           setScreen('admin')
           return
         }
-
-        const urlParams = new URLSearchParams(window.location.search)
-        const isRecovery = urlParams.get('recovery') === 'true' || urlParams.get('type') === 'recovery'
 
         const [{ data: profile, error }, { data: existingSkinProfile }, { data: practitionerRow }] = await Promise.all([
           supabase.from('profiles').select('username, onboarding_completed').eq('id', user.id).maybeSingle(),
@@ -691,7 +697,9 @@ setRoutineHistory(groupedRoutines)
             : supabase.from('practitioners').select('verified_at').eq('user_id', user.id).maybeSingle(),
         ])
 
-        if (isRecovery) {
+        // Re-check after the awaits: the PASSWORD_RECOVERY event can arrive
+        // while those queries are in flight.
+        if (recoveryActiveRef.current) {
           setScreen('resetPassword')
         } else {
           setScreen(
@@ -723,7 +731,8 @@ setRoutineHistory(groupedRoutines)
         data: { user },
       } = await supabase.auth.getUser()
 
-      if (isRecoveryFlow()) {
+      if (recoveryActiveRef.current || isRecoveryFlow()) {
+        recoveryActiveRef.current = true
         normalizeRecoveryFlow()
         setScreen('resetPassword')
         setAuthReady(true)
@@ -799,6 +808,7 @@ setRoutineHistory(groupedRoutines)
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
+        recoveryActiveRef.current = true
         normalizeRecoveryFlow()
         setScreen('resetPassword')
       }
@@ -6188,9 +6198,24 @@ if (screen === 'resetPassword') {
                     : profile.username
                 )
 
+                recoveryActiveRef.current = false
                 window.history.replaceState({}, '', window.location.pathname)
                 notify('Your password has been updated.', 'success')
-                setScreen('today')
+
+                // Same destination a normal login would pick.
+                const [{ data: existingSkinProfile }, { data: practitionerRow }] = await Promise.all([
+                  supabase.from('skin_profiles').select('id').eq('user_id', data.user.id).limit(1).maybeSingle(),
+                  supabase.from('practitioners').select('verified_at').eq('user_id', data.user.id).maybeSingle(),
+                ])
+                setScreen(
+                  data.user.email === ADMIN_EMAIL
+                    ? 'admin'
+                    : practitionerRow?.verified_at
+                    ? 'practitionerDashboard'
+                    : existingSkinProfile
+                    ? 'today'
+                    : 'skinProfile'
+                )
               })
             }
             className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
