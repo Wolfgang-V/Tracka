@@ -394,6 +394,12 @@ function App() {
   const [productExpiryDate, setProductExpiryDate] = useState('')
   const [productSaving, setProductSaving] = useState(false)
   const [products, setProducts] = useState([])
+  // Finished products (Empties), signed photo URLs by storage path, which
+  // product page is open, and which list sections are expanded.
+  const [empties, setEmpties] = useState([])
+  const [productPhotoUrls, setProductPhotoUrls] = useState({})
+  const [selectedUserProductId, setSelectedUserProductId] = useState(null)
+  const [productSections, setProductSections] = useState({ mine: true, expiring: true, empties: false })
   // Per product, which weekdays (0=Sun..6=Sat) it's used on — this is the
   // whole schedule now, the separate frequency dropdown was folded into
   // it. Sent to the DB with frequency always 'daily', which combined with
@@ -552,6 +558,9 @@ setRoutineHistory(groupedRoutines)
           opened_date,
           pao_months,
           expiry_date,
+          added_at,
+          photo_path,
+          finished_at,
           products (
             id,
             brand,
@@ -2024,19 +2033,21 @@ const getPaoStatus = (item) => {
 
   if (daysLeft < 0) {
     return isSunscreen
-      ? { label: 'Expired — don\'t rely on this for protection', expired: true, firm: true }
-      : { label: 'Expired', expired: true }
+      ? { label: 'Expired — don\'t rely on this for protection', expired: true, firm: true, daysLeft, expires }
+      : { label: 'Expired', expired: true, daysLeft, expires }
   }
   if (daysLeft === 0) {
     return isSunscreen
-      ? { label: 'Expires today — replace before your next reapply', expired: true, firm: true }
-      : { label: 'Expires today', expired: true }
+      ? { label: 'Expires today — replace before your next reapply', expired: true, firm: true, daysLeft, expires }
+      : { label: 'Expires today', expired: true, daysLeft, expires }
   }
-  if (daysLeft <= 30) return { label: `${daysLeft}d left`, expired: false }
+  if (daysLeft <= 30) return { label: `${daysLeft}d left`, expired: false, daysLeft, expires }
 
   return {
     label: `Use by ${expires.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}`,
     expired: false,
+    daysLeft,
+    expires,
   }
 }
 
@@ -2115,6 +2126,10 @@ useEffect(() => {
     loadCareTeam()
     loadChallenges()
     openPendingChallenge()
+  }
+
+  if (screen === 'products' || screen === 'productDetail') {
+    loadEmpties()
   }
 
   if (screen === 'challengeLeaderboard') {
@@ -3089,6 +3104,196 @@ const declinePreviewedInvite = () => {
 // Wrapped in an IIFE so the toast/confirm overlay below can render once,
 // on top of whichever screen this resolves to, instead of being pasted
 // into every one of the ~20 screen branches individually.
+// ---- Products: pages, photos, expiry, empties ----------------------------
+
+const PRODUCT_FIELDS = `
+  id, product_id, opened_date, pao_months, expiry_date, added_at,
+  photo_path, finished_at, is_active,
+  products ( id, brand, name, category, ingredients )
+`
+
+const loadEmpties = async () => {
+  if (!user) return
+  const { data, error } = await supabase
+    .from('user_products')
+    .select(PRODUCT_FIELDS)
+    .eq('user_id', user.id)
+    .eq('is_active', false)
+    .not('finished_at', 'is', null)
+    .order('finished_at', { ascending: false })
+  if (error) {
+    console.error('EMPTIES ERROR:', error)
+    return
+  }
+  setEmpties(data || [])
+}
+
+// Private bucket, so photos are shown through short-lived signed links.
+// Only signs paths it hasn't signed yet.
+useEffect(() => {
+  const paths = [...products, ...empties]
+    .map((p) => p.photo_path)
+    .filter((path) => path && !productPhotoUrls[path])
+  if (paths.length === 0) return
+  let cancelled = false
+  supabase.storage
+    .from('product-photos')
+    .createSignedUrls([...new Set(paths)], 3600)
+    .then(({ data }) => {
+      if (cancelled || !data) return
+      setProductPhotoUrls((current) => {
+        const next = { ...current }
+        for (const entry of data) if (entry.signedUrl) next[entry.path] = entry.signedUrl
+        return next
+      })
+    })
+  return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [products, empties])
+
+// Phone photos are often 3–5 MB; shrink to ~1200px JPEG before upload.
+// Falls back to the original file if the browser can't decode it.
+const shrinkImage = (file) =>
+  new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, 1200 / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+      URL.revokeObjectURL(url)
+      canvas.toBlob((blob) => resolve(blob || file), 'image/jpeg', 0.85)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      resolve(file)
+    }
+    img.src = url
+  })
+
+const patchUserProduct = (id, patch) => {
+  setProducts((current) => current.map((p) => (p.id === id ? { ...p, ...patch } : p)))
+  setEmpties((current) => current.map((p) => (p.id === id ? { ...p, ...patch } : p)))
+}
+
+const setProductPhoto = async (item, file) => {
+  if (!file || !user) return
+  const blob = await shrinkImage(file)
+  const path = `${user.id}/${item.id}-${Date.now()}.jpg`
+
+  const { error: uploadError } = await supabase.storage
+    .from('product-photos')
+    .upload(path, blob, { contentType: 'image/jpeg' })
+  if (uploadError) {
+    console.error('PRODUCT PHOTO UPLOAD ERROR:', uploadError)
+    notify("Couldn't upload that photo. Try again.")
+    return
+  }
+
+  // The old file (if any) is queued for deletion by a database trigger.
+  const { error } = await supabase.from('user_products').update({ photo_path: path }).eq('id', item.id)
+  if (error) {
+    console.error('PRODUCT PHOTO SAVE ERROR:', error)
+    notify("Couldn't save that photo. Try again.")
+    return
+  }
+  setProductPhotoUrls((current) => ({ ...current, [path]: URL.createObjectURL(blob) }))
+  patchUserProduct(item.id, { photo_path: path })
+}
+
+const removeProductPhoto = async (item) => {
+  const { error } = await supabase.from('user_products').update({ photo_path: null }).eq('id', item.id)
+  if (error) {
+    notify("Couldn't remove the photo.")
+    return
+  }
+  patchUserProduct(item.id, { photo_path: null })
+}
+
+const updateProductDates = async (item, patch) => {
+  const { error } = await supabase.from('user_products').update(patch).eq('id', item.id)
+  if (error) {
+    console.error('PRODUCT DATE ERROR:', error)
+    notify("That date couldn't be saved. Check it and try again.")
+    return
+  }
+  patchUserProduct(item.id, patch)
+}
+
+// Is this product still a step in the current AM/PM routine?
+const routineSlotsUsing = (item) => {
+  const slots = []
+  if (todayAmSteps.some((s) => s.user_product_id === item.id)) slots.push('morning')
+  if (todayPmSteps.some((s) => s.user_product_id === item.id)) slots.push('night')
+  return slots
+}
+
+const finishProduct = async (item) => {
+  const slots = routineSlotsUsing(item)
+  const confirmed = await confirmAction(
+    slots.length
+      ? `Move ${item.products.name} to your empties? It's still in your ${slots.join(' and ')} routine — you can swap it out in My routine.`
+      : `Move ${item.products.name} to your empties?`,
+    ['Cancel', 'Mark as finished']
+  )
+  if (!confirmed) return
+
+  const finished_at = new Date().toISOString()
+  const { error } = await supabase
+    .from('user_products')
+    .update({ is_active: false, finished_at })
+    .eq('id', item.id)
+  if (error) {
+    notify(error.message)
+    return
+  }
+  setProducts((current) => current.filter((p) => p.id !== item.id))
+  setEmpties((current) => [{ ...item, is_active: false, finished_at }, ...current])
+  notify('Moved to your empties.', 'success')
+  setScreen('products')
+}
+
+// Added by mistake — not an empty, so it doesn't go to Empties.
+const removeUserProduct = async (item) => {
+  const confirmed = await confirmAction(`Remove ${item.products.name} from your products?`)
+  if (!confirmed) return
+  const { error } = await supabase.from('user_products').update({ is_active: false }).eq('id', item.id)
+  if (error) {
+    notify(error.message)
+    return
+  }
+  setProducts((current) => current.filter((p) => p.id !== item.id))
+  setScreen('products')
+}
+
+// Repurchased: a fresh bottle, so a new entry (own opened date and photo
+// slot); the finished one stays in Empties as history.
+const restockProduct = async (item) => {
+  const { data, error } = await supabase
+    .from('user_products')
+    .insert({ user_id: user.id, product_id: item.product_id, is_active: true })
+    .select(PRODUCT_FIELDS)
+    .single()
+  if (error) {
+    notify(
+      error.code === '23505'
+        ? `${item.products.name} is already in your products.`
+        : "Couldn't add it back. Try again."
+    )
+    return
+  }
+  setProducts((current) => [data, ...current])
+  notify(`${item.products.name} is back in your products.`, 'success')
+  setSelectedUserProductId(data.id)
+}
+
+const openProduct = (id) => {
+  setSelectedUserProductId(id)
+  setScreen('productDetail')
+}
+
 // Defined outside screenContent: the setup guide overlay (rendered outside
 // the screens) also opens Reminders.
 const loadReminderSettings = async () => {
@@ -4310,117 +4515,156 @@ const submitRecommendation = async () => {
             </p>
           </div>
 
-          <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
+          {(() => {
+            const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+            const withStatus = products.map((item) => ({ item, status: getPaoStatus(item) }))
+            const expiring = withStatus
+              .filter(({ status }) => status && status.daysLeft <= 30)
+              .sort((a, b) => a.status.daysLeft - b.status.daysLeft)
 
-            <h2 className="text-[17px] font-semibold">
-              Your products
-            </h2>
+            const thumb = (item, size = 'h-12 w-12', dim = false) => {
+              const url = item.photo_path && productPhotoUrls[item.photo_path]
+              return url ? (
+                <img src={url} alt="" className={`${size} shrink-0 rounded-xl object-cover ${dim ? 'opacity-70 grayscale-[35%]' : ''}`} />
+              ) : (
+                <span className={`${size} flex shrink-0 items-center justify-center rounded-xl text-[13px] font-semibold uppercase ${
+                  isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'
+                } ${t.faint}`}>
+                  {(item.products?.brand || item.products?.name || '?').slice(0, 2)}
+                </span>
+              )
+            }
 
-            {products.length === 0 ? (
-              <p className={`mt-2 text-[15px] ${t.muted}`}>
-                You haven't added any products yet.
-              </p>
-            ) : (
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                {products.map((item) => {
-                  const status = getPaoStatus(item)
+            const countdownTone = (status) =>
+              status.daysLeft <= 0 ? t.danger : status.daysLeft <= 7 ? 'text-amber-600' : t.muted
 
-                  return (
-                    <div
-                      key={item.id}
-                      className={`relative rounded-2xl border ${t.hair} p-4`}
-                    >
-                      <button
-                        disabled={busyAction === `removeProduct-${item.id}`}
-                        onClick={() =>
-                          runBusy(`removeProduct-${item.id}`, async () => {
-                            const confirmed = await confirmAction(
-                              `Remove ${item.products.name} from your products?`
-                            )
+            const countdownText = (status) =>
+              status.daysLeft < 0
+                ? `Expired ${Math.abs(status.daysLeft)}d ago`
+                : status.daysLeft === 0
+                ? 'Expires today'
+                : `${status.daysLeft}d left`
 
-                            if (!confirmed) return
+            const section = (key, title, count, body, hint) => (
+              <section className={`mt-6 overflow-hidden rounded-3xl ${t.surface}`}>
+                <button
+                  type="button"
+                  onClick={() => setProductSections((s) => ({ ...s, [key]: !s[key] }))}
+                  className="flex w-full items-center justify-between px-5 py-4 text-left"
+                  aria-expanded={productSections[key]}
+                >
+                  <span>
+                    <span className="text-[16px] font-semibold">{title}</span>
+                    <span className={`ml-2 text-[13px] tabular-nums ${t.faint}`}>{count}</span>
+                    {hint && <span className={`block text-[12px] ${t.faint}`}>{hint}</span>}
+                  </span>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+                    className={`shrink-0 transition-transform ${productSections[key] ? 'rotate-180' : ''} ${t.faint}`}>
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+                {productSections[key] && <div className={`border-t ${t.hair}`}>{body}</div>}
+              </section>
+            )
 
-                            const { error } = await supabase
-                              .from('user_products')
-                              .update({ is_active: false })
-                              .eq('id', item.id)
-
-                            if (error) {
-                              notify(error.message)
-                              return
-                            }
-
-                            setProducts((current) =>
-                              current.filter(
-                                (product) => product.id !== item.id
-                              )
-                            )
-                          })
-                        }
-                        aria-label={`Remove ${item.products.name}`}
-                        className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full text-base leading-none ${t.faint} disabled:opacity-40`}
-                      >
-                        ×
-                      </button>
-
-                      <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>
-                        {item.products.category}
-                      </p>
-
-                      <p className="mt-2 pr-4 text-[14px] font-semibold leading-snug">
-                        {item.products.name}
-                      </p>
-
-                      <p className={`mt-0.5 text-[12px] ${t.muted}`}>
-                        {item.products.brand}
-                      </p>
-
-                      {item.opened_date && (
-                        <p className={`mt-2 flex items-center gap-1 text-[11px] ${t.faint}`}>
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" strokeWidth="2"
-                            strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                            <rect x="3" y="4" width="18" height="18" rx="2" />
-                            <path d="M16 2v4M8 2v4M3 10h18" />
-                          </svg>
-                          Opened {new Date(item.opened_date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        </p>
-                      )}
-
-                      {item.pao_months && (
-                        <p className={`mt-0.5 text-[11px] ${t.faint}`}>
-                          PAO {item.pao_months} {item.pao_months === 1 ? 'month' : 'months'}
-                        </p>
-                      )}
-
-                      {item.expiry_date && (
-                        <p className={`mt-0.5 flex items-center gap-1 text-[11px] ${t.faint}`}>
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" strokeWidth="2"
-                            strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                            <rect x="3" y="4" width="18" height="18" rx="2" />
-                            <path d="M16 2v4M8 2v4M3 10h18" />
-                          </svg>
-                          Expires {new Date(item.expiry_date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        </p>
-                      )}
-
-                      {status && status.firm && (
-                        <p className={`mt-2 rounded-lg border border-rose-400/30 bg-rose-400/10 px-2 py-1.5 text-[11px] font-semibold leading-snug ${t.danger}`}>
-                          {status.label}
-                        </p>
-                      )}
-
-                      {status && !status.firm && (
-                        <p className={`mt-2 text-[11px] font-semibold ${status.expired ? t.danger : t.faint}`}>
-                          {status.label}
-                        </p>
-                      )}
+            return (
+              <>
+                {section(
+                  'mine',
+                  'My products',
+                  products.length,
+                  products.length === 0 ? (
+                    <p className={`px-5 py-4 text-[14px] ${t.muted}`}>You haven&apos;t added any products yet.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3 p-4">
+                      {withStatus.map(({ item, status }) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => openProduct(item.id)}
+                          className={`rounded-2xl border ${t.hair} p-3 text-left`}
+                        >
+                          {thumb(item, 'aspect-square w-full')}
+                          <p className={`mt-2.5 truncate text-[10px] font-semibold uppercase tracking-wide ${t.faint}`}>
+                            {item.products?.brand}
+                          </p>
+                          <p className="line-clamp-2 text-[13px] font-semibold leading-snug">{item.products?.name}</p>
+                          {status && status.daysLeft <= 30 && (
+                            <p className={`mt-1 text-[11px] font-semibold ${countdownTone(status)}`}>{countdownText(status)}</p>
+                          )}
+                        </button>
+                      ))}
                     </div>
                   )
-                })}
-              </div>
-            )}
+                )}
+
+                {expiring.length > 0 && section(
+                  'expiring',
+                  'Expiring soon',
+                  expiring.length,
+                  <div>
+                    {expiring.map(({ item, status }, i) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => openProduct(item.id)}
+                        className={`flex w-full items-center gap-3 px-5 py-3 text-left ${i > 0 ? `border-t ${t.hair}` : ''}`}
+                      >
+                        {thumb(item)}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[14px] font-medium">{item.products?.name}</span>
+                          <span className={`block truncate text-[12px] ${t.faint}`}>Use by {fmtDate(status.expires)}</span>
+                        </span>
+                        <span className={`shrink-0 text-[12px] font-semibold ${countdownTone(status)}`}>
+                          {countdownText(status)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>,
+                  'Within the next 30 days'
+                )}
+
+                {section(
+                  'empties',
+                  'Empties',
+                  empties.length,
+                  empties.length === 0 ? (
+                    <p className={`px-5 py-4 text-[13px] leading-relaxed ${t.muted}`}>
+                      Finished a product? Open it and tap <b>Mark as finished</b>. It&apos;ll be kept here as a record.
+                    </p>
+                  ) : (
+                    <div>
+                      {empties.map((item, i) => {
+                        const start = item.opened_date ? new Date(item.opened_date + 'T00:00:00') : new Date(item.added_at)
+                        const days = Math.max(1, Math.round((new Date(item.finished_at) - start) / 86400000))
+                        const lasted = days >= 60 ? `${Math.round(days / 30)} months` : days >= 14 ? `${Math.round(days / 7)} weeks` : `${days} ${days === 1 ? 'day' : 'days'}`
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => openProduct(item.id)}
+                            className={`flex w-full items-center gap-3 px-5 py-3 text-left ${i > 0 ? `border-t ${t.hair}` : ''}`}
+                          >
+                            {thumb(item, 'h-12 w-12', true)}
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[14px] font-medium">{item.products?.name}</span>
+                              <span className={`block truncate text-[12px] ${t.faint}`}>
+                                Finished {fmtDate(item.finished_at)} · lasted {lasted}
+                              </span>
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ),
+                  'Products you’ve used up'
+                )}
+              </>
+            )
+          })()}
+
+          <div className="mt-2">
 
             <button
               onClick={() => {
@@ -4839,6 +5083,205 @@ const submitRecommendation = async () => {
 
           </div>
         </div>
+      </main>
+    )
+  }
+
+  if (screen === 'productDetail') {
+    const item =
+      products.find((p) => p.id === selectedUserProductId) ||
+      empties.find((p) => p.id === selectedUserProductId)
+    const isEmpty = !!item?.finished_at && !products.some((p) => p.id === item?.id)
+    const status = item && !isEmpty ? getPaoStatus(item) : null
+    const photoUrl = item?.photo_path && productPhotoUrls[item.photo_path]
+    const fmt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    const inputClass = `w-full rounded-xl border ${t.hair} bg-transparent px-3 py-2 text-[14px] outline-none`
+
+    return (
+      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
+        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
+          <button
+            onClick={() => setScreen('products')}
+            className={`-ml-2 flex items-center gap-1 self-start py-2 text-[15px] ${t.muted}`}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+            My products
+          </button>
+
+          {!item ? (
+            <p className={`mt-8 text-[14px] ${t.muted}`}>This product isn&apos;t available any more.</p>
+          ) : (
+            <>
+              <div className={`relative mt-4 aspect-[4/3] w-full overflow-hidden rounded-3xl ${t.surface}`}>
+                {photoUrl ? (
+                  <img src={photoUrl} alt={item.products?.name} className={`h-full w-full object-cover ${isEmpty ? 'opacity-80 grayscale-[30%]' : ''}`} />
+                ) : (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-2">
+                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+                      <path d="M4 8h3l1.5-2h7L17 8h3v11H4z" />
+                      <circle cx="12" cy="13.5" r="3.5" />
+                    </svg>
+                    <span className={`text-[13px] ${t.muted}`}>No photo yet</span>
+                  </div>
+                )}
+                {isEmpty && (
+                  <span className="absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[11px] font-semibold text-white">
+                    Empty
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-3 flex items-center gap-4">
+                <label className={`cursor-pointer text-[13px] font-semibold ${t.mark} ${busyAction === 'productPhoto' ? 'opacity-50' : ''}`}>
+                  {busyAction === 'productPhoto' ? 'Uploading…' : photoUrl ? 'Change photo' : 'Add a photo'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={busyAction === 'productPhoto'}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      e.target.value = ''
+                      if (file) runBusy('productPhoto', () => setProductPhoto(item, file))
+                    }}
+                  />
+                </label>
+                {photoUrl && (
+                  <button type="button" onClick={() => removeProductPhoto(item)} className={`text-[13px] font-semibold ${t.faint}`}>
+                    Remove photo
+                  </button>
+                )}
+              </div>
+
+              <p className={`mt-6 text-[11px] font-semibold uppercase tracking-[0.16em] ${t.faint}`}>{item.products?.brand}</p>
+              <h1 className="mt-1 font-display text-[30px] font-light leading-[1.1] tracking-tight">{item.products?.name}</h1>
+              {item.products?.category && (
+                <span className={`mt-2 inline-block rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize ${t.chip}`}>
+                  {item.products.category.replace(/_/g, ' ')}
+                </span>
+              )}
+
+              {isEmpty ? (
+                <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
+                  {(() => {
+                    const start = item.opened_date ? new Date(item.opened_date + 'T00:00:00') : new Date(item.added_at)
+                    const days = Math.max(1, Math.round((new Date(item.finished_at) - start) / 86400000))
+                    return (
+                      <>
+                        <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${t.faint}`}>Finished</p>
+                        <p className="mt-1 text-[18px] font-semibold">{fmt(item.finished_at)}</p>
+                        <p className={`mt-1 text-[13px] ${t.muted}`}>
+                          Lasted {days} {days === 1 ? 'day' : 'days'}
+                          {item.opened_date ? ` from opening on ${fmt(item.opened_date + 'T00:00:00')}` : ''}.
+                        </p>
+                      </>
+                    )
+                  })()}
+                  <button
+                    type="button"
+                    disabled={!!busyAction}
+                    onClick={() => runBusy('restock', () => restockProduct(item))}
+                    className={`mt-4 w-full rounded-2xl py-3.5 text-[14px] font-bold ${t.btn} disabled:opacity-60`}
+                  >
+                    {busyAction === 'restock' ? 'Adding…' : 'Repurchased? Add it back'}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
+                    <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${t.faint}`}>Expiry</p>
+                    {status ? (
+                      <>
+                        <p className={`mt-1 text-[24px] font-semibold leading-tight ${
+                          status.daysLeft <= 0 ? t.danger : status.daysLeft <= 30 ? 'text-amber-600' : ''
+                        }`}>
+                          {status.daysLeft < 0
+                            ? `Expired ${Math.abs(status.daysLeft)} ${Math.abs(status.daysLeft) === 1 ? 'day' : 'days'} ago`
+                            : status.daysLeft === 0
+                            ? 'Expires today'
+                            : `${status.daysLeft} ${status.daysLeft === 1 ? 'day' : 'days'} left`}
+                        </p>
+                        <p className={`mt-0.5 text-[13px] ${t.muted}`}>Use by {fmt(status.expires)}</p>
+                        {status.firm && (
+                          <p className={`mt-3 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-[12px] font-semibold ${t.danger}`}>
+                            {status.label}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                        Add when you opened it, or the date printed on the pack, and Tracka+ will count down to when it expires.
+                      </p>
+                    )}
+
+                    <div className={`mt-5 grid grid-cols-2 gap-3 border-t pt-4 ${t.hair}`}>
+                      <label className="block">
+                        <span className={`mb-1 block text-[11px] font-semibold ${t.faint}`}>Opened on</span>
+                        <input
+                          type="date"
+                          value={item.opened_date || ''}
+                          max={todayString}
+                          onChange={(e) => updateProductDates(item, { opened_date: e.target.value || null })}
+                          className={inputClass}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className={`mb-1 block text-[11px] font-semibold ${t.faint}`}>Good for (after opening)</span>
+                        <select
+                          value={item.pao_months || ''}
+                          onChange={(e) => updateProductDates(item, { pao_months: e.target.value ? Number(e.target.value) : null })}
+                          className={inputClass}
+                        >
+                          <option value="">—</option>
+                          {[3, 6, 9, 12, 18, 24, 36].map((m) => (
+                            <option key={m} value={m}>{m} months</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="col-span-2 block">
+                        <span className={`mb-1 block text-[11px] font-semibold ${t.faint}`}>Expiry date on the pack</span>
+                        <input
+                          type="date"
+                          value={item.expiry_date || ''}
+                          onChange={(e) => updateProductDates(item, { expiry_date: e.target.value || null })}
+                          className={inputClass}
+                        />
+                      </label>
+                    </div>
+                    <p className={`mt-2 text-[11px] leading-relaxed ${t.faint}`}>
+                      The months-after-opening number is on the open-jar symbol on the pack (e.g. “12M”).
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={!!busyAction}
+                    onClick={() => runBusy('finishProduct', () => finishProduct(item))}
+                    className={`mt-6 w-full rounded-2xl py-4 text-[15px] font-bold ${t.btn} disabled:opacity-60`}
+                  >
+                    Mark as finished
+                  </button>
+                  <p className={`mt-2 text-center text-[12px] ${t.faint}`}>Used it up? It moves to your Empties.</p>
+
+                  <button
+                    type="button"
+                    disabled={!!busyAction}
+                    onClick={() => runBusy('removeUserProduct', () => removeUserProduct(item))}
+                    className={`mt-5 w-full py-2 text-center text-[13px] font-semibold ${t.danger} disabled:opacity-60`}
+                  >
+                    Remove (added by mistake)
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </div>
+
+        {onboardingCompleted && renderBottomTabs('products', t)}
       </main>
     )
   }
