@@ -523,6 +523,10 @@ setRoutineHistory(groupedRoutines)
   const [adminChallengeStatsLoading, setAdminChallengeStatsLoading] = useState(true)
   const [adminChallengeParticipants, setAdminChallengeParticipants] = useState({})
   const [adminOpenChallengeId, setAdminOpenChallengeId] = useState(null)
+  // Admin → Products: what people actually use.
+  const [productInsights, setProductInsights] = useState(null)
+  const [insightsView, setInsightsView] = useState('products')
+  const [insightsQuery, setInsightsQuery] = useState('')
   const [pushStatus, setPushStatus] = useState(null)
   const [progressCompletions, setProgressCompletions] = useState([])
   const [selectedProgressDate, setSelectedProgressDate] = useState(null)
@@ -2181,6 +2185,7 @@ useEffect(() => {
     loadPendingPractitioners()
     loadVerifiedPractitionersAdmin()
     loadAdminChallengeStats()
+    loadProductInsights()
   }
 
   if (screen === 'careTeam') {
@@ -2608,6 +2613,15 @@ const goToMorningRoutine = () => {
   setTimeout(() => {
     document.getElementById('am-routine')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, 300)
+}
+
+const loadProductInsights = async () => {
+  const { data, error } = await supabase.rpc('admin_product_insights')
+  if (error) {
+    console.error('PRODUCT INSIGHTS ERROR:', error)
+    return
+  }
+  setProductInsights(data)
 }
 
 const loadAdminChallengeStats = async () => {
@@ -5223,7 +5237,7 @@ const submitRecommendation = async () => {
     const hasOwnPhoto = !!item?.photo_path
     const fmt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
     // Fixed height so date pickers and the PAO dropdown line up exactly.
-    const inputClass = `block h-11 w-full min-w-0 rounded-xl border ${t.hair} ${t.surface} px-3 text-[14px] leading-none outline-none`
+    const inputClass = `block w-full min-w-0 rounded-xl border ${t.hair} ${t.surface} px-3 py-3 text-[14px] leading-5 outline-none`
     // iPhone shows an empty date field as a blank box; add a faint hint.
     // (Other browsers already show their own dd/mm/yyyy placeholder.)
     const isIOSDevice = getInstallEnv().isIOS
@@ -5409,8 +5423,6 @@ const submitRecommendation = async () => {
                   >
                     Mark as finished
                   </button>
-                  <p className={`mt-2 text-center text-[12px] ${t.faint}`}>Used it up? It moves to your Empties.</p>
-
                   {status?.marked ? (
                     <button
                       type="button"
@@ -5421,19 +5433,14 @@ const submitRecommendation = async () => {
                       Not expired after all? Undo
                     </button>
                   ) : !(status && status.daysLeft < 0) && (
-                    <>
-                      <button
-                        type="button"
-                        disabled={!!busyAction}
-                        onClick={() => runBusy('markExpired', () => setProductMarkedExpired(item, true))}
-                        className={`mt-4 w-full rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} disabled:opacity-60`}
-                      >
-                        Mark as expired
-                      </button>
-                      <p className={`mt-2 text-center text-[12px] ${t.faint}`}>
-                        Gone off early, or no date on the pack? It moves to Expired.
-                      </p>
-                    </>
+                    <button
+                      type="button"
+                      disabled={!!busyAction}
+                      onClick={() => runBusy('markExpired', () => setProductMarkedExpired(item, true))}
+                      className={`mt-3 w-full rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} disabled:opacity-60`}
+                    >
+                      Mark as expired
+                    </button>
                   )}
 
                   <button
@@ -5960,6 +5967,8 @@ if (screen === 'admin') {
                 ? 'Revoked — awaiting restoration'
                 : adminTab === 'challenges'
                 ? 'Challenges'
+                : adminTab === 'products'
+                ? 'Products people use'
                 : 'Verified practitioners'}
             </h1>
           </div>
@@ -6016,18 +6025,18 @@ if (screen === 'admin') {
           </button>
         </div>
 
-        <div className={`mt-4 flex gap-2 rounded-2xl border ${t.hair} p-1`}>
+        <div className={`mt-4 flex gap-1 overflow-x-auto rounded-2xl border ${t.hair} p-1 [scrollbar-width:none]`}>
           {[
             ['signups', 'Signups'],
             ['practitioners', `Revoked${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`],
-            ['verified', 'Practitioners'],
             ['challenges', 'Challenges'],
+            ['products', 'Products'],
           ].map(([key, label]) => (
             <button
               key={key}
               type="button"
               onClick={() => setAdminTab(key)}
-              className={`flex-1 rounded-xl py-2 text-[12px] font-semibold transition ${
+              className={`flex-1 shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-[12px] font-semibold transition ${
                 adminTab === key ? t.chip : t.muted
               }`}
             >
@@ -6305,6 +6314,136 @@ if (screen === 'admin') {
             )}
           </div>
         )}
+
+        {adminTab === 'products' && (() => {
+          if (!productInsights) {
+            return <p className={`mt-5 text-[15px] ${t.muted}`}>Loading…</p>
+          }
+          const q = insightsQuery.trim().toLowerCase()
+          const rows =
+            insightsView === 'products'
+              ? productInsights.products.filter((p) => !q || `${p.brand} ${p.name}`.toLowerCase().includes(q))
+              : insightsView === 'brands'
+              ? productInsights.brands.filter((b) => !q || (b.brand || '').toLowerCase().includes(q))
+              : productInsights.categories
+          const max = Math.max(1, ...rows.map((r) => r.users))
+          const totals = productInsights.totals
+
+          const exportCsv = () => {
+            const esc = (v) => {
+              const s = String(v ?? '')
+              return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+            }
+            const lines =
+              insightsView === 'products'
+                ? [['Brand', 'Product', 'Category', 'Users', 'Have it now', 'In a routine', 'Finished'],
+                   ...rows.map((p) => [p.brand, p.name, p.category, p.users, p.active_users, p.in_routine_users, p.finished_users])]
+                : insightsView === 'brands'
+                ? [['Brand', 'Users', 'Products', 'In a routine'],
+                   ...rows.map((b) => [b.brand, b.users, b.products, b.in_routine_users])]
+                : [['Category', 'Users', 'Saved'], ...rows.map((c) => [c.category, c.users, c.saved])]
+            const blob = new Blob([lines.map((l) => l.map(esc).join(',')).join('\n')], { type: 'text/csv' })
+            const a = document.createElement('a')
+            a.href = URL.createObjectURL(blob)
+            a.download = `tracka-${insightsView}.csv`
+            a.click()
+            URL.revokeObjectURL(a.href)
+          }
+
+          return (
+            <div className="mt-5">
+              <div className="grid grid-cols-3 gap-2.5">
+                {[
+                  [totals.users_with_products, 'People'],
+                  [totals.saved, 'Products saved'],
+                  [totals.distinct_brands, 'Brands'],
+                ].map(([v, l]) => (
+                  <div key={l} className={`rounded-2xl ${t.surface} p-3`}>
+                    <p className="text-[20px] font-semibold">{v}</p>
+                    <p className={`text-[11px] ${t.muted}`}>{l}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className={`mt-4 grid grid-cols-3 rounded-xl p-0.5 ${isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'}`}>
+                {[['products', 'Products'], ['brands', 'Brands'], ['categories', 'Categories']].map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setInsightsView(key)}
+                    className={`rounded-[10px] py-2 text-[12px] font-semibold ${insightsView === key ? `${t.surface} shadow-sm` : t.faint}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-3 flex gap-2">
+                {insightsView !== 'categories' && (
+                  <input
+                    type="text"
+                    value={insightsQuery}
+                    onChange={(e) => setInsightsQuery(e.target.value)}
+                    placeholder={insightsView === 'products' ? 'Search products…' : 'Search brands…'}
+                    className={`min-w-0 flex-1 rounded-xl border ${t.hair} bg-transparent px-3 py-2 text-[13px] outline-none`}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={exportCsv}
+                  className={`ml-auto shrink-0 rounded-xl border px-3 py-2 text-[12px] font-semibold ${t.hair} ${t.muted}`}
+                >
+                  Export CSV
+                </button>
+              </div>
+
+              <p className={`mt-3 text-[11px] leading-relaxed ${t.faint}`}>
+                Ranked by how many people saved it. Spellings that differ only in capitals, spaces or punctuation are grouped.
+              </p>
+
+              <div className={`mt-2 overflow-hidden rounded-2xl ${t.surface}`}>
+                {rows.length === 0 && <p className={`p-4 text-[13px] ${t.muted}`}>No matches.</p>}
+                {rows.map((r, i) => {
+                  const title =
+                    insightsView === 'products' ? r.name : insightsView === 'brands' ? r.brand : r.category.replace(/_/g, ' ')
+                  const sub =
+                    insightsView === 'products'
+                      ? [r.brand, r.category].filter(Boolean).join(' · ')
+                      : insightsView === 'brands'
+                      ? `${r.products} ${r.products === 1 ? 'product' : 'products'}`
+                      : `${r.saved} saved`
+                  return (
+                    <div key={`${insightsView}-${i}`} className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? `border-t ${t.hair}` : ''}`}>
+                      <span className={`w-6 shrink-0 text-center text-[12px] font-semibold tabular-nums ${t.faint}`}>{i + 1}</span>
+                      {insightsView === 'products' && (
+                        r.image_url ? (
+                          <img src={r.image_url} alt="" loading="lazy" className="h-9 w-9 shrink-0 rounded-lg bg-white object-contain p-0.5" />
+                        ) : (
+                          renderProductArt(r.category, 'h-9 w-9 rounded-lg', 'text-[16px]')
+                        )
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[14px] font-medium capitalize">{title}</span>
+                        <span className={`block truncate text-[11px] ${t.faint}`}>{sub}</span>
+                        <span className={`mt-1.5 block h-1 overflow-hidden rounded-full ${isNight ? 'bg-white/10' : 'bg-[#101B2D]/8'}`}>
+                          <span className={`block h-full rounded-full ${t.nodeDone}`} style={{ width: `${(r.users / max) * 100}%` }} />
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-right">
+                        <span className="block text-[15px] font-semibold tabular-nums">{r.users}</span>
+                        <span className={`block text-[10px] ${t.faint}`}>
+                          {insightsView === 'categories'
+                            ? 'people'
+                            : `${r.in_routine_users} in routine${insightsView === 'products' && r.finished_users ? ` · ${r.finished_users} finished` : ''}`}
+                        </span>
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
 
         {adminTab === 'challenges' && (
           <div className="mt-5">
