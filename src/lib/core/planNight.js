@@ -3,6 +3,7 @@
 // nothing can go stale when someone skips a night.
 
 import { ACTIVES, activeLabel, detectActive, slotRank } from './actives.js'
+import { productExpiry } from './expiry.js'
 
 export const FREQUENCIES = {
   daily: { label: 'Every night', nights: 1 },
@@ -154,11 +155,12 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
     const daysOfWeek =
       step.daysOfWeek && step.daysOfWeek.length > 0 ? step.daysOfWeek : ALL_DAYS
 
-    const expiresOn =
-      step.opened_date && step.pao_months
-        ? addMonths(step.opened_date, step.pao_months)
-        : null
-    const expired = expiresOn ? today >= expiresOn : false
+    // Shared with the product screens (printed date, opened + PAO, or
+    // marked expired by the person — whichever fires first).
+    const expiry = productExpiry(step, today)
+    const expiresOn = expiry?.expiresOn ?? null
+    const expired = expiry?.expired ?? false
+    const markedExpired = expiry?.marked ?? false
 
     return {
       ...step,
@@ -172,17 +174,28 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
       _intervalNights: freq.nights,
       expiresOn,
       expired,
+      markedExpired,
     }
   })
 
   // Plain everyday products are never in question — they always go in,
   // unless the person has explicitly restricted today for this one too.
-  const base = enriched.filter(
+  // The person said this product has gone off — never schedule it. It's
+  // reported in `skipped` so the screen can say why (and, for sunscreen,
+  // say "replace it" rather than silently dropping protection).
+  const skipped = []
+  const usable = []
+  for (const s of enriched) {
+    if (s.markedExpired) skipped.push({ step: s, reason: 'expired_marked' })
+    else usable.push(s)
+  }
+
+  const base = usable.filter(
     (s) => s._intervalNights === 1 && s.active === ACTIVES.NONE
   )
 
   // Everything else competes for tonight: most overdue first.
-  const candidates = enriched
+  const candidates = usable
     .filter((s) => !(s._intervalNights === 1 && s.active === ACTIVES.NONE))
     .sort(
       (a, b) =>
@@ -190,7 +203,6 @@ export function planNight({ today, steps = [], history = [], restrictions = {} }
     )
 
   const chosen = []
-  const skipped = []
   const notes = []
   let restrictionApplied = false
 

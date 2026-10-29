@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase, OPENED_FROM_RECOVERY_LINK } from './lib/supabase'
 import { planNight, localDateString, addDays, addMonths, dayOfWeek, PREGNANCY_NOTE } from './lib/core/planNight'
+import { productExpiry } from './lib/core/expiry'
 import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
 import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
@@ -401,7 +402,7 @@ function App() {
   const [empties, setEmpties] = useState([])
   const [productPhotoUrls, setProductPhotoUrls] = useState({})
   const [selectedUserProductId, setSelectedUserProductId] = useState(null)
-  const [productSections, setProductSections] = useState({ mine: true, expiring: true, empties: false })
+  const [productSections, setProductSections] = useState({ mine: true, expiring: true, expired: true, empties: false })
   // Per product, which weekdays (0=Sun..6=Sat) it's used on — this is the
   // whole schedule now, the separate frequency dropdown was folded into
   // it. Sent to the DB with frequency always 'daily', which combined with
@@ -563,6 +564,7 @@ setRoutineHistory(groupedRoutines)
           added_at,
           photo_path,
           finished_at,
+          marked_expired_at,
           products (
             id,
             brand,
@@ -1452,6 +1454,8 @@ const shareSkinReport = async () => {
           opened_date,
           pao_months,
           photo_path,
+          expiry_date,
+          marked_expired_at,
           products ( brand, name, category, ingredients, image_url )
         )
       )
@@ -1592,6 +1596,8 @@ const nightPlan = planNight({
     opened_date: step.user_products?.opened_date ?? null,
     pao_months: step.user_products?.pao_months ?? null,
     userProduct: step.user_products ?? null,
+    expiry_date: step.user_products?.expiry_date ?? null,
+    marked_expired_at: step.user_products?.marked_expired_at ?? null,
   })),
   history: stepHistory.filter((entry) => entry.local_date < todayString),
   restrictions,
@@ -1617,6 +1623,8 @@ const amPlan = planNight({
     opened_date: step.user_products?.opened_date ?? null,
     pao_months: step.user_products?.pao_months ?? null,
     userProduct: step.user_products ?? null,
+    expiry_date: step.user_products?.expiry_date ?? null,
+    marked_expired_at: step.user_products?.marked_expired_at ?? null,
   })),
   history: stepHistory.filter((entry) => entry.local_date < todayString),
   restrictions,
@@ -2006,54 +2014,40 @@ const completedDates = new Set(
 const currentStreak = calculateStreaks([...completedDates], todayString, '', '').current
 
 const getPaoStatus = (item) => {
+  // Same rules the Today planner uses (core/expiry.js) — printed date,
+  // opened + PAO, or marked expired — so every screen agrees.
+  const expiry = productExpiry(item, todayString)
+  if (!expiry) return null
+
   // Sunscreen past its date isn't just inert like a serum would be — it
   // can leave you unprotected without any visible sign, so it gets a firm
   // warning instead of the same quiet note every other category gets.
   const isSunscreen = (item.products?.category || '').toLowerCase() === 'sunscreen'
+  const { daysLeft, marked } = expiry
+  const expires = new Date(expiry.expiresOn + 'T00:00:00')
+  const base = { daysLeft, expires, marked }
 
-  const paoExpires =
-    item.opened_date && item.pao_months
-      ? (() => {
-          const d = new Date(item.opened_date + 'T00:00:00')
-          d.setMonth(d.getMonth() + item.pao_months)
-          return d
-        })()
-      : null
-
-  const printedExpires = item.expiry_date
-    ? new Date(item.expiry_date + 'T00:00:00')
-    : null
-
-  if (!paoExpires && !printedExpires) return null
-
-  // Whichever comes sooner is the real use-by date — PAO only starts
-  // counting once opened, but a printed expiry applies regardless.
-  const expires =
-    paoExpires && printedExpires
-      ? (paoExpires < printedExpires ? paoExpires : printedExpires)
-      : (paoExpires || printedExpires)
-
-  const daysLeft = Math.round(
-    (expires - new Date(todayString + 'T00:00:00')) / 86400000
-  )
-
+  if (marked) {
+    return isSunscreen
+      ? { ...base, label: 'Marked expired — don\'t rely on this for protection', expired: true, firm: true }
+      : { ...base, label: 'Marked as expired', expired: true }
+  }
   if (daysLeft < 0) {
     return isSunscreen
-      ? { label: 'Expired — don\'t rely on this for protection', expired: true, firm: true, daysLeft, expires }
-      : { label: 'Expired', expired: true, daysLeft, expires }
+      ? { ...base, label: 'Expired — don\'t rely on this for protection', expired: true, firm: true }
+      : { ...base, label: 'Expired', expired: true }
   }
   if (daysLeft === 0) {
     return isSunscreen
-      ? { label: 'Expires today — replace before your next reapply', expired: true, firm: true, daysLeft, expires }
-      : { label: 'Expires today', expired: true, daysLeft, expires }
+      ? { ...base, label: 'Expires today — replace before your next reapply', expired: true, firm: true }
+      : { ...base, label: 'Expires today', expired: true }
   }
-  if (daysLeft <= 30) return { label: `${daysLeft}d left`, expired: false, daysLeft, expires }
+  if (daysLeft <= 30) return { ...base, label: `${daysLeft}d left`, expired: false }
 
   return {
+    ...base,
     label: `Use by ${expires.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}`,
     expired: false,
-    daysLeft,
-    expires,
   }
 }
 
@@ -3114,7 +3108,7 @@ const declinePreviewedInvite = () => {
 
 const PRODUCT_FIELDS = `
   id, product_id, opened_date, pao_months, expiry_date, added_at,
-  photo_path, finished_at, is_active,
+  photo_path, finished_at, is_active, marked_expired_at,
   products ( id, brand, name, category, ingredients, image_url )
 `
 
@@ -3163,6 +3157,42 @@ const productImageFor = (userProduct) =>
   (userProduct?.photo_path && productPhotoUrls[userProduct.photo_path]) ||
   userProduct?.products?.image_url ||
   null
+
+// Placeholder art for products with no photo: an emoji per category on a
+// soft tint of that category's colour, so photo-less products still look
+// designed rather than empty.
+const PRODUCT_ART = {
+  cleanser: ['🧼', '#7FC8E8'],
+  toner: ['💦', '#8FB8E8'],
+  essence: ['💧', '#7FB3F0'],
+  serum: ['🧪', '#B39DDB'],
+  treatment: ['✨', '#E8B4D0'],
+  moisturizer: ['🫙', '#F2C59A'],
+  sunscreen: ['☀️', '#F5C451'],
+  exfoliant: ['🧽', '#F0A98A'],
+  mask: ['🧖', '#9ED9B8'],
+  body_wash: ['🛁', '#8FD3E0'],
+  body_moisturizer: ['🧴', '#F2C59A'],
+  body_oil: ['🫒', '#C5D68A'],
+  body_scrub: ['🧂', '#E6C9A8'],
+  other: ['🧴', '#C4CCD6'],
+}
+const productArtFor = (category) =>
+  PRODUCT_ART[(category || '').toLowerCase()] || PRODUCT_ART.other
+
+// Tile for a product with no picture. `className` sets size/shape.
+const renderProductArt = (category, className = '', emojiClass = 'text-[22px]') => {
+  const [emoji, tint] = productArtFor(category)
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex shrink-0 items-center justify-center ${className}`}
+      style={{ background: `linear-gradient(135deg, ${tint}33, ${tint}66)` }}
+    >
+      <span className={emojiClass}>{emoji}</span>
+    </span>
+  )
+}
 
 // Phone photos are often 3–5 MB; shrink to ~1200px JPEG before upload.
 // Falls back to the original file if the browser can't decode it.
@@ -3266,6 +3296,28 @@ const finishProduct = async (item) => {
   setEmpties((current) => [{ ...item, is_active: false, finished_at }, ...current])
   notify('Moved to your empties.', 'success')
   setScreen('products')
+}
+
+// Gone off before its date (or has no date) — or undo that.
+const setProductMarkedExpired = async (item, expired) => {
+  if (expired) {
+    const slots = routineSlotsUsing(item)
+    const confirmed = await confirmAction(
+      slots.length
+        ? `Mark ${item.products.name} as expired? It's still in your ${slots.join(' and ')} routine — swap it out in My routine.`
+        : `Mark ${item.products.name} as expired?`,
+      ['Cancel', 'Mark as expired']
+    )
+    if (!confirmed) return
+  }
+  const marked_expired_at = expired ? new Date().toISOString() : null
+  const { error } = await supabase.from('user_products').update({ marked_expired_at }).eq('id', item.id)
+  if (error) {
+    notify(error.message)
+    return
+  }
+  patchUserProduct(item.id, { marked_expired_at })
+  if (expired) notify('Moved to Expired.', 'success')
 }
 
 // Added by mistake — not an empty, so it doesn't go to Empties.
@@ -4531,8 +4583,13 @@ const submitRecommendation = async () => {
           {(() => {
             const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
             const withStatus = products.map((item) => ({ item, status: getPaoStatus(item) }))
+            // Expired: past its use-by date, or marked expired by the person.
+            // Expiring soon: today up to 30 days ahead, soonest first.
+            const expired = withStatus
+              .filter(({ status }) => status && (status.marked || status.daysLeft < 0))
+              .sort((a, b) => b.status.daysLeft - a.status.daysLeft)
             const expiring = withStatus
-              .filter(({ status }) => status && status.daysLeft <= 30)
+              .filter(({ status }) => status && !status.marked && status.daysLeft >= 0 && status.daysLeft <= 30)
               .sort((a, b) => a.status.daysLeft - b.status.daysLeft)
 
             const thumb = (item, size = 'h-12 w-12', dim = false) => {
@@ -4545,11 +4602,11 @@ const submitRecommendation = async () => {
                   own ? 'object-cover' : 'bg-white object-contain p-1'
                 } ${dim ? 'opacity-70 grayscale-[35%]' : ''}`} />
               ) : (
-                <span className={`${size} flex shrink-0 items-center justify-center rounded-xl text-[13px] font-semibold uppercase ${
-                  isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'
-                } ${t.faint}`}>
-                  {(item.products?.brand || item.products?.name || '?').slice(0, 2)}
-                </span>
+                renderProductArt(
+                  item.products?.category,
+                  `${size} rounded-xl ${dim ? 'opacity-70 grayscale-[35%]' : ''}`,
+                  size.includes('w-full') ? 'text-[44px]' : 'text-[22px]'
+                )
               )
             }
 
@@ -4557,7 +4614,9 @@ const submitRecommendation = async () => {
               status.daysLeft <= 0 ? t.danger : status.daysLeft <= 7 ? 'text-amber-600' : t.muted
 
             const countdownText = (status) =>
-              status.daysLeft < 0
+              status.marked
+                ? 'Marked expired'
+                : status.daysLeft < 0
                 ? `Expired ${Math.abs(status.daysLeft)}d ago`
                 : status.daysLeft === 0
                 ? 'Expires today'
@@ -4641,6 +4700,34 @@ const submitRecommendation = async () => {
                     ))}
                   </div>,
                   'Within the next 30 days'
+                )}
+
+                {expired.length > 0 && section(
+                  'expired',
+                  'Expired',
+                  expired.length,
+                  <div>
+                    {expired.map(({ item, status }, i) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => openProduct(item.id)}
+                        className={`flex w-full items-center gap-3 px-5 py-3 text-left ${i > 0 ? `border-t ${t.hair}` : ''}`}
+                      >
+                        {thumb(item, 'h-12 w-12', true)}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[14px] font-medium">{item.products?.name}</span>
+                          <span className={`block truncate text-[12px] ${t.faint}`}>
+                            {status.marked ? `Marked expired ${fmtDate(status.expires)}` : `Expired ${fmtDate(status.expires)}`}
+                          </span>
+                        </span>
+                        <span className={`shrink-0 text-[12px] font-semibold ${t.danger}`}>
+                          {status.marked ? 'Marked' : countdownText(status)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>,
+                  'Time to replace these'
                 )}
 
                 {section(
@@ -5137,6 +5224,19 @@ const submitRecommendation = async () => {
     const fmt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
     // Fixed height so date pickers and the PAO dropdown line up exactly.
     const inputClass = `block h-11 w-full min-w-0 rounded-xl border ${t.hair} ${t.surface} px-3 text-[14px] leading-none outline-none`
+    // iPhone shows an empty date field as a blank box; add a faint hint.
+    // (Other browsers already show their own dd/mm/yyyy placeholder.)
+    const isIOSDevice = getInstallEnv().isIOS
+    const dateField = (value, onChange, extra = {}) => (
+      <span className="relative block">
+        <input type="date" value={value || ''} onChange={onChange} className={inputClass} {...extra} />
+        {isIOSDevice && !value && (
+          <span className={`pointer-events-none absolute inset-y-0 left-3 flex items-center text-[14px] ${t.faint}`}>
+            Select date
+          </span>
+        )}
+      </span>
+    )
 
     return (
       <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -5160,13 +5260,9 @@ const submitRecommendation = async () => {
                 {photoUrl ? (
                   <img src={photoUrl} alt={item.products?.name} className={`h-full w-full ${hasOwnPhoto ? 'object-cover' : 'bg-white object-contain p-4'} ${isEmpty ? 'opacity-80 grayscale-[30%]' : ''}`} />
                 ) : (
-                  <div className="flex h-full w-full flex-col items-center justify-center gap-2">
-                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                      strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
-                      <path d="M4 8h3l1.5-2h7L17 8h3v11H4z" />
-                      <circle cx="12" cy="13.5" r="3.5" />
-                    </svg>
-                    <span className={`text-[13px] ${t.muted}`}>No photo yet</span>
+                  <div className="relative h-full w-full">
+                    {renderProductArt(item.products?.category, 'h-full w-full', 'text-[84px]')}
+                    <span className={`absolute inset-x-0 bottom-3 text-center text-[12px] font-medium ${t.muted}`}>No photo yet</span>
                   </div>
                 )}
                 {isEmpty && (
@@ -5201,7 +5297,7 @@ const submitRecommendation = async () => {
               <p className={`mt-6 text-[11px] font-semibold uppercase tracking-[0.16em] ${t.faint}`}>{item.products?.brand}</p>
               <h1 className="mt-1 font-display text-[30px] font-light leading-[1.1] tracking-tight">{item.products?.name}</h1>
               {item.products?.category && (
-                <span className={`mt-2 inline-block rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize ${t.chip}`}>
+                <span className={`mt-2 inline-block self-start rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize ${t.chip}`}>
                   {item.products.category.replace(/_/g, ' ')}
                 </span>
               )}
@@ -5240,13 +5336,17 @@ const submitRecommendation = async () => {
                         <p className={`mt-1 text-[24px] font-semibold leading-tight ${
                           status.daysLeft <= 0 ? t.danger : status.daysLeft <= 30 ? 'text-amber-600' : ''
                         }`}>
-                          {status.daysLeft < 0
+                          {status.marked
+                            ? 'Marked as expired'
+                            : status.daysLeft < 0
                             ? `Expired ${Math.abs(status.daysLeft)} ${Math.abs(status.daysLeft) === 1 ? 'day' : 'days'} ago`
                             : status.daysLeft === 0
                             ? 'Expires today'
                             : `${status.daysLeft} ${status.daysLeft === 1 ? 'day' : 'days'} left`}
                         </p>
-                        <p className={`mt-0.5 text-[13px] ${t.muted}`}>Use by {fmt(status.expires)}</p>
+                        <p className={`mt-0.5 text-[13px] ${t.muted}`}>
+                          {status.marked ? `Marked on ${fmt(status.expires)}` : `Use by ${fmt(status.expires)}`}
+                        </p>
                         {status.firm && (
                           <p className={`mt-3 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-[12px] font-semibold ${t.danger}`}>
                             {status.label}
@@ -5262,13 +5362,11 @@ const submitRecommendation = async () => {
                     <div className={`mt-5 grid grid-cols-2 gap-x-3 gap-y-4 border-t pt-4 ${t.hair}`}>
                       <label className="block min-w-0">
                         <span className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Opened on</span>
-                        <input
-                          type="date"
-                          value={item.opened_date || ''}
-                          max={todayString}
-                          onChange={(e) => updateProductDates(item, { opened_date: e.target.value || null })}
-                          className={inputClass}
-                        />
+                        {dateField(
+                          item.opened_date,
+                          (e) => updateProductDates(item, { opened_date: e.target.value || null }),
+                          { max: todayString }
+                        )}
                       </label>
                       <label className="block min-w-0">
                         <span className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>PAO</span>
@@ -5292,12 +5390,10 @@ const submitRecommendation = async () => {
                       </label>
                       <label className="col-span-2 block min-w-0">
                         <span className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Expiry date</span>
-                        <input
-                          type="date"
-                          value={item.expiry_date || ''}
-                          onChange={(e) => updateProductDates(item, { expiry_date: e.target.value || null })}
-                          className={inputClass}
-                        />
+                        {dateField(
+                          item.expiry_date,
+                          (e) => updateProductDates(item, { expiry_date: e.target.value || null })
+                        )}
                       </label>
                     </div>
                     <p className={`mt-3 text-[12px] leading-relaxed ${t.muted}`}>
@@ -5314,6 +5410,31 @@ const submitRecommendation = async () => {
                     Mark as finished
                   </button>
                   <p className={`mt-2 text-center text-[12px] ${t.faint}`}>Used it up? It moves to your Empties.</p>
+
+                  {status?.marked ? (
+                    <button
+                      type="button"
+                      disabled={!!busyAction}
+                      onClick={() => runBusy('markExpired', () => setProductMarkedExpired(item, false))}
+                      className={`mt-4 w-full rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-60`}
+                    >
+                      Not expired after all? Undo
+                    </button>
+                  ) : !(status && status.daysLeft < 0) && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={!!busyAction}
+                        onClick={() => runBusy('markExpired', () => setProductMarkedExpired(item, true))}
+                        className={`mt-4 w-full rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} disabled:opacity-60`}
+                      >
+                        Mark as expired
+                      </button>
+                      <p className={`mt-2 text-center text-[12px] ${t.faint}`}>
+                        Gone off early, or no date on the pack? It moves to Expired.
+                      </p>
+                    </>
+                  )}
 
                   <button
                     type="button"
@@ -9929,6 +10050,38 @@ if (screen === 'today') {
   const amIngredientWarnings = checkRoutineConflicts(amSteps)
   const pmIngredientWarnings = checkRoutineConflicts(pmSteps)
 
+  // Products the person marked as expired are left out of the plan
+  // (planNight → skipped, reason 'expired_marked'). Say so, so it never
+  // looks like a step silently vanished — firmer wording for sunscreen.
+  const renderExpiredNotice = (plan) => {
+    const gone = plan.skipped.filter((s) => s.reason === 'expired_marked')
+    if (gone.length === 0) return null
+    return (
+      <div className="mt-4 flex flex-col gap-2">
+        {gone.map(({ step }) => {
+          const isSpf = (step.category || '').toLowerCase() === 'sunscreen'
+          return (
+            <button
+              key={step.id}
+              type="button"
+              onClick={() => step.userProduct?.id && openProduct(step.userProduct.id)}
+              className="w-full border-l-2 border-rose-400/70 py-1 pl-3.5 text-left"
+            >
+              <span className="block text-[13px] font-medium">
+                {isSpf ? 'Your sunscreen is marked expired' : `${step.name} is left out today`}
+              </span>
+              <span className={`block text-[12px] leading-relaxed ${t.muted}`}>
+                {isSpf
+                  ? `${step.name} isn't in today's routine. Replace it before you rely on it for protection.`
+                  : 'You marked it as expired. Replace it, then swap it in My routine.'}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
   const renderSteps = (steps, palette) => (
     <div className="flex flex-col gap-3">
       {steps.map((step, index) => {
@@ -9939,27 +10092,33 @@ if (screen === 'today') {
           <button
             key={step.id}
             onClick={() => toggleStepCompletion(step.id)}
-            className={`relative flex w-full items-center gap-4 overflow-hidden rounded-2xl p-4 text-left transition ${
-              stepImage ? 'min-h-[88px] pr-28' : ''
-            } ${done ? palette.chip : `border ${palette.hair}`}`}
+            className={`relative flex min-h-[88px] w-full items-center gap-4 overflow-hidden rounded-2xl p-4 pr-28 text-left transition ${
+              done ? palette.chip : `border ${palette.hair}`
+            }`}
           >
-            {/* Product photo fills the card's right edge and fades into it;
-                muted to grey once the step is ticked. */}
-            {stepImage && (
-              <img
-                src={stepImage}
-                alt=""
-                loading="lazy"
-                aria-hidden="true"
-                className={`pointer-events-none absolute inset-y-0 right-0 h-full w-32 object-cover transition ${
-                  done ? 'opacity-50 grayscale' : ''
-                }`}
-                style={{
-                  WebkitMaskImage: 'linear-gradient(to right, transparent 0%, #000 55%)',
-                  maskImage: 'linear-gradient(to right, transparent 0%, #000 55%)',
-                }}
-              />
-            )}
+            {/* Product photo (or its category art) fills the card's right
+                edge and fades into it; muted to grey once ticked. */}
+            {(() => {
+              const fade = {
+                WebkitMaskImage: 'linear-gradient(to right, transparent 0%, #000 55%)',
+                maskImage: 'linear-gradient(to right, transparent 0%, #000 55%)',
+              }
+              const muted = done ? 'opacity-50 grayscale' : ''
+              return stepImage ? (
+                <img
+                  src={stepImage}
+                  alt=""
+                  loading="lazy"
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute inset-y-0 right-0 h-full w-32 object-cover transition ${muted}`}
+                  style={fade}
+                />
+              ) : (
+                <span className={`pointer-events-none absolute inset-y-0 right-0 w-32 transition ${muted}`} style={fade}>
+                  {renderProductArt(step.category, 'h-full w-full pl-8', 'text-[34px]')}
+                </span>
+              )
+            })()}
             <span
               className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${
                 done ? palette.nodeDone : palette.node
@@ -10237,7 +10396,10 @@ if (screen === 'today') {
                 </button>
               </div>
             ) : (
-              renderSteps(amSteps, t)
+              <>
+                {renderSteps(amSteps, t)}
+                {renderExpiredNotice(amPlan)}
+              </>
             )}
           </div>
 
@@ -10331,6 +10493,7 @@ if (screen === 'today') {
             ) : (
               <>
                 {renderSteps(pmSteps, t)}
+                {renderExpiredNotice(nightPlan)}
               </>
             )}
           </div>
@@ -10969,8 +11132,23 @@ if (screen === 'completed') {
   })()
 
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-7 text-center">
+    <main className={`relative min-h-screen ${t.page} transition-colors duration-500`}>
+      <div className="absolute inset-x-0 top-0 z-10 mx-auto w-full max-w-md px-4 pt-[max(16px,env(safe-area-inset-top))]">
+        <button
+          type="button"
+          onClick={() => setScreen('today')}
+          className={`flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 5l-7 7 7 7" />
+          </svg>
+          Today
+        </button>
+      </div>
+
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6 pb-6 pt-16 text-center">
 
         {milestone ? (
           <div className="relative flex h-36 w-36 items-center justify-center">

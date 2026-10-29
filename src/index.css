@@ -43,3 +43,19 @@ body {
 .animate-glow-burst {
   animation: glow-burst 0.9s ease-out both;
 }
+
+/* iOS Safari gives date inputs an intrinsic minimum width and native
+   chrome, ignoring width:100% — they overflow their grid cell/card.
+   Strip the native appearance so they size like every other field. */
+input[type='date'] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+  max-width: 100%;
+  display: block;
+}
+
+input[type='date']::-webkit-date-and-time-value {
+  text-align: left;
+  margin: 0;
+}
