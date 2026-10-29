@@ -382,6 +382,8 @@ function App() {
   const [productName, setProductName] = useState('')
   const [productCategory, setProductCategory] = useState('')
   const [productIngredients, setProductIngredients] = useState('')
+  // Product shot from the picked Open Beauty Facts suggestion, if any.
+  const [productImageUrl, setProductImageUrl] = useState('')
   const [ingredientQuery, setIngredientQuery] = useState('')
   // Ingredient checker: 'product' breaks down one of your products (or a
   // pasted list); 'lookup' explains a single ingredient.
@@ -566,7 +568,8 @@ setRoutineHistory(groupedRoutines)
             brand,
             name,
             category,
-            ingredients
+            ingredients,
+            image_url
           )
         `)
         .eq('user_id', userId)
@@ -1448,7 +1451,8 @@ const shareSkinReport = async () => {
           id,
           opened_date,
           pao_months,
-          products ( brand, name, category, ingredients )
+          photo_path,
+          products ( brand, name, category, ingredients, image_url )
         )
       )
     `)
@@ -1587,6 +1591,7 @@ const nightPlan = planNight({
     step_order: step.step_order,
     opened_date: step.user_products?.opened_date ?? null,
     pao_months: step.user_products?.pao_months ?? null,
+    userProduct: step.user_products ?? null,
   })),
   history: stepHistory.filter((entry) => entry.local_date < todayString),
   restrictions,
@@ -1611,6 +1616,7 @@ const amPlan = planNight({
     step_order: step.step_order,
     opened_date: step.user_products?.opened_date ?? null,
     pao_months: step.user_products?.pao_months ?? null,
+    userProduct: step.user_products ?? null,
   })),
   history: stepHistory.filter((entry) => entry.local_date < todayString),
   restrictions,
@@ -3109,7 +3115,7 @@ const declinePreviewedInvite = () => {
 const PRODUCT_FIELDS = `
   id, product_id, opened_date, pao_months, expiry_date, added_at,
   photo_path, finished_at, is_active,
-  products ( id, brand, name, category, ingredients )
+  products ( id, brand, name, category, ingredients, image_url )
 `
 
 const loadEmpties = async () => {
@@ -3150,6 +3156,13 @@ useEffect(() => {
   return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [products, empties])
+
+// The picture to show for a product: the person's own photo if they've
+// taken one, otherwise the catalogue shot from Open Beauty Facts.
+const productImageFor = (userProduct) =>
+  (userProduct?.photo_path && productPhotoUrls[userProduct.photo_path]) ||
+  userProduct?.products?.image_url ||
+  null
 
 // Phone photos are often 3–5 MB; shrink to ~1200px JPEG before upload.
 // Falls back to the original file if the browser can't decode it.
@@ -4523,9 +4536,14 @@ const submitRecommendation = async () => {
               .sort((a, b) => a.status.daysLeft - b.status.daysLeft)
 
             const thumb = (item, size = 'h-12 w-12', dim = false) => {
-              const url = item.photo_path && productPhotoUrls[item.photo_path]
+              const url = productImageFor(item)
+              // Own photos fill the tile; catalogue packshots (white
+              // background) are shown whole.
+              const own = !!item.photo_path && !!productPhotoUrls[item.photo_path]
               return url ? (
-                <img src={url} alt="" className={`${size} shrink-0 rounded-xl object-cover ${dim ? 'opacity-70 grayscale-[35%]' : ''}`} />
+                <img src={url} alt="" loading="lazy" className={`${size} shrink-0 rounded-xl ${
+                  own ? 'object-cover' : 'bg-white object-contain p-1'
+                } ${dim ? 'opacity-70 grayscale-[35%]' : ''}`} />
               ) : (
                 <span className={`${size} flex shrink-0 items-center justify-center rounded-xl text-[13px] font-semibold uppercase ${
                   isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'
@@ -4822,6 +4840,7 @@ const submitRecommendation = async () => {
                 onChange={(e) => {
                   setProductName(e.target.value)
                   setProductIngredients('')
+                  setProductImageUrl('')
                   setProductSuggestionsOpen(true)
                 }}
                 onFocus={() => setProductSuggestionsOpen(true)}
@@ -4840,14 +4859,31 @@ const submitRecommendation = async () => {
                         const guessed = guessCategory(match.category)
                         if (guessed) setProductCategory(guessed)
                         setProductIngredients(match.ingredients || '')
+                        setProductImageUrl(match.image || '')
                         setProductSuggestionsOpen(false)
                       }}
-                      className="block w-full px-4 py-2.5 text-left"
+                      className="flex w-full items-center gap-3 px-3 py-2 text-left"
                     >
-                      <span className="block text-[14px] font-medium">{match.name}</span>
-                      {match.category && (
-                        <span className={`block text-[12px] capitalize ${t.faint}`}>{match.category}</span>
+                      {match.image ? (
+                        <img
+                          src={match.image}
+                          alt=""
+                          loading="lazy"
+                          className="h-11 w-11 shrink-0 rounded-lg bg-white object-contain"
+                        />
+                      ) : (
+                        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold uppercase ${
+                          isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'
+                        } ${t.faint}`}>
+                          {(match.brand || match.name || '?').slice(0, 2)}
+                        </span>
                       )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[14px] font-medium">{match.name}</span>
+                        <span className={`block truncate text-[12px] capitalize ${t.faint}`}>
+                          {[match.brand, match.category].filter(Boolean).join(' · ')}
+                        </span>
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -4999,6 +5035,8 @@ const submitRecommendation = async () => {
                     name: productName,
                     category: productCategory,
                     ingredients: productIngredients || null,
+                    // Only Open Beauty Facts' own image host is accepted.
+                    image_url: productImageUrl.startsWith('https://images.openbeautyfacts.org/') ? productImageUrl : null,
                   })
                   .select()
                   .single()
@@ -5070,6 +5108,7 @@ const submitRecommendation = async () => {
                 setProductName('')
                 setProductCategory('')
                 setProductIngredients('')
+                setProductImageUrl('')
                 setProductOpenedDate('')
                 setProductPaoMonths(0)
                 setProductExpiryDate('')
@@ -5093,9 +5132,11 @@ const submitRecommendation = async () => {
       empties.find((p) => p.id === selectedUserProductId)
     const isEmpty = !!item?.finished_at && !products.some((p) => p.id === item?.id)
     const status = item && !isEmpty ? getPaoStatus(item) : null
-    const photoUrl = item?.photo_path && productPhotoUrls[item.photo_path]
+    const photoUrl = productImageFor(item)
+    const hasOwnPhoto = !!item?.photo_path
     const fmt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
-    const inputClass = `w-full rounded-xl border ${t.hair} bg-transparent px-3 py-2 text-[14px] outline-none`
+    // Fixed height so date pickers and the PAO dropdown line up exactly.
+    const inputClass = `block h-11 w-full min-w-0 rounded-xl border ${t.hair} ${t.surface} px-3 text-[14px] leading-none outline-none`
 
     return (
       <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
@@ -5117,7 +5158,7 @@ const submitRecommendation = async () => {
             <>
               <div className={`relative mt-4 aspect-[4/3] w-full overflow-hidden rounded-3xl ${t.surface}`}>
                 {photoUrl ? (
-                  <img src={photoUrl} alt={item.products?.name} className={`h-full w-full object-cover ${isEmpty ? 'opacity-80 grayscale-[30%]' : ''}`} />
+                  <img src={photoUrl} alt={item.products?.name} className={`h-full w-full ${hasOwnPhoto ? 'object-cover' : 'bg-white object-contain p-4'} ${isEmpty ? 'opacity-80 grayscale-[30%]' : ''}`} />
                 ) : (
                   <div className="flex h-full w-full flex-col items-center justify-center gap-2">
                     <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -5137,7 +5178,7 @@ const submitRecommendation = async () => {
 
               <div className="mt-3 flex items-center gap-4">
                 <label className={`cursor-pointer text-[13px] font-semibold ${t.mark} ${busyAction === 'productPhoto' ? 'opacity-50' : ''}`}>
-                  {busyAction === 'productPhoto' ? 'Uploading…' : photoUrl ? 'Change photo' : 'Add a photo'}
+                  {busyAction === 'productPhoto' ? 'Uploading…' : hasOwnPhoto ? 'Change photo' : photoUrl ? 'Use my own photo' : 'Add a photo'}
                   <input
                     type="file"
                     accept="image/*"
@@ -5150,7 +5191,7 @@ const submitRecommendation = async () => {
                     }}
                   />
                 </label>
-                {photoUrl && (
+                {hasOwnPhoto && (
                   <button type="button" onClick={() => removeProductPhoto(item)} className={`text-[13px] font-semibold ${t.faint}`}>
                     Remove photo
                   </button>
@@ -5218,9 +5259,9 @@ const submitRecommendation = async () => {
                       </p>
                     )}
 
-                    <div className={`mt-5 grid grid-cols-2 gap-3 border-t pt-4 ${t.hair}`}>
-                      <label className="block">
-                        <span className={`mb-1 block text-[11px] font-semibold ${t.faint}`}>Opened on</span>
+                    <div className={`mt-5 grid grid-cols-2 gap-x-3 gap-y-4 border-t pt-4 ${t.hair}`}>
+                      <label className="block min-w-0">
+                        <span className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Opened on</span>
                         <input
                           type="date"
                           value={item.opened_date || ''}
@@ -5229,21 +5270,28 @@ const submitRecommendation = async () => {
                           className={inputClass}
                         />
                       </label>
-                      <label className="block">
-                        <span className={`mb-1 block text-[11px] font-semibold ${t.faint}`}>Good for (after opening)</span>
-                        <select
-                          value={item.pao_months || ''}
-                          onChange={(e) => updateProductDates(item, { pao_months: e.target.value ? Number(e.target.value) : null })}
-                          className={inputClass}
-                        >
-                          <option value="">—</option>
-                          {[3, 6, 9, 12, 18, 24, 36].map((m) => (
-                            <option key={m} value={m}>{m} months</option>
-                          ))}
-                        </select>
+                      <label className="block min-w-0">
+                        <span className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>PAO</span>
+                        <span className="relative block">
+                          <select
+                            value={item.pao_months || ''}
+                            onChange={(e) => updateProductDates(item, { pao_months: e.target.value ? Number(e.target.value) : null })}
+                            className={`${inputClass} appearance-none pr-8`}
+                          >
+                            <option value="">Not set</option>
+                            {[3, 6, 9, 12, 18, 24, 36].map((m) => (
+                              <option key={m} value={m}>{m}M</option>
+                            ))}
+                          </select>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                            className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 ${t.faint}`}>
+                            <path d="M6 9l6 6 6-6" />
+                          </svg>
+                        </span>
                       </label>
-                      <label className="col-span-2 block">
-                        <span className={`mb-1 block text-[11px] font-semibold ${t.faint}`}>Expiry date on the pack</span>
+                      <label className="col-span-2 block min-w-0">
+                        <span className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Expiry date</span>
                         <input
                           type="date"
                           value={item.expiry_date || ''}
@@ -5252,8 +5300,8 @@ const submitRecommendation = async () => {
                         />
                       </label>
                     </div>
-                    <p className={`mt-2 text-[11px] leading-relaxed ${t.faint}`}>
-                      The months-after-opening number is on the open-jar symbol on the pack (e.g. “12M”).
+                    <p className={`mt-3 text-[12px] leading-relaxed ${t.muted}`}>
+                      PAO is the period after opening your product. See the symbol with a number and M at the back of the product, e.g. 6M.
                     </p>
                   </div>
 
@@ -9885,17 +9933,35 @@ if (screen === 'today') {
     <div className="flex flex-col gap-3">
       {steps.map((step, index) => {
         const done = completedSteps.includes(step.id)
+        const stepImage = productImageFor(step.userProduct)
 
         return (
           <button
             key={step.id}
             onClick={() => toggleStepCompletion(step.id)}
-            className={`flex w-full items-center gap-4 rounded-2xl p-4 text-left transition ${
-              done ? palette.chip : `border ${palette.hair}`
-            }`}
+            className={`relative flex w-full items-center gap-4 overflow-hidden rounded-2xl p-4 text-left transition ${
+              stepImage ? 'min-h-[88px] pr-28' : ''
+            } ${done ? palette.chip : `border ${palette.hair}`}`}
           >
+            {/* Product photo fills the card's right edge and fades into it;
+                muted to grey once the step is ticked. */}
+            {stepImage && (
+              <img
+                src={stepImage}
+                alt=""
+                loading="lazy"
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-y-0 right-0 h-full w-32 object-cover transition ${
+                  done ? 'opacity-50 grayscale' : ''
+                }`}
+                style={{
+                  WebkitMaskImage: 'linear-gradient(to right, transparent 0%, #000 55%)',
+                  maskImage: 'linear-gradient(to right, transparent 0%, #000 55%)',
+                }}
+              />
+            )}
             <span
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${
+              className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${
                 done ? palette.nodeDone : palette.node
               }`}
             >
@@ -9910,7 +9976,7 @@ if (screen === 'today') {
               )}
             </span>
 
-            <span className="min-w-0 flex-1">
+            <span className="relative min-w-0 flex-1">
               {step.brand && (
                 <span className={`block truncate text-[12px] font-medium ${palette.faint}`}>
                   {step.brand}
@@ -9939,6 +10005,7 @@ if (screen === 'today') {
                 </span>
               )}
             </span>
+
           </button>
         )
       })}

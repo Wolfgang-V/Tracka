@@ -41,7 +41,7 @@ export async function searchProducts(brand, query) {
   const terms = [brand, query].filter(Boolean).join(' ').trim()
   if (!terms) return []
 
-  const fields = 'code,product_name,brands,categories,ingredients_text_en,ingredients_text'
+  const fields = 'code,product_name,brands,categories,ingredients_text_en,ingredients_text,image_front_small_url,image_front_url,image_small_url,image_url'
   const url = `${SEARCH_URL}?search_terms=${encodeURIComponent(terms)}&json=1&page_size=10&fields=${fields}`
 
   const res = await fetch(url)
@@ -57,5 +57,7 @@ export async function searchProducts(brand, query) {
       brand: (p.brands || '').split(',')[0]?.trim() || brand,
       category: cleanCategory(p.categories),
       ingredients: p.ingredients_text_en || p.ingredients_text || '',
+      // Product shot from Open Beauty Facts, when one has been uploaded.
+      image: p.image_front_small_url || p.image_small_url || p.image_front_url || p.image_url || '',
     }))
 }
