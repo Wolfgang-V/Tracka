@@ -3231,38 +3231,39 @@ const productImageFor = (userProduct) =>
   userProduct?.products?.image_url ||
   null
 
-// Placeholder art for products with no photo: an emoji per category on a
-// soft tint of that category's colour, so photo-less products still look
-// designed rather than empty.
+// Placeholder art for products with no photo: an illustrated bottle per
+// category (public/product-art) on a soft tint of that bottle's colour,
+// so photo-less products still look designed rather than empty.
 const PRODUCT_ART = {
-  cleanser: ['🧼', '#7FC8E8'],
-  toner: ['💦', '#8FB8E8'],
-  essence: ['💧', '#7FB3F0'],
-  serum: ['🧪', '#B39DDB'],
-  treatment: ['✨', '#E8B4D0'],
-  moisturizer: ['🫙', '#F2C59A'],
-  sunscreen: ['☀️', '#F5C451'],
-  exfoliant: ['🧽', '#F0A98A'],
-  mask: ['🧖', '#9ED9B8'],
-  body_wash: ['🛁', '#8FD3E0'],
-  body_moisturizer: ['🧴', '#F2C59A'],
-  body_oil: ['🫒', '#C5D68A'],
-  body_scrub: ['🧂', '#E6C9A8'],
-  other: ['🧴', '#C4CCD6'],
+  cleanser: ['cleanser', '#38BDF8'],
+  toner: ['toner', '#22D3EE'],
+  essence: ['toner', '#22D3EE'],
+  serum: ['serum', '#2563EB'],
+  treatment: ['treatment', '#4F46E5'],
+  moisturizer: ['moisturizer', '#8B5CF6'],
+  sunscreen: ['sunscreen', '#F59E0B'],
+  exfoliant: ['exfoliant', '#14B8A6'],
+  mask: ['mask', '#FB7185'],
+  body_wash: ['cleanser', '#38BDF8'],
+  body_moisturizer: ['moisturizer', '#8B5CF6'],
+  body_oil: ['serum', '#2563EB'],
+  body_scrub: ['exfoliant', '#14B8A6'],
+  other: ['other', '#94A3B8'],
 }
 const productArtFor = (category) =>
   PRODUCT_ART[(category || '').toLowerCase()] || PRODUCT_ART.other
 
-// Tile for a product with no picture. `className` sets size/shape.
-const renderProductArt = (category, className = '', emojiClass = 'text-[22px]') => {
-  const [emoji, tint] = productArtFor(category)
+// Tile for a product with no picture. `className` sets the tile's size/shape,
+// `artClass` the illustration's size inside it.
+const renderProductArt = (category, className = '', artClass = 'h-[82%] w-[82%]') => {
+  const [art, tint] = productArtFor(category)
   return (
     <span
       aria-hidden="true"
       className={`flex shrink-0 items-center justify-center ${className}`}
-      style={{ background: `linear-gradient(135deg, ${tint}33, ${tint}66)` }}
+      style={{ background: `linear-gradient(135deg, ${tint}14, ${tint}33)` }}
     >
-      <span className={emojiClass}>{emoji}</span>
+      <img src={`/product-art/${art}.png`} alt="" loading="lazy" className={`${artClass} object-contain`} />
     </span>
   )
 }
@@ -4678,7 +4679,7 @@ const submitRecommendation = async () => {
                 renderProductArt(
                   item.products?.category,
                   `${size} rounded-xl ${dim ? 'opacity-70 grayscale-[35%]' : ''}`,
-                  size.includes('w-full') ? 'text-[44px]' : 'text-[22px]'
+                  size.includes('w-full') ? 'h-[70%] w-[70%]' : 'h-[82%] w-[82%]'
                 )
               )
             }
@@ -5350,7 +5351,7 @@ const submitRecommendation = async () => {
                   <img src={photoUrl} alt={item.products?.name} className={`h-full w-full ${hasOwnPhoto ? 'object-cover' : 'bg-white object-contain p-4'} ${isEmpty ? 'opacity-80 grayscale-[30%]' : ''}`} />
                 ) : (
                   <div className="relative h-full w-full">
-                    {renderProductArt(item.products?.category, 'h-full w-full', 'text-[84px]')}
+                    {renderProductArt(item.products?.category, 'h-full w-full pb-8 pt-4', 'h-[75%] w-[75%]')}
                     <span className={`absolute inset-x-0 bottom-3 text-center text-[12px] font-medium ${t.muted}`}>No photo yet</span>
                   </div>
                 )}
@@ -6043,7 +6044,7 @@ if (screen === 'admin') {
                 : adminTab === 'challenges'
                 ? 'Challenges'
                 : adminTab === 'products'
-                ? 'Products people use'
+                ? 'Products'
                 : adminTab === 'referrals'
                 ? 'Referrals'
                 : 'Verified practitioners'}
@@ -6644,11 +6645,7 @@ if (screen === 'admin') {
                 </button>
               </div>
 
-              <p className={`mt-3 text-[11px] leading-relaxed ${t.faint}`}>
-                Ranked by how many people saved it. Spellings that differ only in capitals, spaces or punctuation are grouped.
-              </p>
-
-              <div className={`mt-2 overflow-hidden rounded-2xl ${t.surface}`}>
+              <div className={`mt-3 overflow-hidden rounded-2xl ${t.surface}`}>
                 {rows.length === 0 && <p className={`p-4 text-[13px] ${t.muted}`}>No matches.</p>}
                 {rows.map((r, i) => {
                   const title =
@@ -6666,7 +6663,7 @@ if (screen === 'admin') {
                         r.image_url ? (
                           <img src={r.image_url} alt="" loading="lazy" className="h-9 w-9 shrink-0 rounded-lg bg-white object-contain p-0.5" />
                         ) : (
-                          renderProductArt(r.category, 'h-9 w-9 rounded-lg', 'text-[16px]')
+                          renderProductArt(r.category, 'h-9 w-9 rounded-lg', 'h-[86%] w-[86%]')
                         )
                       )}
                       <span className="min-w-0 flex-1">
@@ -10501,7 +10498,7 @@ if (screen === 'today') {
                 />
               ) : (
                 <span className={`pointer-events-none absolute inset-y-0 right-0 w-32 transition ${muted}`} style={fade}>
-                  {renderProductArt(step.category, 'h-full w-full pl-8', 'text-[34px]')}
+                  {renderProductArt(step.category, 'h-full w-full pl-8', 'h-[72%] w-[72%]')}
                 </span>
               )
             })()}
