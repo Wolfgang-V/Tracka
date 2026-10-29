@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase, OPENED_FROM_RECOVERY_LINK } from './lib/supabase'
+import { captureReferral, claimReferral } from './lib/referral'
+import ReferralConsole from './screens/ReferralConsole'
 import { planNight, localDateString, addDays, addMonths, dayOfWeek, PREGNANCY_NOTE } from './lib/core/planNight'
 import { productExpiry } from './lib/core/expiry'
 import { BRANDS } from './lib/core/brands'
@@ -527,6 +529,11 @@ setRoutineHistory(groupedRoutines)
   const [productInsights, setProductInsights] = useState(null)
   const [insightsView, setInsightsView] = useState('products')
   const [insightsQuery, setInsightsQuery] = useState('')
+  // Admin → Referrals: flyer QR codes per store/clinic and what they produced.
+  const [referralReport, setReferralReport] = useState(null)
+  const [referralView, setReferralView] = useState('partners')
+  const [newReferral, setNewReferral] = useState({ code: '', partner: '', kind: 'store', label: '', city: '', phone: '' })
+  const [newReferralOpen, setNewReferralOpen] = useState(false)
   const [pushStatus, setPushStatus] = useState(null)
   const [progressCompletions, setProgressCompletions] = useState([])
   const [selectedProgressDate, setSelectedProgressDate] = useState(null)
@@ -688,10 +695,22 @@ setRoutineHistory(groupedRoutines)
       }
     }
 
+    // Referral QR (?ref=CODE): record the scan straight away, before anyone
+    // signs in. Claiming waits for that to finish, so an already-signed-in
+    // person who scans a flyer is attributed in the same visit.
+    const referralCapture = captureReferral()
+      .then((partner) => {
+        if (partner && partner !== 'Tracka+') notify(`Welcome! You were referred by ${partner}.`, 'success')
+      })
+      .catch((err) => console.error('REFERRAL SCAN ERROR:', err))
+    const claimReferralWhenReady = () =>
+      referralCapture.then(claimReferral).catch((err) => console.error('REFERRAL CLAIM ERROR:', err))
+
     const checkUser = async (user) => {
       try {
         setUser(user)
         redeemPendingInvite()
+        claimReferralWhenReady()
 
         const isRecovery = recoveryActiveRef.current || isRecoveryFlow()
 
@@ -844,6 +863,7 @@ setRoutineHistory(groupedRoutines)
         loadCompletedSteps(session.user.id)
         loadProgressCompletions(session.user.id)
         redeemPendingInvite()
+        claimReferralWhenReady()
       }
     })
 
@@ -2186,6 +2206,7 @@ useEffect(() => {
     loadVerifiedPractitionersAdmin()
     loadAdminChallengeStats()
     loadProductInsights()
+    loadReferralReport()
   }
 
   if (screen === 'careTeam') {
@@ -2613,6 +2634,44 @@ const goToMorningRoutine = () => {
   setTimeout(() => {
     document.getElementById('am-routine')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, 300)
+}
+
+const loadReferralReport = async () => {
+  const { data, error } = await supabase.rpc('admin_referral_report')
+  if (error) {
+    console.error('REFERRAL REPORT ERROR:', error)
+    return
+  }
+  setReferralReport(data)
+}
+
+const saveReferralCode = async () => {
+  const code = newReferral.code.trim().toUpperCase()
+  if (!/^[A-Z0-9][A-Z0-9-]{1,23}$/.test(code)) {
+    notify('Code must be 2–24 letters, numbers or dashes, e.g. BEAUTYHUT-LEKKI.')
+    return
+  }
+  if (!newReferral.partner.trim()) {
+    notify('Add the partner name.')
+    return
+  }
+  const { error } = await supabase.rpc('admin_upsert_referral_code', {
+    p_code: code,
+    p_partner_name: newReferral.partner.trim(),
+    p_kind: newReferral.kind,
+    p_label: newReferral.label.trim() || null,
+    p_city: newReferral.city.trim() || null,
+    p_contact_phone: newReferral.phone.trim() || null,
+  })
+  if (error) {
+    console.error('SAVE REFERRAL CODE ERROR:', error)
+    notify(error.message)
+    return
+  }
+  notify(`${code} is live — print its QR with qr/generate.py.`, 'success')
+  setNewReferral({ code: '', partner: '', kind: 'store', label: '', city: '', phone: '' })
+  setNewReferralOpen(false)
+  await loadReferralReport()
 }
 
 const loadProductInsights = async () => {
@@ -5227,6 +5286,22 @@ const submitRecommendation = async () => {
     )
   }
 
+  if (screen === 'referralConsole') {
+    return (
+      <ReferralConsole
+        supabase={supabase}
+        t={t}
+        isNight={isNight}
+        notify={notify}
+        confirmAction={confirmAction}
+        onBack={() => {
+          setAdminTab('referrals')
+          setScreen('admin')
+        }}
+      />
+    )
+  }
+
   if (screen === 'productDetail') {
     const item =
       products.find((p) => p.id === selectedUserProductId) ||
@@ -5969,6 +6044,8 @@ if (screen === 'admin') {
                 ? 'Challenges'
                 : adminTab === 'products'
                 ? 'Products people use'
+                : adminTab === 'referrals'
+                ? 'Referrals'
                 : 'Verified practitioners'}
             </h1>
           </div>
@@ -6025,12 +6102,13 @@ if (screen === 'admin') {
           </button>
         </div>
 
-        <div className={`mt-4 flex gap-1 overflow-x-auto rounded-2xl border ${t.hair} p-1 [scrollbar-width:none]`}>
+        <div className={`mt-4 flex flex-wrap gap-1 rounded-2xl border ${t.hair} p-1`}>
           {[
             ['signups', 'Signups'],
             ['practitioners', `Revoked${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`],
             ['challenges', 'Challenges'],
             ['products', 'Products'],
+            ['referrals', 'Referrals'],
           ].map(([key, label]) => (
             <button
               key={key}
@@ -6314,6 +6392,175 @@ if (screen === 'admin') {
             )}
           </div>
         )}
+
+        {adminTab === 'referrals' && (() => {
+          if (!referralReport) {
+            return <p className={`mt-5 text-[15px] ${t.muted}`}>Loading…</p>
+          }
+          const T = referralReport.totals
+          const rows = referralView === 'partners' ? referralReport.partners : referralReport.codes
+          const pct = (n, d) => (d > 0 ? `${Math.round((n / d) * 100)}%` : '—')
+          const STAGES = [
+            ['scans', 'Scans'],
+            ['signups', 'Sign-ups'],
+            ['onboarded', 'Onboarded'],
+            ['logged_routine', 'Logged a routine'],
+            ['perfect_day', 'Perfect day'],
+          ]
+          const field = (key, placeholder, extra = '') => (
+            <input
+              value={newReferral[key]}
+              onChange={(e) => setNewReferral((r) => ({ ...r, [key]: e.target.value }))}
+              placeholder={placeholder}
+              className={`w-full min-w-0 rounded-xl border ${t.hair} bg-transparent px-3 py-2.5 text-[13px] outline-none ${extra}`}
+            />
+          )
+
+          return (
+            <div className="mt-5">
+              <button
+                type="button"
+                onClick={() => setScreen('referralConsole')}
+                className={`mb-4 flex w-full items-center justify-between rounded-2xl px-4 py-3.5 text-left ${t.btn}`}
+              >
+                <span>
+                  <span className="block text-[14px] font-bold">Open referral console</span>
+                  <span className="block text-[12px] opacity-80">Partners, new codes, QR flyers and share links</span>
+                </span>
+                <span className="text-[18px]">›</span>
+              </button>
+
+              {/* Funnel: each stage with conversion from the previous one. */}
+              <div className={`overflow-hidden rounded-2xl ${t.surface}`}>
+                {STAGES.map(([key, label], i) => {
+                  const prev = i > 0 ? T[STAGES[i - 1][0]] : null
+                  const width = T.scans > 0 ? Math.max(4, (T[key] / T.scans) * 100) : 0
+                  return (
+                    <div key={key} className={`px-4 py-2.5 ${i > 0 ? `border-t ${t.hair}` : ''}`}>
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-[13px] font-medium">{label}</span>
+                        <span className="text-[15px] font-semibold tabular-nums">
+                          {T[key]}
+                          {prev !== null && (
+                            <span className={`ml-2 text-[11px] font-normal ${t.faint}`}>{pct(T[key], prev)}</span>
+                          )}
+                        </span>
+                      </div>
+                      <span className={`mt-1.5 block h-1 overflow-hidden rounded-full ${isNight ? 'bg-white/10' : 'bg-[#101B2D]/8'}`}>
+                        <span className={`block h-full rounded-full ${t.nodeDone}`} style={{ width: `${width}%` }} />
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className={`mt-2 text-[11px] leading-relaxed ${t.faint}`}>
+                {T.partners} partners · {T.codes} active codes · {T.visitors} unique visitors. Percentages are from the stage above.
+              </p>
+
+              {/* Add a partner / store code */}
+              {newReferralOpen ? (
+                <div className={`mt-4 rounded-2xl border ${t.hair} p-4`}>
+                  <p className="text-[14px] font-semibold">New referral code</p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {field('partner', 'Partner (e.g. Beauty Hut)', 'col-span-2')}
+                    {field('code', 'Code (e.g. BEAUTYHUT-LEKKI)', 'col-span-2 uppercase')}
+                    {field('label', 'Label (e.g. Lekki branch)')}
+                    {field('city', 'City')}
+                    <select
+                      value={newReferral.kind}
+                      onChange={(e) => setNewReferral((r) => ({ ...r, kind: e.target.value }))}
+                      className={`w-full rounded-xl border ${t.hair} ${t.surface} px-3 py-2.5 text-[13px] outline-none`}
+                    >
+                      {['store', 'clinic', 'spa', 'brand', 'online', 'event'].map((k) => (
+                        <option key={k} value={k}>{k[0].toUpperCase() + k.slice(1)}</option>
+                      ))}
+                    </select>
+                    {field('phone', 'Contact phone')}
+                  </div>
+                  <p className={`mt-2 text-[11px] leading-relaxed ${t.faint}`}>
+                    Same partner name adds another code to that partner (one per branch).
+                    {newReferral.code.trim() && <> Flyer link: <b>trackaplus.app/?ref={newReferral.code.trim().toUpperCase()}</b></>}
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewReferralOpen(false)}
+                      className={`flex-1 rounded-xl border py-2.5 text-[13px] font-semibold ${t.hair} ${t.muted}`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!!busyAction}
+                      onClick={() => runBusy('saveReferralCode', saveReferralCode)}
+                      className={`flex-1 rounded-xl py-2.5 text-[13px] font-bold ${t.btn} disabled:opacity-60`}
+                    >
+                      {busyAction === 'saveReferralCode' ? 'Saving…' : 'Create code'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setNewReferralOpen(true)}
+                  className={`mt-4 w-full rounded-2xl border border-dashed py-3 text-[13px] font-semibold ${t.hair} ${t.muted}`}
+                >
+                  + Add a store or clinic code
+                </button>
+              )}
+
+              <div className={`mt-4 grid grid-cols-2 rounded-xl p-0.5 ${isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'}`}>
+                {[['partners', 'By partner'], ['codes', 'By code']].map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setReferralView(key)}
+                    className={`rounded-[10px] py-2 text-[12px] font-semibold ${referralView === key ? `${t.surface} shadow-sm` : t.faint}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-3 flex flex-col gap-2.5">
+                {rows.length === 0 && <p className={`text-[13px] ${t.muted}`}>No codes yet.</p>}
+                {rows.map((r, i) => (
+                  <div key={`${referralView}-${i}`} className={`rounded-2xl ${t.surface} p-4`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-[15px] font-semibold">
+                          {referralView === 'codes' ? r.code : r.partner}
+                        </p>
+                        <p className={`truncate text-[12px] capitalize ${t.faint}`}>
+                          {referralView === 'codes'
+                            ? [r.partner, r.label].filter(Boolean).join(' · ')
+                            : [r.kind, r.city, `${r.codes} ${r.codes === 1 ? 'code' : 'codes'}`].filter(Boolean).join(' · ')}
+                        </p>
+                      </div>
+                      {referralView === 'codes' && !r.is_active && (
+                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${t.hair} ${t.faint}`}>Retired</span>
+                      )}
+                    </div>
+                    <div className="mt-3 grid grid-cols-5 gap-1 text-center">
+                      {STAGES.map(([key, label]) => (
+                        <div key={key}>
+                          <p className="text-[16px] font-semibold tabular-nums">{r[key]}</p>
+                          <p className={`text-[9.5px] leading-tight ${t.faint}`}>{label}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className={`mt-2.5 text-[11px] ${t.faint}`}>
+                      {r.last_scan_at
+                        ? `Last scan ${new Date(r.last_scan_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
+                        : 'No scans yet'}
+                      {referralView === 'codes' && r.existing_users > 0 && ` · ${r.existing_users} existing users scanned`}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
         {adminTab === 'products' && (() => {
           if (!productInsights) {
