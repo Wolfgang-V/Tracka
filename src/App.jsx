@@ -8723,6 +8723,11 @@ if (screen === 'challengeDetail') {
             const points = challengePoints(done)
             const awards = challengeAwards(dates, target, { overTheLine: hasWindow })
             const half = Math.ceil(target / 2)
+            const tickedSet = new Set(dates)
+            // Days before you joined aren't "missed" — you weren't in yet.
+            const joinedOn = participation.joined_at
+              ? localDateString(new Date(participation.joined_at))
+              : challenge.starts_on
 
             // The nearest unearned reward, phrased as what it takes to get it.
             // Next milestone, shown quietly under the track. Skipped before
@@ -8806,6 +8811,45 @@ if (screen === 'challengeDetail') {
 
                   {/* 30-dot journey. The halfway medal and the cup sit on the
                       track itself so the distance to each is visible. */}
+                  {hasWindow ? (
+                  // Shared-window challenge: one dot per calendar day, so a
+                  // missed day shows as a grey dot in its place. The medal
+                  // and cup sit on the day they were won.
+                  <div className="mt-3 grid grid-cols-10 gap-1.5">
+                    {Array.from({ length: total }).map((_, i) => {
+                      const date = addDays(challenge.starts_on, i)
+                      const ticked = tickedSet.has(date)
+                      const awardKey = date === dates[target - 1] ? 'complete' : date === dates[half - 1] ? 'half' : null
+                      if (awardKey) {
+                        const award = awards.find((a) => a.key === awardKey)
+                        return (
+                          <span key={date} className="flex aspect-square items-center justify-center"
+                            title={`${award.label} · ${formatChallengeDate(date)}`}>
+                            {renderAwardIcon(award, 26, false)}
+                          </span>
+                        )
+                      }
+                      const isToday = date === todayString
+                      const missed = !ticked && date < todayString && date >= joinedOn
+                      return (
+                        <span key={date} className="flex aspect-square items-center justify-center"
+                          title={`${formatChallengeDate(date)}${ticked ? ' · done' : missed ? ' · missed' : ''}`}>
+                          <span
+                            className={`block h-3.5 w-3.5 rounded-full transition ${
+                              ticked
+                                ? 'bg-gradient-to-br from-[#F5C451] to-[#E08A1E]'
+                                : missed
+                                ? isNight ? 'bg-white/35' : 'bg-[#101B2D]/25'
+                                : isToday
+                                ? 'animate-pulse border-2 border-amber-500'
+                                : isNight ? 'bg-white/10' : 'bg-[#101B2D]/8'
+                            }`}
+                          />
+                        </span>
+                      )
+                    })}
+                  </div>
+                  ) : (
                   <div className="mt-3 grid grid-cols-10 gap-1.5">
                     {Array.from({ length: total }).map((_, i) => {
                       const n = i + 1
@@ -8835,6 +8879,18 @@ if (screen === 'challengeDetail') {
                       )
                     })}
                   </div>
+                  )}
+
+                  {hasWindow && (
+                    <div className={`mt-3 flex items-center gap-4 text-[11px] ${t.faint}`}>
+                      <span className="flex items-center gap-1.5">
+                        <span className="block h-2 w-2 rounded-full bg-gradient-to-br from-[#F5C451] to-[#E08A1E]" />Done
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className={`block h-2 w-2 rounded-full ${isNight ? 'bg-white/35' : 'bg-[#101B2D]/25'}`} />Missed
+                      </span>
+                    </div>
+                  )}
 
                   {nextLine && (
                     <div className={`mt-5 flex items-center justify-between gap-3 border-t pt-4 ${t.hair}`}>
