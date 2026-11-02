@@ -1480,6 +1480,7 @@ const shareSkinReport = async () => {
           photo_path,
           expiry_date,
           marked_expired_at,
+          finished_at,
           products ( brand, name, category, ingredients, image_url )
         )
       )
@@ -1494,6 +1495,12 @@ const shareSkinReport = async () => {
     console.error('ROUTINES ERROR:', routinesError)
     setRoutinesLoading(false)
     return
+  }
+
+  // Steps whose product went to Empties drop out — including ones finished
+  // before "Mark as finished" also switched the step off.
+  for (const routine of routines || []) {
+    routine.routine_steps = (routine.routine_steps || []).filter((step) => !step.user_products?.finished_at)
   }
 
   // If more than one active routine ever exists per time-of-day (e.g. from
@@ -3351,7 +3358,7 @@ const finishProduct = async (item) => {
   const slots = routineSlotsUsing(item)
   const confirmed = await confirmAction(
     slots.length
-      ? `Move ${item.products.name} to your empties? It's still in your ${slots.join(' and ')} routine — you can swap it out in My routine.`
+      ? `Move ${item.products.name} to your empties? It'll come out of your ${slots.join(' and ')} routine too.`
       : `Move ${item.products.name} to your empties?`,
     ['Cancel', 'Mark as finished']
   )
@@ -3365,6 +3372,18 @@ const finishProduct = async (item) => {
   if (error) {
     notify(error.message)
     return
+  }
+  // A finished product leaves the routine; add a replacement (or the same
+  // product again) in My routine to bring the step back.
+  if (slots.length) {
+    const { error: stepsError } = await supabase
+      .from('routine_steps')
+      .update({ is_active: false })
+      .eq('user_product_id', item.id)
+      .eq('is_active', true)
+    if (stepsError) console.error(stepsError)
+    setTodayAmSteps((current) => current.filter((s) => s.user_product_id !== item.id))
+    setTodayPmSteps((current) => current.filter((s) => s.user_product_id !== item.id))
   }
   setProducts((current) => current.filter((p) => p.id !== item.id))
   setEmpties((current) => [{ ...item, is_active: false, finished_at }, ...current])

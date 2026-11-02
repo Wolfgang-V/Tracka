@@ -1,7 +1,7 @@
 // Runs every few minutes. Finds whoever is due a reminder in their own
 // timezone, works out what their routine actually is, and sends it.
 // Also checks four other things on the same tick: a ~30-minute follow-up
-// for a missed reminder, 24/48-hour login inactivity nudges, a once-only nudge for
+// for a missed reminder, 2-day / 7-day login inactivity nudges, a once-only nudge for
 // signups who never finished onboarding, and SPF reapply reminders every
 // 2h after sunscreen was ticked — no separate cron job needed for any of
 // them.
@@ -180,7 +180,8 @@ Deno.serve(async (req) => {
     }
   }
 
-  // --- 24-hour / 48-hour login inactivity nudges ---
+  // --- 2-day / 7-day inactivity nudges (24h is the old schedule, kept
+  // so this deploys safely before the migration that switches over) ---
 
   const { data: inactive, error: inactiveError } = await supabase.rpc('due_login_nudges', { window_minutes: 6 })
 
@@ -194,6 +195,8 @@ Deno.serve(async (req) => {
         title: 'Tracka+',
         body: row.hours_since_login === 24
           ? "Hey, where did you go? 👀 You haven't checked in with Tracka+ today"
+          : row.hours_since_login === 168
+          ? "It's been a week. Your skin misses you — pick up where you left off?"
           : "You've been gone for 2 days. Ready to get back into your routine?",
         url: '/',
         tag: `login-inactivity-${row.hours_since_login}`,
