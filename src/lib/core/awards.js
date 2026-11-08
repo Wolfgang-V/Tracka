@@ -60,9 +60,7 @@ export function challengeStreak(sortedDates, today) {
   return current
 }
 
-// overTheLine: in a shared-window challenge that is still running, reaching
-// the target means "over the line" — you keep going, and winners are only
-// declared once the window closes — so the cup is not called "complete" yet.
+// In a shared-window challenge, the target can be reached before the window closes.
 export function challengeAwards(dates, duration, { overTheLine = false } = {}) {
   const sorted = [...new Set(dates)].sort()
   const done = sorted.length
@@ -77,8 +75,8 @@ export function challengeAwards(dates, duration, { overTheLine = false } = {}) {
     { key: 'half', kind: 'medal', metal: 'gold', badge: String(half), label: 'Halfway', earned: done >= half,
       blurb: `${half} days in — halfway there.` },
     { key: 'complete', kind: 'cup', metal: 'gold', badge: '',
-      label: overTheLine ? 'Over the line' : 'Challenge complete',
-      headline: overTheLine ? 'OVER THE LINE' : 'CHALLENGE COMPLETE',
+      label: overTheLine ? 'Goal reached' : 'Challenge complete',
+      headline: overTheLine ? 'GOAL REACHED' : 'CHALLENGE COMPLETE',
       earned: done >= duration,
       blurb: overTheLine ? `${duration} days ticked.` : `${duration} days complete.` },
   ]

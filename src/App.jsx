@@ -11,7 +11,7 @@ import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredi
 import { analyzeIngredients } from './lib/core/inciAnalysis'
 import { calculateRoutineCompletion, calculateStreaks } from './lib/core/skinReport'
 import { generateStreakImage, generateSkinReportImage, generateAwardImage, isMilestoneStreak } from './lib/shareImage'
-import { challengeAwards, challengeStreak, challengePoints, POINTS_PER_DAY, METALS, CUP_SHAPES, MEDAL_SHAPES, LAUREL_LEAF, LAUREL_STAR, laurelLeaves, laurelStems } from './lib/core/awards'
+import { challengeAwards, challengeStreak, challengePoints, METALS, CUP_SHAPES, MEDAL_SHAPES, LAUREL_LEAF, LAUREL_STAR, laurelLeaves, laurelStems } from './lib/core/awards'
 import { flameColorForStreak, FLAME_PATH, lighten, darken } from './lib/core/flameColor'
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
@@ -514,7 +514,6 @@ setRoutineHistory(groupedRoutines)
   const [awardSaving, setAwardSaving] = useState(null)
   const [leaderboard, setLeaderboard] = useState([])
   const [leaderboardLoading, setLeaderboardLoading] = useState(true)
-  const [leaderboardNoticeDismissed, setLeaderboardNoticeDismissed] = useState(false)
   // Home-screen + reminders setup guide (most users never found either,
   // and stopped coming back).
   const [setupGuideOpen, setSetupGuideOpen] = useState(false)
@@ -2026,7 +2025,7 @@ const renderChallengeProgressCard = (participation, returnTo) => {
         <span className="mt-2">{renderChallengeBar(pct)}</span>
         <span className={`mt-1.5 text-[12px] ${t.faint}`}>
           {done >= target
-            ? (challengeInProgress(participation.challenges) ? `Over the line · ${done} days` : `Completed · ${done} days ticked`)
+            ? `Completed · ${done} days`
             : `${done} of ${target} days completed`}
         </span>
         <span className={`mt-2 text-[13px] font-semibold ${t.mark}`}>Continue challenge →</span>
@@ -2164,7 +2163,6 @@ useEffect(() => {
   }
 
   if (screen === 'challengeLeaderboard') {
-    setLeaderboardNoticeDismissed(false)
     loadLeaderboard()
     loadChallenges()
   }
@@ -6122,25 +6120,22 @@ if (screen === 'admin') {
           </button>
         </div>
 
-        <div className={`mt-4 flex flex-wrap gap-1 rounded-2xl border ${t.hair} p-1`}>
-          {[
-            ['signups', 'Signups'],
-            ['practitioners', `Revoked${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`],
-            ['challenges', 'Challenges'],
-            ['products', 'Products'],
-            ['referrals', 'Referrals'],
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setAdminTab(key)}
-              className={`flex-1 shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-[12px] font-semibold transition ${
-                adminTab === key ? t.chip : t.muted
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="mt-4">
+          <label htmlFor="admin-section" className="sr-only">Admin section</label>
+          <select
+            id="admin-section"
+            value={adminTab}
+            onChange={(e) => setAdminTab(e.target.value)}
+            className={`w-full appearance-none rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 text-[14px] font-semibold outline-none`}
+          >
+            <option value="signups">Signups</option>
+            <option value="practitioners">
+              {`Revoked${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`}
+            </option>
+            <option value="challenges">Challenges</option>
+            <option value="products">Products</option>
+            <option value="referrals">Referrals</option>
+          </select>
         </div>
 
         {adminTab === 'signups' && !adminLoading && !adminError && (
@@ -8714,7 +8709,7 @@ if (screen === 'challengeDetail') {
             <h1 className="text-[26px] font-semibold leading-tight">{challenge.title}</h1>
             {reachedTarget ? (
               <span className="mt-1 shrink-0 rounded-full bg-gradient-to-r from-[#F5C451] to-[#E08A1E] px-3 py-1 text-[12px] font-semibold text-white">
-                {hasWindow ? 'Over the line' : 'Completed'}
+                Completed
               </span>
             ) : (
               <span className="mt-1 shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[12px] font-semibold text-emerald-500">
@@ -8956,11 +8951,11 @@ if (screen === 'challengeDetail') {
                     </span>
                     <div className="min-w-0">
                       <p className="text-[16px] font-semibold">Today's sunscreen check-in</p>
-                      <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                        {doneToday
-                          ? `+${POINTS_PER_DAY} points. ${done === 1 ? 'One day down' : `${done} days down`} — come back tomorrow and tick sunscreen again.`
-                          : challenge.goal_text || 'Complete the sunscreen step in your morning routine.'}
-                      </p>
+                      {!doneToday && (
+                        <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                          {challenge.goal_text || 'Complete the sunscreen step in your morning routine.'}
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -9023,7 +9018,7 @@ if (screen === 'challengeDetail') {
     ['Apply your sunscreen', 'Follow your usual morning skincare routine.'],
     ['Tick it in Tracka+', 'Complete the sunscreen step in your existing morning routine. Your challenge progress updates automatically.'],
     win.hasWindow
-      ? [`Keep going until ${formatChallengeDate(challenge.ends_on)}`, `Everyone takes part in the same ${challenge.duration_days} days. Tick sunscreen on ${challengeTarget(challenge)} of them to get over the line — missed days are fine. Keep going after that: the challenge runs the full ${challenge.duration_days} days, and the winners are declared when it ends.`]
+      ? [`Keep going until ${formatChallengeDate(challenge.ends_on)}`, `Tick sunscreen on ${challengeTarget(challenge)} of the ${challenge.duration_days} days. Missed days are fine.`]
       : [`Keep going for ${challenge.duration_days} days`, 'Track your progress as you build the habit.'],
   ]
   const canJoin = !win.ended && !(win.hasWindow && lastCompleted)
@@ -9072,7 +9067,7 @@ if (screen === 'challengeDetail') {
                   onClick={() => saveAward(cup, lastCompleted)}
                   className={`mt-4 w-full rounded-2xl py-3 text-[14px] font-bold ${t.btn} disabled:opacity-60`}
                 >
-                  {awardSaving === 'complete' ? 'Preparing…' : 'Save my cup'}
+                  {awardSaving === 'complete' ? 'Preparing…' : 'Save my trophy'}
                 </button>
               </div>
               {renderAchievements(lastCompleted)}
@@ -9145,10 +9140,10 @@ if (screen === 'challengeDetail') {
             {win.hasWindow && !win.notStarted && win.daysLeft < challengeTarget(challenge) && (
               <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3.5">
                 <p className="text-[14px] font-semibold text-amber-700">
-                  Too late to get over the line this time
+                  Too late to complete this challenge
                 </p>
                 <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                  Only {win.daysLeft} {win.daysLeft === 1 ? 'day is' : 'days are'} left, and getting over the line takes {challengeTarget(challenge)}. Every day you tick still counts on the leaderboard — join anyway to build the habit.
+                  Only {win.daysLeft} {win.daysLeft === 1 ? 'day is' : 'days are'} left. The challenge requires {challengeTarget(challenge)} check-ins, but every check-in still counts on the leaderboard.
                 </p>
               </div>
             )}
@@ -9218,18 +9213,6 @@ if (screen === 'challengeLeaderboard') {
   const nameFor = (row) =>
     row.is_me ? 'You' : row.display_name || 'Private participant'
 
-  // Everyone who joined before the leaderboard existed is listed by name by
-  // default, so the first visit says so, with the switch right there.
-  const noticeKey = `leaderboardNoticeSeen-${selectedChallengeId}`
-  let noticeSeen = leaderboardNoticeDismissed
-  if (!noticeSeen) {
-    try { noticeSeen = localStorage.getItem(noticeKey) === '1' } catch { noticeSeen = true }
-  }
-  const dismissNotice = () => {
-    try { localStorage.setItem(noticeKey, '1') } catch { /* still hidden for this session */ }
-    setLeaderboardNoticeDismissed(true)
-  }
-
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
@@ -9256,45 +9239,10 @@ if (screen === 'challengeLeaderboard') {
           </h1>
           <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>
             {lbWindow.ended
-              ? `The challenge ended on ${formatChallengeDate(challenge.ends_on)}. Winners are picked from this ranking.`
+              ? 'Top finishers'
               : 'See where you stand.'}
           </p>
         </div>
-
-        {myParticipation && !noticeSeen && (
-          <div className="mt-6 border-l-2 border-amber-400/80 pl-3.5">
-            <p className="text-[13px] font-medium">
-              {myParticipation.hide_from_leaderboard
-                ? 'Your name is hidden on this leaderboard'
-                : 'Your name shows on this leaderboard'}
-            </p>
-            <p className={`mt-1 text-[12px] leading-relaxed ${t.muted}`}>
-              {myParticipation.hide_from_leaderboard
-                ? 'Others see you as “Private participant”. Your place and days still count.'
-                : 'Hiding it keeps your place and days — you’ll appear as “Private participant”.'}
-            </p>
-            <div className="mt-2.5 flex items-center gap-5 text-[12px] font-semibold">
-              {!myParticipation.hide_from_leaderboard && (
-                <button
-                  type="button"
-                  disabled={!!busyAction}
-                  onClick={() =>
-                    runBusy('leaderboardVisibility', async () => {
-                      await setLeaderboardHidden(selectedChallengeId, true)
-                      dismissNotice()
-                    })
-                  }
-                  className="text-amber-600 disabled:opacity-50"
-                >
-                  Hide my name
-                </button>
-              )}
-              <button type="button" onClick={dismissNotice} className={t.faint}>
-                {myParticipation.hide_from_leaderboard ? 'Got it' : 'Keep it visible'}
-              </button>
-            </div>
-          </div>
-        )}
 
         {me && (
           <div className="mt-6 flex items-center justify-between rounded-3xl bg-gradient-to-br from-[#F5C451]/20 to-[#E08A1E]/10 px-5 py-4">
@@ -9343,13 +9291,13 @@ if (screen === 'challengeLeaderboard') {
                     <p className={`text-[12px] ${t.muted}`}>
                       {row.days_completed}/{total} days
                     </p>
-                    {lbWindow.ended && row.rank === 1 ? (
+                    {lbWindow.ended ? (
                       <span className="mt-1.5 rounded-full bg-gradient-to-r from-[#F5C451] to-[#E08A1E] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                        Winner
+                        {['Winner', 'Runner-up', 'Third place'][row.rank - 1]}
                       </span>
                     ) : row.status === 'completed' && (
                       <span className="mt-1.5 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
-                        {lbWindow.hasWindow && !lbWindow.ended ? 'Over the line' : 'Completed'}
+                        Completed
                       </span>
                     )}
                   </div>
@@ -9378,7 +9326,7 @@ if (screen === 'challengeLeaderboard') {
                         </p>
                         {row.status === 'completed' && (
                           <span className="shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
-                            {lbWindow.hasWindow && !lbWindow.ended ? 'Over the line' : 'Completed'}
+                            Completed
                           </span>
                         )}
                       </div>
@@ -9404,9 +9352,6 @@ if (screen === 'challengeLeaderboard') {
           <div className={`mt-8 flex items-center justify-between gap-6 border-t pt-4 ${t.hair}`}>
             <div>
               <p className="text-[13px] font-medium">Show my name</p>
-              <p className={`mt-0.5 text-[11px] leading-relaxed ${t.faint}`}>
-                Off hides your name only — your place and days stay on the board.
-              </p>
             </div>
             <button
               type="button"
@@ -12845,7 +12790,6 @@ if (screen === 'progressPhotos') {
           challengeTarget(celebration.challenges),
           { overTheLine: challengeInProgress(celebration.challenges) }
         ).find((a) => a.kind === 'cup')
-        const stillRunning = challengeInProgress(celebration.challenges)
         const CONFETTI = ['#E8B931', '#2554EB', '#F2C59A', '#8FB8E8', '#E86A5C', '#4CAF7A']
 
         return (
@@ -12887,17 +12831,11 @@ if (screen === 'progressPhotos') {
             </div>
 
             <p className="relative mt-6 text-[13px] font-semibold uppercase tracking-[0.2em] text-amber-500">
-              {stillRunning ? 'Over the line' : 'Challenge complete'}
+              Challenge complete
             </p>
             <h2 className="relative mt-2 text-center font-display text-[40px] font-light leading-[1.05] tracking-tight">
               {celebration.challenges?.title}
             </h2>
-            <p className={`relative mt-3 max-w-xs text-center text-[15px] leading-relaxed ${t.muted}`}>
-              {stillRunning
-                ? `${challengeTarget(celebration.challenges)} days ticked — you're over the line. Keep going until ${formatChallengeDate(celebration.challenges.ends_on)}: every extra day lifts you up the leaderboard, and winners are declared when the challenge ends.`
-                : `You showed up for ${challengeTarget(celebration.challenges)} days. That's a real habit now — well done.`}
-            </p>
-
             <div className="relative mt-8 flex w-full max-w-sm flex-col gap-3">
               <button
                 type="button"
@@ -12905,14 +12843,17 @@ if (screen === 'progressPhotos') {
                 onClick={() => saveAward(cup, celebration)}
                 className={`w-full rounded-2xl py-4 text-base font-bold ${t.btn} disabled:opacity-60`}
               >
-                {awardSaving === 'complete' ? 'Preparing…' : 'Save my cup'}
+                {awardSaving === 'complete' ? 'Preparing…' : 'Save my trophy'}
               </button>
               <button
                 type="button"
-                onClick={dismissCelebration}
+                onClick={() => {
+                  dismissCelebration()
+                  setScreen('today')
+                }}
                 className={`w-full rounded-2xl border py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
               >
-                {stillRunning ? 'Keep going' : 'Done'}
+                Continue my SPF journey
               </button>
             </div>
           </div>
