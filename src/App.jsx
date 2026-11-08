@@ -530,7 +530,6 @@ setRoutineHistory(groupedRoutines)
   const [insightsQuery, setInsightsQuery] = useState('')
   // Admin → Referrals: flyer QR codes per store/clinic and what they produced.
   const [referralReport, setReferralReport] = useState(null)
-  const [referralView, setReferralView] = useState('partners')
   const [newReferral, setNewReferral] = useState({ code: '', partner: '', kind: 'store', label: '', city: '', phone: '' })
   const [newReferralOpen, setNewReferralOpen] = useState(false)
   const [pushStatus, setPushStatus] = useState(null)
@@ -6413,7 +6412,7 @@ if (screen === 'admin') {
             return <p className={`mt-5 text-[15px] ${t.muted}`}>Loading…</p>
           }
           const T = referralReport.totals
-          const rows = referralView === 'partners' ? referralReport.partners : referralReport.codes
+          const rows = referralReport.partners
           const pct = (n, d) => (d > 0 ? `${Math.round((n / d) * 100)}%` : '—')
           const STAGES = [
             ['scans', 'Scans'],
@@ -6524,37 +6523,19 @@ if (screen === 'admin') {
                 </button>
               )}
 
-              <div className={`mt-4 grid grid-cols-2 rounded-xl p-0.5 ${isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'}`}>
-                {[['partners', 'By partner'], ['codes', 'By code']].map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setReferralView(key)}
-                    className={`rounded-[10px] py-2 text-[12px] font-semibold ${referralView === key ? `${t.surface} shadow-sm` : t.faint}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
               <div className="mt-3 flex flex-col gap-2.5">
-                {rows.length === 0 && <p className={`text-[13px] ${t.muted}`}>No codes yet.</p>}
+                {rows.length === 0 && <p className={`text-[13px] ${t.muted}`}>No partners yet.</p>}
                 {rows.map((r, i) => (
-                  <div key={`${referralView}-${i}`} className={`rounded-2xl ${t.surface} p-4`}>
+                  <div key={`${r.partner}-${i}`} className={`rounded-2xl ${t.surface} p-4`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-[15px] font-semibold">
-                          {referralView === 'codes' ? r.code : r.partner}
+                          {r.partner}
                         </p>
                         <p className={`truncate text-[12px] capitalize ${t.faint}`}>
-                          {referralView === 'codes'
-                            ? [r.partner, r.label].filter(Boolean).join(' · ')
-                            : [r.kind, r.city, `${r.codes} ${r.codes === 1 ? 'code' : 'codes'}`].filter(Boolean).join(' · ')}
+                          {[r.kind, r.city, `${r.codes} ${r.codes === 1 ? 'code' : 'codes'}`].filter(Boolean).join(' · ')}
                         </p>
                       </div>
-                      {referralView === 'codes' && !r.is_active && (
-                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${t.hair} ${t.faint}`}>Retired</span>
-                      )}
                     </div>
                     <div className="mt-3 grid grid-cols-5 gap-1 text-center">
                       {STAGES.map(([key, label]) => (
@@ -6568,7 +6549,6 @@ if (screen === 'admin') {
                       {r.last_scan_at
                         ? `Last scan ${new Date(r.last_scan_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
                         : 'No scans yet'}
-                      {referralView === 'codes' && r.existing_users > 0 && ` · ${r.existing_users} existing users scanned`}
                     </p>
                   </div>
                 ))}
@@ -9324,9 +9304,9 @@ if (screen === 'challengeLeaderboard') {
                         }`}>
                           {nameFor(row)}
                         </p>
-                        {row.status === 'completed' && (
+                        {(lbWindow.ended || row.status === 'completed') && (
                           <span className="shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
-                            Completed
+                            {lbWindow.ended ? 'Finished' : 'Completed'}
                           </span>
                         )}
                       </div>
