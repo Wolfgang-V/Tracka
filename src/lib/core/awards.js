@@ -61,7 +61,7 @@ export function challengeStreak(sortedDates, today) {
 }
 
 // In a shared-window challenge, the target can be reached before the window closes.
-export function challengeAwards(dates, duration, { overTheLine = false } = {}) {
+export function challengeAwards(dates, duration, { overTheLine = false, challengeEnded = false } = {}) {
   const sorted = [...new Set(dates)].sort()
   const done = sorted.length
   const half = Math.ceil(duration / 2)
@@ -75,10 +75,12 @@ export function challengeAwards(dates, duration, { overTheLine = false } = {}) {
     { key: 'half', kind: 'medal', metal: 'gold', badge: String(half), label: 'Halfway', earned: done >= half,
       blurb: `${half} days in — halfway there.` },
     { key: 'complete', kind: 'cup', metal: 'gold', badge: '',
-      label: overTheLine ? 'Goal reached' : 'Challenge complete',
-      headline: overTheLine ? 'GOAL REACHED' : 'CHALLENGE COMPLETE',
-      earned: done >= duration,
-      blurb: overTheLine ? `${duration} days ticked.` : `${duration} days complete.` },
+      label: challengeEnded ? 'Challenge finished' : overTheLine ? 'Goal reached' : 'Challenge complete',
+      headline: challengeEnded ? 'CHALLENGE FINISHED' : overTheLine ? 'GOAL REACHED' : 'CHALLENGE COMPLETE',
+      earned: done >= duration || (challengeEnded && done > 0),
+      blurb: challengeEnded
+        ? `${done} of ${duration} days checked in.`
+        : overTheLine ? `${duration} days ticked.` : `${duration} days complete.` },
   ]
 }
 

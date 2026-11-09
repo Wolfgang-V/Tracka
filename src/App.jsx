@@ -568,7 +568,7 @@ setRoutineHistory(groupedRoutines)
           id,
           product_id,
           opened_date,
-          pao_months,
+          pao_months,    
           expiry_date,
           added_at,
           photo_path,
@@ -1979,7 +1979,10 @@ const renderAchievements = (participation) => {
   const awards = challengeAwards(
     (participation.challenge_days || []).map((d) => d.local_date),
     challengeTarget(participation.challenges),
-    { overTheLine: challengeInProgress(participation.challenges) }
+    {
+      overTheLine: challengeInProgress(participation.challenges),
+      challengeEnded: challengeWindow(participation.challenges).ended,
+    }
   )
 
   return (
@@ -2235,6 +2238,31 @@ useEffect(() => {
 
 }, [screen])
 
+useEffect(() => {
+  if (!user) return
+
+  let cancelled = false
+  const refreshChallenges = () => {
+    if (document.visibilityState === 'visible') loadChallenges()
+  }
+  const now = new Date()
+  const nextRollover = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 4)
+  if (now >= nextRollover) nextRollover.setDate(nextRollover.getDate() + 1)
+
+  const timer = window.setTimeout(() => {
+    if (!cancelled) loadChallenges()
+  }, nextRollover.getTime() - now.getTime() + 100)
+  document.addEventListener('visibilitychange', refreshChallenges)
+  window.addEventListener('focus', refreshChallenges)
+
+  return () => {
+    cancelled = true
+    window.clearTimeout(timer)
+    document.removeEventListener('visibilitychange', refreshChallenges)
+    window.removeEventListener('focus', refreshChallenges)
+  }
+}, [user, screen])
+
 // Android/desktop Chrome offer a real one-tap install; hold on to the event
 // so the setup guide can trigger it from a button.
 useEffect(() => {
@@ -2453,13 +2481,21 @@ const loadChallenges = async () => {
   setMyChallenges(mine.data || [])
   setChallengesLoading(false)
 
-  // Celebrate each completion once per device, wherever the person happens
-  // to be when it's first seen (ticking day 30 on Today, or opening the app
-  // after finishing elsewhere).
-  let celebrated = []
-  try { celebrated = JSON.parse(localStorage.getItem('celebratedChallenges') || '[]') } catch { /* fresh */ }
-  const uncelebrated = (mine.data || []).find((p) => p.status === 'completed' && !celebrated.includes(p.id))
-  if (uncelebrated) setCelebration(uncelebrated)
+  // Show the end-of-window celebration once, even if this person missed the target.
+  let endedCelebrated = []
+  try { endedCelebrated = JSON.parse(localStorage.getItem('celebratedChallengeEndings') || '[]') } catch { /* fresh */ }
+  const endedParticipation = (mine.data || []).find((p) =>
+    p.status !== 'left' && challengeWindow(p.challenges).ended && !endedCelebrated.includes(p.id)
+  )
+  if (endedParticipation) {
+    setCelebration({ ...endedParticipation, finalDayCelebration: true })
+  } else {
+    // Celebrate reaching the target once per device, wherever first seen.
+    let celebrated = []
+    try { celebrated = JSON.parse(localStorage.getItem('celebratedChallenges') || '[]') } catch { /* fresh */ }
+    const uncelebrated = (mine.data || []).find((p) => p.status === 'completed' && !celebrated.includes(p.id))
+    if (uncelebrated) setCelebration(uncelebrated)
+  }
 
   return mine.data || []
 }
@@ -2467,8 +2503,17 @@ const loadChallenges = async () => {
 const dismissCelebration = () => {
   if (celebration) {
     try {
-      const celebrated = JSON.parse(localStorage.getItem('celebratedChallenges') || '[]')
-      localStorage.setItem('celebratedChallenges', JSON.stringify([...celebrated, celebration.id]))
+      const key = celebration.finalDayCelebration ? 'celebratedChallengeEndings' : 'celebratedChallenges'
+      const celebrated = JSON.parse(localStorage.getItem(key) || '[]')
+      if (!celebrated.includes(celebration.id)) {
+        localStorage.setItem(key, JSON.stringify([...celebrated, celebration.id]))
+      }
+      if (celebration.finalDayCelebration) {
+        const targetCelebrated = JSON.parse(localStorage.getItem('celebratedChallenges') || '[]')
+        if (!targetCelebrated.includes(celebration.id)) {
+          localStorage.setItem('celebratedChallenges', JSON.stringify([...targetCelebrated, celebration.id]))
+        }
+      }
     } catch { /* worst case it celebrates again next time */ }
   }
   setCelebration(null)
@@ -2494,7 +2539,9 @@ const saveAward = async (award, participation) => {
     const fileName = `tracka-${award.kind === 'cup' ? 'cup' : `medal-${award.key}`}.png`
     const file = new File([blob], fileName, { type: 'image/png' })
     const caption = award.kind === 'cup'
-      ? `🏆 I completed ${challengeTitle} on Tracka+`
+      ? award.label === 'Challenge finished'
+        ? `🏆 I finished ${challengeTitle} with ${participation.days_completed} of ${participation.challenges?.duration_days || 30} days checked in on Tracka+`
+        : `🏆 I completed ${challengeTitle} on Tracka+`
       : `🏅 ${award.label} — ${challengeTitle} on Tracka+`
 
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -8528,9 +8575,15 @@ if (screen === 'challenges') {
                           className={`flex items-center gap-3 rounded-2xl ${t.surface} p-3.5 text-left`}
                         >
                           <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${
-                            finishedAll ? 'bg-amber-400/15' : isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'
+                            finishedAll || (challengeWindow(p.challenges).ended && p.days_completed > 0)
+                              ? 'bg-amber-400/15'
+                              : isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'
                           }`}>
-                            {renderAwardIcon({ key: 'complete', kind: 'cup', metal: 'gold' }, 30, !finishedAll)}
+                            {renderAwardIcon(
+                              { key: 'complete', kind: 'cup', metal: 'gold' },
+                              30,
+                              !(finishedAll || (challengeWindow(p.challenges).ended && p.days_completed > 0))
+                            )}
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-[15px] font-semibold">{p.challenges?.title}</span>
@@ -9061,23 +9114,23 @@ if (screen === 'challengeDetail') {
               Ended {formatChallengeDate(challenge.ends_on, true)}
             </p>
             <p className="mt-1.5 text-[18px] font-semibold">This challenge is over</p>
-            <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-              {endedRow
-                ? `You finished with ${endedRow.days_completed} of ${challenge.duration_days} days. Winners are picked from the final leaderboard.`
-                : 'Winners are picked from the final leaderboard.'}
-            </p>
+            {endedRow && (
+              <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
+                You checked in for {endedRow.days_completed} of {challenge.duration_days} days.
+              </p>
+            )}
           </div>
         )}
         {endedRow && renderAchievements(endedRow)}
 
-        {challenge.description && (
+        {!win.ended && challenge.description && (
           <section className="mt-7">
             <h2 className="text-[17px] font-semibold">What's the challenge?</h2>
             <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>{challenge.description}</p>
           </section>
         )}
 
-        <section className="mt-7">
+        {!win.ended && <section className="mt-7">
           <h2 className="text-[17px] font-semibold">How it works</h2>
           <ol className="mt-3 flex flex-col gap-4">
             {HOW_IT_WORKS.map(([title, body], i) => (
@@ -9092,7 +9145,7 @@ if (screen === 'challengeDetail') {
               </li>
             ))}
           </ol>
-        </section>
+        </section>}
 
         <div className={`mt-7 overflow-hidden rounded-2xl border ${t.hair}`}>
           <div className="flex items-center justify-between px-4 py-3.5">
@@ -12768,8 +12821,13 @@ if (screen === 'progressPhotos') {
         const cup = challengeAwards(
           (celebration.challenge_days || []).map((d) => d.local_date),
           challengeTarget(celebration.challenges),
-          { overTheLine: challengeInProgress(celebration.challenges) }
+          {
+            overTheLine: challengeInProgress(celebration.challenges),
+            challengeEnded: Boolean(celebration.finalDayCelebration),
+          }
         ).find((a) => a.kind === 'cup')
+        const checkedDays = celebration.days_completed || 0
+        const finalDayCelebration = Boolean(celebration.finalDayCelebration)
         const CONFETTI = ['#E8B931', '#2554EB', '#F2C59A', '#8FB8E8', '#E86A5C', '#4CAF7A']
 
         return (
@@ -12806,25 +12864,50 @@ if (screen === 'progressPhotos') {
                 }}
               />
               <div className="tracka-anim relative" style={{ animation: 'tracka-cup-pop 0.9s cubic-bezier(.2,.9,.3,1.2) both' }}>
-                {renderAwardIcon(cup, 220)}
+                {renderAwardIcon(cup, 220, !cup.earned)}
               </div>
             </div>
 
             <p className="relative mt-6 text-[13px] font-semibold uppercase tracking-[0.2em] text-amber-500">
-              Challenge complete
+              {finalDayCelebration ? 'Every day counts!' : 'Challenge complete'}
             </p>
             <h2 className="relative mt-2 text-center font-display text-[40px] font-light leading-[1.05] tracking-tight">
-              {celebration.challenges?.title}
+              {finalDayCelebration ? 'Your SPF journey!' : celebration.challenges?.title}
             </h2>
+            {finalDayCelebration && (
+              <>
+                <p className={`relative mt-3 max-w-xs text-center text-[15px] leading-relaxed ${t.muted}`}>
+                  You showed up for your skin, and that&apos;s worth celebrating!
+                </p>
+                <p className="relative mt-3 text-[14px] font-semibold">
+                  {checkedDays} of {celebration.challenges?.duration_days || 30} days checked in
+                </p>
+              </>
+            )}
             <div className="relative mt-8 flex w-full max-w-sm flex-col gap-3">
-              <button
-                type="button"
-                disabled={!!awardSaving}
-                onClick={() => saveAward(cup, celebration)}
-                className={`w-full rounded-2xl py-4 text-base font-bold ${t.btn} disabled:opacity-60`}
-              >
-                {awardSaving === 'complete' ? 'Preparing…' : 'Save my trophy'}
-              </button>
+              {cup?.earned && (
+                <button
+                  type="button"
+                  disabled={!!awardSaving}
+                  onClick={() => saveAward(cup, celebration)}
+                  className={`w-full rounded-2xl py-4 text-base font-bold ${t.btn} disabled:opacity-60`}
+                >
+                  {awardSaving === 'complete' ? 'Preparing…' : 'Save my trophy'}
+                </button>
+              )}
+              {finalDayCelebration && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedChallengeId(celebration.challenge_id)
+                    dismissCelebration()
+                    setScreen('challengeLeaderboard')
+                  }}
+                  className={`w-full rounded-2xl py-3.5 text-[15px] font-semibold ${t.btn}`}
+                >
+                  See the leaderboard
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
