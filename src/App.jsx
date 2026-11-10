@@ -2539,7 +2539,7 @@ const saveAward = async (award, participation) => {
     const fileName = `tracka-${award.kind === 'cup' ? 'cup' : `medal-${award.key}`}.png`
     const file = new File([blob], fileName, { type: 'image/png' })
     const caption = award.kind === 'cup'
-      ? award.label === 'Challenge finished'
+      ? award.label === 'Challenge completed'
         ? `🏆 I finished ${challengeTitle} with ${participation.days_completed} of ${participation.challenges?.duration_days || 30} days checked in on Tracka+`
         : `🏆 I completed ${challengeTitle} on Tracka+`
       : `🏅 ${award.label} — ${challengeTitle} on Tracka+`
@@ -9359,7 +9359,7 @@ if (screen === 'challengeLeaderboard') {
                         </p>
                         {(lbWindow.ended || row.status === 'completed') && (
                           <span className="shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600">
-                            {lbWindow.ended ? 'Finished' : 'Completed'}
+                            Completed
                           </span>
                         )}
                       </div>

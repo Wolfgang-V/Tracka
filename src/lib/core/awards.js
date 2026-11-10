@@ -75,8 +75,8 @@ export function challengeAwards(dates, duration, { overTheLine = false, challeng
     { key: 'half', kind: 'medal', metal: 'gold', badge: String(half), label: 'Halfway', earned: done >= half,
       blurb: `${half} days in — halfway there.` },
     { key: 'complete', kind: 'cup', metal: 'gold', badge: '',
-      label: challengeEnded ? 'Challenge finished' : overTheLine ? 'Goal reached' : 'Challenge complete',
-      headline: challengeEnded ? 'CHALLENGE FINISHED' : overTheLine ? 'GOAL REACHED' : 'CHALLENGE COMPLETE',
+      label: challengeEnded ? 'Challenge completed' : overTheLine ? 'Goal reached' : 'Challenge complete',
+      headline: challengeEnded ? 'CHALLENGE COMPLETED' : overTheLine ? 'GOAL REACHED' : 'CHALLENGE COMPLETE',
       earned: done >= duration || (challengeEnded && done > 0),
       blurb: challengeEnded
         ? `${done} of ${duration} days checked in.`
