@@ -12858,7 +12858,7 @@ if (screen === 'progressPhotos') {
           )
         } else if (env.isIOS) {
           installBody = instruction([
-            <><b>iPhone (Safari):</b> Tap the Share icon {ShareIcon} → <b>Add to Home Screen</b> → <b>Add</b>.</>,
+            <><b>iPhone (Safari):</b> Tap the Share icon {ShareIcon} (or <b>•••</b> → <b>Share</b>) → <b>Add to Home Screen</b> → <b>Add</b>.</>,
           ])
         } else if (env.isAndroid) {
           installBody = (
