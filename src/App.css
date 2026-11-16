@@ -182,3 +182,38 @@
     border-right-color: var(--border);
   }
 }
+
+.brand-loader-logos {
+  position: relative;
+  width: 200px;
+  height: 120px;
+}
+
+.brand-loader-logo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  animation: brand-loader-crossfade 2.4s ease-in-out infinite;
+}
+
+.brand-loader-logo--second {
+  animation-delay: -1.2s;
+}
+
+@keyframes brand-loader-crossfade {
+  0%, 42% { opacity: 1; transform: scale(1); }
+  50%, 92% { opacity: 0; transform: scale(0.94); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-loader-logo {
+    animation: none;
+  }
+
+  .brand-loader-logo--second {
+    display: none;
+  }
+}

@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 const SITE = 'https://trackaplus.app'
 const linkFor = (code) => `${SITE}/?ref=${encodeURIComponent(code)}`
-const KINDS = ['store', 'clinic', 'spa', 'brand', 'online', 'event']
+const KINDS = ['store', 'clinic', 'spa', 'aesthetician', 'brand', 'online', 'event']
 
 // Suggest a printable code from partner + branch: "Beauty Hut", "Lekki"
 // → "BEAUTYHUT-LEKKI". Matches the DB rule ^[A-Z0-9][A-Z0-9-]{1,23}$.

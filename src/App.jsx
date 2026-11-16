@@ -286,6 +286,9 @@ function App() {
   const [loginError, setLoginError] = useState(null)
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [profilePhotoPath, setProfilePhotoPath] = useState(null)
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState(null)
+  const [profilePhotoUploading, setProfilePhotoUploading] = useState(false)
   // Gates the bottom tab bar / quick-nav grid on the onboarding screens —
   // a brand-new user only sees the 3-step flow until they finish it, no
   // way to wander off to progress/insights/photos before there's anything
@@ -721,7 +724,7 @@ setRoutineHistory(groupedRoutines)
         }
 
         const [{ data: profile, error }, { data: existingSkinProfile }, { data: practitionerRow }] = await Promise.all([
-          supabase.from('profiles').select('username, onboarding_completed').eq('id', user.id).maybeSingle(),
+          supabase.from('profiles').select('username, onboarding_completed, avatar_path').eq('id', user.id).maybeSingle(),
           // New users land on the skin profile step until they've filled
           // it in at least once; after that, straight to Today.
           isRecovery
@@ -752,6 +755,7 @@ setRoutineHistory(groupedRoutines)
         } else {
           setDisplayName(user.email?.split('@')[0] || 'there')
         }
+        loadProfileAvatar(profile?.avatar_path)
 
         setOnboardingCompleted(profile?.onboarding_completed !== false)
 
@@ -1133,6 +1137,24 @@ const loadProgressPhotos = async () => {
     })
   )
   setPhotoUrls(Object.fromEntries(signedEntries))
+}
+
+const loadProfileAvatar = async (path) => {
+  setProfilePhotoPath(path || null)
+  if (!path) {
+    setProfilePhotoUrl(null)
+    return
+  }
+
+  const { data, error } = await supabase.storage
+    .from('profile-photos')
+    .createSignedUrl(path, 3600)
+  if (error) {
+    console.error('PROFILE PHOTO URL ERROR:', error)
+    setProfilePhotoUrl(null)
+    return
+  }
+  setProfilePhotoUrl(data?.signedUrl || null)
 }
 
 const uploadProgressPhoto = async (file, localDate, note = '') => {
@@ -1697,62 +1719,80 @@ const dayPalette = {
 
 const t = isNight ? nightPalette : dayPalette
 
-const TAB_ITEMS = [
-  {
-    key: 'today',
-    label: 'Today',
-    screens: ['today'],
-    icon: (active) => (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
-        strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="4.2" />
-        <path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7" />
-      </svg>
-    ),
-  },
-  {
-    key: 'skinProfile',
-    label: 'Skin profile',
-    screens: ['skinProfile', 'progress', 'skinTrends', 'progressPhotos'],
-    icon: (active) => (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
-        strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="8.2" r="3.6" />
-        <path d="M4.5 20c0-4.1 3.4-7 7.5-7s7.5 2.9 7.5 7" />
-      </svg>
-    ),
-  },
-  {
-    key: 'products',
-    label: 'My products',
-    screens: ['products', 'addProduct', 'routinePlanner', 'ingredientChecker'],
-    icon: (active) => (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
-        strokeLinecap="round" strokeLinejoin="round">
-        <path d="M6.5 8.5h11l-.9 11.5a1.5 1.5 0 0 1-1.5 1.4H8.9a1.5 1.5 0 0 1-1.5-1.4L6.5 8.5Z" />
-        <path d="M9 8.5V6a3 3 0 0 1 6 0v2.5" />
-      </svg>
-    ),
-  },
-  {
-    key: 'settings',
-    label: 'Settings',
-    screens: ['settings', 'settingsUsername', 'settingsPassword', 'reminders'],
-    icon: (active) => (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
-        strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="2.8" />
-        <path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M17.7 6.3l-1.5 1.5M7.8 16.2l-1.5 1.5M17.7 17.7l-1.5-1.5M7.8 7.8 6.3 6.3" />
-      </svg>
-    ),
-  },
-]
+const renderProfileAvatar = (sizeClass) => {
+  const initials = (displayName || 'T')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('')
 
-const renderBottomTabs = (activeScreen, palette) => (
+  return (
+    <span className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full ${sizeClass} ${t.chip}`}>
+      {profilePhotoUrl ? (
+        <img src={profilePhotoUrl} alt={`${displayName || 'Your'} profile`} className="h-full w-full object-cover" />
+      ) : (
+        <span className={`font-semibold ${t.mark}`}>{initials}</span>
+      )}
+    </span>
+  )
+}
+
+const TAB_ITEMS = [
+      {
+        key: 'today',
+        label: 'Today',
+        screens: ['today'],
+        icon: (active) => (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
+            strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="4.2" />
+            <path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7" />
+          </svg>
+        ),
+      },
+      {
+        key: 'products',
+        label: 'My products',
+        screens: ['products', 'addProduct', 'productDetail', 'ingredientChecker'],
+        icon: (active) => (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6.5 8.5h11l-.9 11.5a1.5 1.5 0 0 1-1.5 1.4H8.9a1.5 1.5 0 0 1-1.5-1.4L6.5 8.5Z" />
+            <path d="M9 8.5V6a3 3 0 0 1 6 0v2.5" />
+          </svg>
+        ),
+      },
+      {
+        key: 'routinePlanner',
+        label: 'My routine',
+        screens: ['routinePlanner', 'routineHistory', 'routineDetails'],
+        icon: (active) => (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 6h11M9 12h11M9 18h11" />
+            <path d="m3.5 6 1.2 1.2L7 4.8M3.5 12l1.2 1.2L7 10.8M3.5 18l1.2 1.2L7 16.8" />
+          </svg>
+        ),
+      },
+      {
+        key: 'reminders',
+        label: 'Reminders',
+        screens: ['reminders'],
+        icon: (active) => (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+          </svg>
+        ),
+      },
+  ]
+
+  const renderBottomTabs = (activeScreen, palette) => (
   <div
     className={`fixed inset-x-0 bottom-0 z-20 mx-auto flex w-full max-w-md items-stretch justify-between border-t px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 ${palette.surface} ${palette.hair}`}
   >
@@ -1762,7 +1802,7 @@ const renderBottomTabs = (activeScreen, palette) => (
         <button
           key={tab.key}
           onClick={async () => {
-            if (tab.key === 'skinProfile') await loadSkinProfile()
+            if (tab.key === 'reminders') await loadReminderSettings()
             setScreen(tab.key)
           }}
           className="flex flex-1 flex-col items-center gap-1 py-1.5"
@@ -3341,6 +3381,72 @@ const shrinkImage = (file) =>
     img.src = url
   })
 
+const saveProfilePhoto = async (file) => {
+  if (!file || !user || profilePhotoUploading) return
+  if (!file.type.startsWith('image/')) {
+    notify('Choose an image file.')
+    return
+  }
+
+  setProfilePhotoUploading(true)
+  try {
+    const image = await shrinkImage(file)
+    const contentType = image.type || file.type
+    const extension = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg'
+    const path = `${user.id}/avatar-${Date.now()}.${extension}`
+    const { error: uploadError } = await supabase.storage
+      .from('profile-photos')
+      .upload(path, image, { contentType })
+
+    if (uploadError) {
+      console.error('PROFILE PHOTO UPLOAD ERROR:', uploadError)
+      notify("Couldn't upload your photo. Try again.")
+      return
+    }
+
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ avatar_path: path })
+      .eq('id', user.id)
+
+    if (profileError) {
+      await supabase.storage.from('profile-photos').remove([path])
+      console.error('PROFILE PHOTO SAVE ERROR:', profileError)
+      notify("Couldn't save your photo. Try again.")
+      return
+    }
+
+    const previousPath = profilePhotoPath
+    await loadProfileAvatar(path)
+    if (previousPath) await supabase.storage.from('profile-photos').remove([previousPath])
+    notify('Profile photo updated.', 'success')
+  } finally {
+    setProfilePhotoUploading(false)
+  }
+}
+
+const removeProfilePhoto = async () => {
+  if (!user || !profilePhotoPath || profilePhotoUploading) return
+  setProfilePhotoUploading(true)
+  const { error } = await supabase
+    .from('profiles')
+    .update({ avatar_path: null })
+    .eq('id', user.id)
+  setProfilePhotoUploading(false)
+
+  if (error) {
+    console.error('PROFILE PHOTO REMOVE ERROR:', error)
+    notify("Couldn't remove your photo. Try again.")
+    return
+  }
+
+  const oldPath = profilePhotoPath
+  setProfilePhotoPath(null)
+  setProfilePhotoUrl(null)
+  await supabase.storage.from('profile-photos').remove([oldPath])
+  notify('Profile photo removed.', 'success')
+}
+
 const patchUserProduct = (id, patch) => {
   setProducts((current) => current.map((p) => (p.id === id ? { ...p, ...patch } : p)))
   setEmpties((current) => current.map((p) => (p.id === id ? { ...p, ...patch } : p)))
@@ -3529,11 +3635,11 @@ const screenContent = (() => {
 if (!authReady) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-white">
-      <img
-        src="/logo-wordmark.jpg"
-        alt="Tracka+"
-        className="w-full max-w-[200px] animate-pulse"
-      />
+      {/* Wordmark and the drop logo take turns while the session loads. */}
+      <div className="brand-loader-logos" role="img" aria-label="Tracka+ is loading">
+        <img src="/logo-wordmark.jpg" alt="" className="brand-loader-logo" />
+        <img src="/logo%201.jpg" alt="" className="brand-loader-logo brand-loader-logo--second" />
+      </div>
     </main>
   )
 }
@@ -4396,6 +4502,29 @@ const submitRecommendation = async () => {
                 : 'This helps Tracka+ organize your skincare journey around you.'}
             </p>
 
+            {!onboardingCompleted && (
+              <div className={`mt-5 flex items-center gap-4 rounded-2xl ${t.surface} p-4`}>
+                {renderProfileAvatar('h-16 w-16 text-xl')}
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold">Profile picture</p>
+                  <label className={`mt-1 inline-block cursor-pointer text-[13px] font-semibold ${t.mark}`}>
+                    {profilePhotoUploading ? 'Uploading…' : profilePhotoUrl ? 'Change photo' : 'Add a photo'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={profilePhotoUploading}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        event.target.value = ''
+                        if (file) saveProfilePhoto(file)
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+
             {!onboardingCompleted && practitionersLaunched && (
               <button
                 onClick={async () => {
@@ -4681,7 +4810,6 @@ const submitRecommendation = async () => {
           )}
         </div>
 
-        {onboardingCompleted && renderBottomTabs('skinProfile', t)}
       </main>
     )
   }
@@ -5182,9 +5310,6 @@ const submitRecommendation = async () => {
                 className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
               />
 
-              <p className={`mt-1.5 text-[12px] ${t.faint}`}>
-                Optional — the printed expiry date on the box, if it has one.
-              </p>
             </div>
 
             <div>
@@ -6532,7 +6657,7 @@ if (screen === 'admin') {
                       onChange={(e) => setNewReferral((r) => ({ ...r, kind: e.target.value }))}
                       className={`w-full rounded-xl border ${t.hair} ${t.surface} px-3 py-2.5 text-[13px] outline-none`}
                     >
-                      {['store', 'clinic', 'spa', 'brand', 'online', 'event'].map((k) => (
+                      {['store', 'clinic', 'spa', 'aesthetician', 'brand', 'online', 'event'].map((k) => (
                         <option key={k} value={k}>{k[0].toUpperCase() + k.slice(1)}</option>
                       ))}
                     </select>
@@ -7019,7 +7144,7 @@ if (screen === 'login') {
                 const { data: profile, error: profileError } =
                   await supabase
                     .from('profiles')
-                    .select('username, onboarding_completed')
+                    .select('username, onboarding_completed, avatar_path')
                     .eq('id', data.user.id)
                     .single()
 
@@ -7031,6 +7156,7 @@ if (screen === 'login') {
                   // username used to render as a blank greeting here.
                   setDisplayName(profile.username || data.user.email?.split('@')[0] || 'there')
                   setOnboardingCompleted(profile.onboarding_completed !== false)
+                  loadProfileAvatar(profile.avatar_path)
                 }
 
                 // Existing clients and verified professionals land on Today;
@@ -7302,6 +7428,37 @@ if (screen === 'settings') {
           </p>
         </div>
 
+        <div className={`mt-6 flex items-center gap-4 rounded-3xl ${t.surface} p-4`}>
+          {renderProfileAvatar('h-16 w-16 text-xl')}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15px] font-semibold">{displayName || 'Your profile'}</p>
+            <label className={`mt-1 inline-block cursor-pointer text-[13px] font-semibold ${t.mark}`}>
+              {profilePhotoUploading ? 'Uploading…' : profilePhotoUrl ? 'Change photo' : 'Add a photo'}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={profilePhotoUploading}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  event.target.value = ''
+                  if (file) saveProfilePhoto(file)
+                }}
+              />
+            </label>
+          </div>
+          {profilePhotoPath && (
+            <button
+              type="button"
+              disabled={profilePhotoUploading}
+              onClick={removeProfilePhoto}
+              className={`shrink-0 text-[12px] font-semibold ${t.faint} disabled:opacity-50`}
+            >
+              Remove
+            </button>
+          )}
+        </div>
+
         <p className={`mb-2 mt-8 px-1 text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
           Account
         </p>
@@ -7486,6 +7643,8 @@ if (screen === 'settings') {
             await supabase.auth.signOut()
             setUser(null)
             setDisplayName('')
+            setProfilePhotoPath(null)
+            setProfilePhotoUrl(null)
             setProducts([])
             setTodayAmRoutine(null)
             setTodayPmRoutine(null)
@@ -7506,7 +7665,6 @@ if (screen === 'settings') {
 
       </div>
 
-      {practitionerStatus !== 'verified' && renderBottomTabs('settings', t)}
     </main>
   )
 }
@@ -7808,7 +7966,7 @@ if (screen === 'settingsPassword') {
 if (screen === 'reminders') {
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
 
         <button
           onClick={() => setScreen('settings')}
@@ -8081,7 +8239,7 @@ if (screen === 'reminders') {
               onClick={openSetupGuide}
               className={`mt-3 text-[13px] font-semibold ${t.mark}`}
             >
-              How to add Tracka+ to your home screen →
+              How to Add Tracka+ to Your Home Screen →
             </button>
           )}
         </div>
@@ -8094,6 +8252,7 @@ if (screen === 'reminders') {
         </button>
 
       </div>
+      {renderBottomTabs('reminders', t)}
     </main>
   )
 }
@@ -10616,14 +10775,11 @@ if (screen === 'today') {
         <div className="relative">
           <button
             type="button"
-            aria-label="Open menu"
+            aria-label="Open profile menu"
             onClick={() => setMenuOpen(!menuOpen)}
-            className={`absolute right-0 top-1 flex h-14 w-14 items-center justify-center rounded-full ${t.chip}`}
+            className="absolute right-0 top-1 rounded-full"
           >
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-              <path d="M4 7h16M4 12h16M4 17h16" />
-            </svg>
+            {renderProfileAvatar('h-14 w-14 text-lg')}
           </button>
 
           {menuOpen && (
@@ -10636,16 +10792,17 @@ if (screen === 'today') {
 
               <div className={`absolute right-0 top-16 z-10 w-52 overflow-hidden rounded-2xl ${t.surface} shadow-xl`}>
                 {[
-                  ['My routine', 'routinePlanner'],
-                  ['My progress', 'progress'],
-                  ['Skin reports', 'skinTrends'],
-                  ['Skin diary', 'progressPhotos'],
+                  ['Skin profile', 'skinProfile'],
+                  ['Skin progress', 'progress'],
                   ['Challenges', 'challenges'],
+                  ['Skin diary', 'progressPhotos'],
+                  ['My profile & settings', 'settings'],
                 ].map(([label, target]) => (
                   <button
                     key={target}
-                    onClick={() => {
+                    onClick={async () => {
                       setMenuOpen(false)
+                      if (target === 'skinProfile') await loadSkinProfile()
                       setScreen(target)
                     }}
                     className={`block w-full px-5 py-3.5 text-left text-[15px] ${t.muted}`}
@@ -10687,6 +10844,11 @@ if (screen === 'today') {
             })}
           </p>
           </div>
+        </div>
+
+        <div className={`mt-4 rounded-3xl border ${t.hair} p-5`}>
+          <p className={`text-[11px] font-semibold uppercase ${t.mark}`}>{dailySkinTip[0]}</p>
+          <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>{dailySkinTip[1]}</p>
         </div>
 
         {(() => {
@@ -10741,66 +10903,6 @@ if (screen === 'today') {
               </span>
               <span className="shrink-0 text-[12px] font-semibold text-amber-600">Show me how</span>
             </button>
-          )
-        })()}
-
-        {(() => {
-          const activeChallenges = myChallenges.filter(isLiveParticipation)
-
-          return (
-            <div className={`mt-8 rounded-3xl border ${t.hair} p-4`}>
-              <button
-                type="button"
-                onClick={() => setScreen('challenges')}
-                className="flex w-full items-center justify-between gap-3 text-left"
-              >
-                <span className="flex items-center gap-2.5">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
-                    strokeLinejoin="round" className={t.mark}>
-                    <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z" />
-                    <path d="M17 5h2.5a1.5 1.5 0 0 1 0 3H17M7 5H4.5a1.5 1.5 0 0 0 0 3H7" />
-                  </svg>
-                  <span className="text-[16px] font-semibold">Active Challenges</span>
-                </span>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="1.8"
-                  strokeLinecap="round" strokeLinejoin="round" className={t.muted}>
-                  <path d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-
-              {challengesLoading && myChallenges.length === 0 ? null : activeChallenges.length === 0 ? (
-                <div className="mt-3">
-                  <p className={`text-[14px] leading-relaxed ${t.muted}`}>
-                    You're not participating in any challenges yet. Explore challenges and find one that fits your routine.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setScreen('challenges')}
-                    className={`mt-3 text-[14px] font-semibold ${t.mark}`}
-                  >
-                    Explore challenges →
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-3.5 flex flex-col gap-3">
-                  {missingAmSunscreen &&
-                    activeChallenges.some((p) => p.challenges?.rule === 'am_sunscreen') &&
-                    renderSunscreenMissingNotice()}
-                  {activeChallenges.slice(0, 2).map((p) => renderChallengeProgressCard(p, 'today'))}
-                  {activeChallenges.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => setScreen('challenges')}
-                      className={`text-left text-[13px] font-semibold ${t.mark}`}
-                    >
-                      View all ({activeChallenges.length})
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
           )
         })()}
 
@@ -10988,11 +11090,6 @@ if (screen === 'today') {
           </button>
         </div>
 
-        <div className={`mt-4 rounded-3xl border ${t.hair} p-5`}>
-          <p className={`text-[11px] font-semibold uppercase ${t.mark}`}>{dailySkinTip[0]}</p>
-          <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>{dailySkinTip[1]}</p>
-        </div>
-
         {monthlyReport && (
           <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
             <div className="flex items-center justify-between">
@@ -11038,6 +11135,66 @@ if (screen === 'today') {
           </div>
         )}
 
+        {(() => {
+          const activeChallenges = myChallenges.filter(isLiveParticipation)
+
+          return (
+            <div className={`mt-8 mb-4 rounded-3xl border ${t.hair} p-4`}>
+              <button
+                type="button"
+                onClick={() => setScreen('challenges')}
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <span className="flex items-center gap-2.5">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
+                    strokeLinejoin="round" className={t.mark}>
+                    <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z" />
+                    <path d="M17 5h2.5a1.5 1.5 0 0 1 0 3H17M7 5H4.5a1.5 1.5 0 0 0 0 3H7" />
+                  </svg>
+                  <span className="text-[16px] font-semibold">Active Challenges</span>
+                </span>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="1.8"
+                  strokeLinecap="round" strokeLinejoin="round" className={t.muted}>
+                  <path d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+
+              {challengesLoading && myChallenges.length === 0 ? null : activeChallenges.length === 0 ? (
+                <div className="mt-3">
+                  <p className={`text-[14px] leading-relaxed ${t.muted}`}>
+                    You're not participating in any challenges yet. Explore challenges and find one that fits your routine.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setScreen('challenges')}
+                    className={`mt-3 text-[14px] font-semibold ${t.mark}`}
+                  >
+                    Explore challenges →
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-3.5 flex flex-col gap-3">
+                  {missingAmSunscreen &&
+                    activeChallenges.some((p) => p.challenges?.rule === 'am_sunscreen') &&
+                    renderSunscreenMissingNotice()}
+                  {activeChallenges.slice(0, 2).map((p) => renderChallengeProgressCard(p, 'today'))}
+                  {activeChallenges.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setScreen('challenges')}
+                      className={`text-left text-[13px] font-semibold ${t.mark}`}
+                    >
+                      View all ({activeChallenges.length})
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
       </div>
       </div>
 
@@ -11050,7 +11207,7 @@ if (screen === 'today') {
 if (screen === 'routinePlanner') {
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
 
         <div className="flex items-center justify-between">
           <button
@@ -11367,6 +11524,7 @@ if (missingDays) {
         </button>
 
       </div>
+      {onboardingCompleted && renderBottomTabs('routinePlanner', t)}
     </main>
   )
 }
@@ -12700,10 +12858,25 @@ if (screen === 'progressPhotos') {
           )
         } else if (env.isIOS) {
           installBody = instruction([
-            <>Tap the Share button {ShareIcon} at the bottom of Safari.</>,
-            <>Scroll down and tap <b>Add to Home Screen</b>.</>,
-            <>Tap <b>Add</b>, then open Tracka+ from your home screen.</>,
+            <><b>iPhone (Safari):</b> Tap the Share icon {ShareIcon} → <b>Add to Home Screen</b> → <b>Add</b>.</>,
           ])
+        } else if (env.isAndroid) {
+          installBody = (
+            <>
+              {installPromptEvent && (
+                <button
+                  type="button"
+                  onClick={installFromPrompt}
+                  className={`mt-3 rounded-xl px-4 py-2.5 text-[13px] font-semibold ${t.btn}`}
+                >
+                  Install Tracka+
+                </button>
+              )}
+              {instruction([
+                <><b>Android (Chrome):</b> Tap the three dots (⋮) → <b>Add to Home Screen</b> → <b>Install</b>.</>,
+              ])}
+            </>
+          )
         } else if (installPromptEvent) {
           installBody = (
             <button
@@ -12714,12 +12887,6 @@ if (screen === 'progressPhotos') {
               Install Tracka+
             </button>
           )
-        } else if (env.isAndroid) {
-          installBody = instruction([
-            <>Tap the <b>⋮</b> menu at the top right of Chrome.</>,
-            <>Tap <b>Add to Home screen</b> (or <b>Install app</b>).</>,
-            <>Tap <b>Install</b>, then open Tracka+ from your home screen.</>,
-          ])
         } else {
           installBody = (
             <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
@@ -12751,7 +12918,7 @@ if (screen === 'progressPhotos') {
               <div className="mt-6 flex gap-3.5">
                 {stepMarker(1, installed)}
                 <div className="min-w-0 flex-1">
-                  <p className="text-[15px] font-semibold">Add Tracka+ to your home screen</p>
+                  <p className="text-[15px] font-semibold">How to Add Tracka+ to Your Home Screen</p>
                   {installBody}
                 </div>
               </div>
