@@ -3635,10 +3635,11 @@ const screenContent = (() => {
 if (!authReady) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-white">
-      {/* Wordmark and the drop logo take turns while the session loads. */}
+      {/* Wordmark, white drop mark and blue drop mark take turns while the session loads. */}
       <div className="brand-loader-logos" role="img" aria-label="Tracka+ is loading">
         <img src="/logo-wordmark.jpg" alt="" className="brand-loader-logo" />
-        <img src="/logo%201.jpg" alt="" className="brand-loader-logo brand-loader-logo--second" />
+        <img src="/logo%201.jpg" alt="" className="brand-loader-logo brand-loader-logo--mark brand-loader-logo--second" />
+        <img src="/logo%202.jpg" alt="" className="brand-loader-logo brand-loader-logo--mark brand-loader-logo--tile brand-loader-logo--third" />
       </div>
     </main>
   )

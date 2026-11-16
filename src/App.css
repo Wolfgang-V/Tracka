@@ -189,23 +189,42 @@
   height: 120px;
 }
 
+/* Three logos, each on screen for a third of the cycle:
+   wordmark → white drop mark → blue drop mark. */
 .brand-loader-logo {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
-  animation: brand-loader-crossfade 2.4s ease-in-out infinite;
+  opacity: 0;
+  animation: brand-loader-cycle 3.6s ease-in-out infinite;
+}
+
+/* The drop marks are square — keep them 120px so the blue tile's
+   rounded corners sit on the image, not on the wide box. */
+.brand-loader-logo--mark {
+  left: 40px;
+  right: 40px;
+  width: 120px;
+}
+
+.brand-loader-logo--tile {
+  border-radius: 26px;
 }
 
 .brand-loader-logo--second {
+  animation-delay: -2.4s;
+}
+
+.brand-loader-logo--third {
   animation-delay: -1.2s;
 }
 
-@keyframes brand-loader-crossfade {
-  0%, 42% { opacity: 1; transform: scale(1); }
-  50%, 92% { opacity: 0; transform: scale(0.94); }
-  100% { opacity: 1; transform: scale(1); }
+@keyframes brand-loader-cycle {
+  0% { opacity: 0; transform: scale(0.94); }
+  6%, 28% { opacity: 1; transform: scale(1); }
+  34%, 100% { opacity: 0; transform: scale(0.94); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -213,7 +232,7 @@
     animation: none;
   }
 
-  .brand-loader-logo--second {
-    display: none;
+  .brand-loader-logo:first-child {
+    opacity: 1;
   }
 }
