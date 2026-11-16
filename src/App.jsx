@@ -168,6 +168,11 @@ function App() {
   const [screen, setScreen] = useState('welcome')
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
+  // Opening splash: 0 = white drop on blue, 1 = blue drop on white,
+  // 2 = wordmark, 3 = sequence finished. It stays on the wordmark until
+  // the session is ready, then fades out ('leaving') and unmounts ('gone').
+  const [splashStep, setSplashStep] = useState(0)
+  const [splashExit, setSplashExit] = useState(null)
   // True from the moment a password-reset link opens the app until the new
   // password is saved. Startup routing must not send the person anywhere
   // else meanwhile (it used to race and land them on onboarding/Today).
@@ -198,6 +203,26 @@ function App() {
   // moved, don't push again) from "the app navigated forward" (push a new
   // entry so back has somewhere to go).
   const isPoppingRef = useRef(false)
+
+  // Step the opening splash along, ~0.9s per frame. Reduced-motion users
+  // skip straight to the wordmark.
+  useEffect(() => {
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const times = reduce ? [[3, 600]] : [[1, 900], [2, 1800], [3, 2700]]
+    if (reduce) setSplashStep(2)
+    const timers = times.map(([step, ms]) => window.setTimeout(() => setSplashStep(step), ms))
+    return () => timers.forEach((id) => window.clearTimeout(id))
+  }, [])
+
+  useEffect(() => {
+    if (!splashExit && splashStep >= 3 && authReady) setSplashExit('leaving')
+  }, [splashStep, authReady, splashExit])
+
+  useEffect(() => {
+    if (splashExit !== 'leaving') return
+    const id = window.setTimeout(() => setSplashExit('gone'), 450)
+    return () => window.clearTimeout(id)
+  }, [splashExit])
 
   useEffect(() => {
     // The browser's own scroll restoration tries to remember and replay a
@@ -3633,16 +3658,8 @@ const loadReminderSettings = async () => {
 const screenContent = (() => {
 
 if (!authReady) {
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-white">
-      {/* Wordmark, white drop mark and blue drop mark take turns while the session loads. */}
-      <div className="brand-loader-logos" role="img" aria-label="Tracka+ is loading">
-        <img src="/logo-wordmark.jpg" alt="" className="brand-loader-logo" />
-        <img src="/logo%201.jpg" alt="" className="brand-loader-logo brand-loader-logo--mark brand-loader-logo--second" />
-        <img src="/logo%202.jpg" alt="" className="brand-loader-logo brand-loader-logo--mark brand-loader-logo--tile brand-loader-logo--third" />
-      </div>
-    </main>
-  )
+  // The opening splash (rendered over everything below) covers this.
+  return <main className="min-h-screen bg-white" />
 }
 
 if (screen === 'auth') {
@@ -10847,9 +10864,34 @@ if (screen === 'today') {
           </div>
         </div>
 
-        <div className={`mt-4 rounded-3xl border ${t.hair} p-5`}>
-          <p className={`text-[11px] font-semibold uppercase ${t.mark}`}>{dailySkinTip[0]}</p>
-          <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>{dailySkinTip[1]}</p>
+        {/* Skin tip: white melting into soft brand blue, with a faint drop
+            watermark in the corner. */}
+        <div
+          className={`relative mt-4 overflow-hidden rounded-3xl border p-5 ${
+            isNight ? 'border-white/10' : 'border-[#1463F4]/10 shadow-[0_10px_30px_-18px_rgba(20,99,244,0.45)]'
+          }`}
+          style={{
+            background: isNight
+              ? 'linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(20,99,244,0.22) 100%)'
+              : 'linear-gradient(135deg, #FFFFFF 0%, #F3F7FF 45%, #DCE8FF 100%)',
+          }}
+        >
+          <svg aria-hidden="true" width="120" height="150" viewBox="0 0 24 30"
+            className={`pointer-events-none absolute -bottom-8 -right-5 ${isNight ? 'text-white/[0.06]' : 'text-[#1463F4]/[0.08]'}`}>
+            <path fill="currentColor" d="M12 1.5c.5 0 .9.3 1.2.8l7.6 14.6A9 9 0 1 1 3.2 16.9L10.8 2.3c.3-.5.7-.8 1.2-.8Z" />
+          </svg>
+          <div className="relative flex items-center gap-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#1463F4] text-white shadow-sm">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12.5l4.5 4.5L19 7.5" />
+              </svg>
+            </span>
+            <p className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${isNight ? 'text-[#9BBEFF]' : 'text-[#1463F4]'}`}>
+              {dailySkinTip[0]}
+            </p>
+          </div>
+          <p className="relative mt-3 pr-10 font-display text-[21px] leading-snug">{dailySkinTip[1]}</p>
         </div>
 
         {(() => {
@@ -12701,9 +12743,23 @@ if (screen === 'progressPhotos') {
   )
 })()
 
+  const splashFrame = Math.min(splashStep, 2)
+
   return (
     <>
       {screenContent}
+
+      {splashExit !== 'gone' && (
+        <div
+          role="img"
+          aria-label="Tracka+ is loading"
+          className={`splash ${splashFrame === 0 ? 'splash--blue' : ''} ${splashExit === 'leaving' ? 'splash--leaving' : ''}`}
+        >
+          <img src="/logo%202.jpg" alt="" className={`splash-art splash-art--mark ${splashFrame === 0 ? 'is-on' : ''}`} />
+          <img src="/logo%201.jpg" alt="" className={`splash-art splash-art--mark ${splashFrame === 1 ? 'is-on' : ''}`} />
+          <img src="/logo-wordmark.jpg" alt="" className={`splash-art splash-art--wordmark ${splashFrame === 2 ? 'is-on' : ''}`} />
+        </div>
+      )}
 
       {invitePreview && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/45 px-6">
