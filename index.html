@@ -1,27 +1,42 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="splashing">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#FFFFFF" />
+    <!-- Blue while the launch splash shows (so the phone's status-bar area
+         matches it); App.jsx switches it back to white when the splash ends. -->
+    <meta name="theme-color" content="#1463F4" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Tracka+" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Fonts load without blocking the first paint (media=print → all once
+         loaded): a render-blocking stylesheet held the splash back ~1.5s. -->
     <link
       href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
     <title>tracka+</title>
     <link rel="preload" as="image" href="/logo%202.jpg" />
-    <link rel="preload" as="image" href="/logo%201.jpg" />
-    <!-- Opening splash: white drop on blue, then blue drop on white, ~1.5s
-         each. Plain HTML/CSS so it shows before the app's code has loaded;
-         App.jsx fades it out once 3s have passed and the session is known. -->
+    <!-- Launch splash: the white drop on a full blue screen for ~2.5s, then
+         it fades into the app. Plain HTML/CSS so it shows before the app's
+         code has loaded; App.jsx fades it out once it has finished and the
+         session is known. -->
     <style>
+      /* The page behind the splash is blue too, so nothing white can show
+         at the edges (status-bar area, overscroll) while it's up. */
+      html.splashing, html.splashing body { background: #1463f4; }
       #splash {
         position: fixed;
         inset: 0;
@@ -30,46 +45,35 @@
         align-items: center;
         justify-content: center;
         background: #1463f4;
-        animation: splash-bg 3s ease forwards;
+        /* Holds for 2.5s; its end is what the app waits for. */
+        animation: splash-hold 2.5s linear forwards;
         transition: opacity 0.45s ease;
       }
       #splash.splash--leaving { opacity: 0; pointer-events: none; }
       #splash img {
-        position: absolute;
         width: 300px;
         height: 300px;
         max-width: 75vw;
         max-height: 75vw;
+        animation: splash-drop 0.7s ease-out both;
       }
-      #splash .splash-first { animation: splash-first 3s ease forwards; }
-      #splash .splash-second { opacity: 0; animation: splash-second 3s ease forwards; }
-      @keyframes splash-bg {
-        0%, 46% { background: #1463f4; }
-        54%, 100% { background: #ffffff; }
-      }
-      @keyframes splash-first {
-        0% { opacity: 0; transform: scale(0.92); }
-        10%, 44% { opacity: 1; transform: scale(1); }
-        52%, 100% { opacity: 0; transform: scale(0.96); }
-      }
-      @keyframes splash-second {
-        0%, 50% { opacity: 0; transform: scale(0.92); }
-        60%, 100% { opacity: 1; transform: scale(1); }
+      @keyframes splash-hold { from { opacity: 1; } to { opacity: 1; } }
+      @keyframes splash-drop {
+        from { opacity: 0; transform: scale(0.9); }
+        to { opacity: 1; transform: scale(1); }
       }
       @media (prefers-reduced-motion: reduce) {
-        #splash, #splash img { animation: none; }
-        #splash .splash-second { display: none; }
+        #splash img { animation: none; }
       }
     </style>
   </head>
   <body>
     <div id="splash" role="img" aria-label="Tracka+ is loading">
-      <img class="splash-first" src="/logo%202.jpg" alt="" />
-      <img class="splash-second" src="/logo%201.jpg" alt="" />
+      <img src="/logo%202.jpg" alt="" />
     </div>
     <script>
-      // Mark the splash done when its own animation ends (it can start a
-      // beat after page load), so App.jsx never cuts the second drop short.
+      // Mark the splash done when its own 2.5s hold ends (it can start a
+      // beat after page load), so App.jsx never cuts it short.
       (function () {
         var s = document.getElementById('splash')
         var done = function () { s.dataset.done = '1'; s.dispatchEvent(new Event('splashdone')) }

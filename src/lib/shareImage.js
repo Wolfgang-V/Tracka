@@ -8,6 +8,9 @@
 
 import { flameColorForStreak, FLAME_PATH, lighten, darken } from './core/flameColor'
 import { METALS, CUP_SHAPES, MEDAL_SHAPES } from './core/awards'
+import { isMilestoneStreak } from './milestones'
+
+export { isMilestoneStreak }
 
 const WIDTH = 1080
 const HEIGHT = 1920
@@ -33,11 +36,7 @@ const PALETTES = {
   },
 }
 
-const MILESTONES = [7, 14, 30, 60, 90, 100, 180, 365]
 
-export function isMilestoneStreak(streak) {
-  return MILESTONES.includes(streak)
-}
 
 function loadImage(src) {
   return new Promise((resolve, reject) => {

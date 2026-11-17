@@ -97,7 +97,7 @@ async function renderFlyer({ code, partner, label }) {
 // One series per chart (scans / sign-ups share a unit but not a scale, so
 // they get a chart each rather than two scales on one). Thin rounded bars,
 // one accent colour, tap/hover read-out instead of labels on every bar.
-function DayBars({ data, field, label, t, isNight, barClass }) {
+export function DayBars({ data, field, label, t, isNight, barClass }) {
   const [hover, setHover] = useState(null)
   const max = Math.max(1, ...data.map((d) => d[field]))
   const total = data.reduce((sum, d) => sum + d[field], 0)
@@ -153,7 +153,7 @@ function DayBars({ data, field, label, t, isNight, barClass }) {
       <div className={`mt-1.5 flex justify-between text-[10px] ${t.faint}`}>
         <span>{fmtDay(data[0].date)}</span>
         <span>{fmtDay(data[Math.floor(n / 2)].date)}</span>
-        <span>Today</span>
+        <span>{data[n - 1].date === new Date().toLocaleDateString('en-CA') ? 'Today' : fmtDay(data[n - 1].date)}</span>
       </div>
     </div>
   )
@@ -162,7 +162,7 @@ function DayBars({ data, field, label, t, isNight, barClass }) {
 // Layout pieces live at module level, NOT inside the component: a component
 // defined inside another is a new type on every render, which remounts its
 // children — inputs would lose focus after every keystroke.
-function Shell({ t, children }) {
+export function Shell({ t, children }) {
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-12 pt-7">{children}</div>
@@ -170,7 +170,7 @@ function Shell({ t, children }) {
   )
 }
 
-function BackButton({ t, label, onClick }) {
+export function BackButton({ t, label, onClick }) {
   return (
     <button onClick={onClick} className={`-ml-2 flex items-center gap-1 self-start py-2 text-[15px] ${t.muted}`}>
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

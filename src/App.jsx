@@ -1,17 +1,41 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { supabase, OPENED_FROM_RECOVERY_LINK } from './lib/supabase'
 import { captureReferral, claimReferral } from './lib/referral'
-import ReferralConsole from './screens/ReferralConsole'
-import { planNight, localDateString, addDays, addMonths, dayOfWeek, PREGNANCY_NOTE } from './lib/core/planNight'
+// Screens most people never open load on demand, not in the main bundle.
+const ReferralConsole = lazy(() => import('./screens/ReferralConsole'))
+const AdsConsole = lazy(() => import('./screens/AdsConsole'))
+const FeatureGuide = lazy(() => import('./screens/FeatureGuide'))
+const AdminScreen = lazy(() => import('./screens/AdminScreen'))
+import TodayScreen from './screens/TodayScreen'
+import SignUpScreen from './screens/SignUpScreen'
+import SkinProfileScreen from './screens/SkinProfileScreen'
+import AddProductScreen from './screens/AddProductScreen'
+const IngredientCheckerScreen = lazy(() => import('./screens/IngredientCheckerScreen'))
+const FindProfessionalScreen = lazy(() => import('./screens/practitioner/FindProfessionalScreen'))
+const CareTeamScreen = lazy(() => import('./screens/practitioner/CareTeamScreen'))
+const ChallengeDetailScreen = lazy(() => import('./screens/ChallengeDetailScreen'))
+const RecommendationHistoryScreen = lazy(() => import('./screens/practitioner/RecommendationHistoryScreen'))
+const ApplyPractitionerScreen = lazy(() => import('./screens/practitioner/ApplyPractitionerScreen'))
+const PractitionerDashboardScreen = lazy(() => import('./screens/practitioner/PractitionerDashboardScreen'))
+const PractitionerClientDetailScreen = lazy(() => import('./screens/practitioner/PractitionerClientDetailScreen'))
+const AddClientScreen = lazy(() => import('./screens/practitioner/AddClientScreen'))
+const ComposeRecommendationScreen = lazy(() => import('./screens/practitioner/ComposeRecommendationScreen'))
+const PractitionerRoutinesScreen = lazy(() => import('./screens/practitioner/PractitionerRoutinesScreen'))
+import RoutinePlannerScreen from './screens/RoutinePlannerScreen'
+import ProductsScreen from './screens/ProductsScreen'
+import { fetchAds, recordAdEvent, withUtm, isAdHidden, hideAd } from './lib/ads'
+import { useProducts, useEmpties, PRODUCT_FIELDS } from './data/products'
+import { useRoutines, getCompletedSteps, updateCompletedSteps } from './data/routine'
+import { useChallenges, useLeaderboard, reloadLeaderboard } from './data/challenges'
+import { useProgressPhotos, useSkinLogs, useStepHistory, useProgressCompletions } from './data/diary'
+import { queryClient } from './data/queryClient'
+import { planNight, localDateString, addDays, dayOfWeek } from './lib/core/planNight'
 import { productExpiry } from './lib/core/expiry'
-import { BRANDS } from './lib/core/brands'
 import { searchBrands, searchProducts } from './lib/core/openBeautyFacts'
-import { searchNigerianBrands, searchNigerianProducts } from './lib/core/nigerianProducts'
-import { findIngredientDetails, checkRoutineConflicts } from './lib/core/ingredientGuide'
-import { analyzeIngredients } from './lib/core/inciAnalysis'
+import { searchNigerianProducts } from './lib/core/nigerianProducts'
 import { calculateRoutineCompletion, calculateStreaks } from './lib/core/skinReport'
-import { generateStreakImage, generateSkinReportImage, generateAwardImage, isMilestoneStreak } from './lib/shareImage'
-import { challengeAwards, challengeStreak, challengePoints, METALS, CUP_SHAPES, MEDAL_SHAPES, LAUREL_LEAF, LAUREL_STAR, laurelLeaves, laurelStems } from './lib/core/awards'
+import { isMilestoneStreak } from './lib/milestones'
+import { challengeAwards, METALS, CUP_SHAPES, MEDAL_SHAPES, LAUREL_LEAF, LAUREL_STAR, laurelLeaves, laurelStems } from './lib/core/awards'
 import { flameColorForStreak, FLAME_PATH, lighten, darken } from './lib/core/flameColor'
 const VAPID_PUBLIC_KEY =
   'BL4tLhVl-G91FsMmVh2rhGbynJeqh1U6L3fIrg-E0rhC7fMLavWVfPLNGOjyM8TQqGFWaLmPByvs_3k2A23KsFE'
@@ -209,6 +233,10 @@ function App() {
     if (!splash) return
     let removeTimer
     const leave = () => {
+      // Back to the app's own colours: page background and the phone's
+      // status-bar tint were blue only for the splash (see index.html).
+      document.documentElement.classList.remove('splashing')
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#FFFFFF')
       splash.classList.add('splash--leaving')
       removeTimer = window.setTimeout(() => splash.remove(), 450)
     }
@@ -258,15 +286,7 @@ function App() {
   // Replaces the native alert dialog everywhere so error/success messages
   // look like the app instead of the OS. tone: 'error' | 'success'.
   const [toast, setToast] = useState(null)
-  const [adminUsers, setAdminUsers] = useState([])
-  const [adminLoading, setAdminLoading] = useState(true)
-  const [adminError, setAdminError] = useState(null)
   const [adminTab, setAdminTab] = useState('signups')
-  const [pendingPractitioners, setPendingPractitioners] = useState([])
-  const [pendingPractitionersLoading, setPendingPractitionersLoading] = useState(true)
-  const [verifiedPractitionersAdmin, setVerifiedPractitionersAdmin] = useState([])
-  const [verifiedPractitionersAdminLoading, setVerifiedPractitionersAdminLoading] = useState(true)
-  const [adminSignupsQuery, setAdminSignupsQuery] = useState('')
   const notify = (message, tone = 'error') => setToast({ message, tone })
 
   useEffect(() => {
@@ -310,6 +330,10 @@ function App() {
   const [profilePhotoPath, setProfilePhotoPath] = useState(null)
   const [profilePhotoUrl, setProfilePhotoUrl] = useState(null)
   const [profilePhotoUploading, setProfilePhotoUploading] = useState(false)
+  // Sponsored placements (see the ads section near screenContent).
+  const [homeAds, setHomeAds] = useState([])
+  const lastAdClickRef = useRef(null)
+  const guideAdRef = useRef(null)
   // Gates the bottom tab bar / quick-nav grid on the onboarding screens —
   // a brand-new user only sees the 3-step flow until they finish it, no
   // way to wander off to progress/insights/photos before there's anything
@@ -422,26 +446,30 @@ function App() {
   const [productPaoMonths, setProductPaoMonths] = useState(0)
   const [productExpiryDate, setProductExpiryDate] = useState('')
   const [productSaving, setProductSaving] = useState(false)
-  const [products, setProducts] = useState([])
+  // Products and Empties live in the shared data cache (src/data/products).
+  const { products, setProducts, reloadProducts } = useProducts(user?.id)
   // Finished products (Empties), signed photo URLs by storage path, which
   // product page is open, and which list sections are expanded.
-  const [empties, setEmpties] = useState([])
+  const { empties, setEmpties, loadEmpties } = useEmpties(user?.id)
   const [productPhotoUrls, setProductPhotoUrls] = useState({})
   const [selectedUserProductId, setSelectedUserProductId] = useState(null)
-  const [productSections, setProductSections] = useState({ mine: true, expiring: true, expired: true, empties: false })
   // Per product, which weekdays (0=Sun..6=Sat) it's used on — this is the
   // whole schedule now, the separate frequency dropdown was folded into
   // it. Sent to the DB with frequency always 'daily', which combined with
   // planNight's cadence logic makes days_of_week the effective schedule.
-  const [productDays, setProductDays] = useState({})
-  const [productTimes, setProductTimes] = useState({})
 
-  const [todayAmRoutine, setTodayAmRoutine] = useState(null)
-  const [todayPmRoutine, setTodayPmRoutine] = useState(null)
-  const [routinesLoading, setRoutinesLoading] = useState(true)
+  // Routine and today's ticks live in the shared data cache (src/data/routine).
+  const {
+    amRoutine: todayAmRoutine,
+    pmRoutine: todayPmRoutine,
+    amSteps: todayAmSteps,
+    pmSteps: todayPmSteps,
+    routinesLoading,
+    setAmSteps: setTodayAmSteps,
+    setPmSteps: setTodayPmSteps,
+    reloadRoutines,
+  } = useRoutines(user?.id)
   const [routineHistory, setRoutineHistory] = useState([])
-  const [routineSaving, setRoutineSaving] = useState(false)
-  const [routineEditMode, setRoutineEditMode] = useState(false)
   const [addProductReturnScreen, setAddProductReturnScreen] = useState('products')
   const [selectedRoutine, setSelectedRoutine] = useState(null)
   const loadRoutineHistory = async () => {
@@ -518,17 +546,16 @@ function App() {
   console.log('GROUPED ROUTINE HISTORY:', groupedRoutines)
 setRoutineHistory(groupedRoutines)
 }
-  const [todayAmSteps, setTodayAmSteps] = useState([])
-  const [todayPmSteps, setTodayPmSteps] = useState([])
-  const [completedSteps, setCompletedSteps] = useState([])
+  // Today's ticks: only TodayScreen subscribes (so a tick re-renders Today,
+  // not the whole app). App reads the current value when it needs it.
+  const setCompletedSteps = (valueOrFn) => updateCompletedSteps(user?.id, valueOrFn)
   const [lastCompletedSlot, setLastCompletedSlot] = useState(null)
   const [shareStreakBusy, setShareStreakBusy] = useState(false)
   const [reportSharing, setReportSharing] = useState(false)
-  const [stepHistory, setStepHistory] = useState([])
+  const { stepHistory, loadStepHistory } = useStepHistory(user?.id)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [challenges, setChallenges] = useState([])
-  const [myChallenges, setMyChallenges] = useState([])
-  const [challengesLoading, setChallengesLoading] = useState(true)
+  // Challenges and leaderboards live in the shared data cache (src/data/challenges).
+  const { challenges, myChallenges, challengesLoading, reloadChallenges } = useChallenges(user?.id)
   const [selectedChallengeId, setSelectedChallengeId] = useState(null)
   const [challengeReturnScreen, setChallengeReturnScreen] = useState('challenges')
   const [challengeMenuOpen, setChallengeMenuOpen] = useState(false)
@@ -536,38 +563,25 @@ setRoutineHistory(groupedRoutines)
   // The completed participation being celebrated (full-screen cup), or null.
   const [celebration, setCelebration] = useState(null)
   const [awardSaving, setAwardSaving] = useState(null)
-  const [leaderboard, setLeaderboard] = useState([])
-  const [leaderboardLoading, setLeaderboardLoading] = useState(true)
+  const { leaderboard, leaderboardLoading } = useLeaderboard(selectedChallengeId)
   // Home-screen + reminders setup guide (most users never found either,
   // and stopped coming back).
   const [setupGuideOpen, setSetupGuideOpen] = useState(false)
   const [installPromptEvent, setInstallPromptEvent] = useState(null)
   const [setupGuideStatus, setSetupGuideStatus] = useState(null)
   const setupGuideShownRef = useRef(false)
-  const [adminChallengeStats, setAdminChallengeStats] = useState([])
-  const [adminChallengeStatsLoading, setAdminChallengeStatsLoading] = useState(true)
-  const [adminChallengeParticipants, setAdminChallengeParticipants] = useState({})
-  const [adminOpenChallengeId, setAdminOpenChallengeId] = useState(null)
-  // Admin → Products: what people actually use.
-  const [productInsights, setProductInsights] = useState(null)
-  const [insightsView, setInsightsView] = useState('products')
-  const [insightsQuery, setInsightsQuery] = useState('')
-  // Admin → Referrals: flyer QR codes per store/clinic and what they produced.
-  const [referralReport, setReferralReport] = useState(null)
-  const [newReferral, setNewReferral] = useState({ code: '', partner: '', kind: 'store', label: '', city: '', phone: '' })
-  const [newReferralOpen, setNewReferralOpen] = useState(false)
   const [pushStatus, setPushStatus] = useState(null)
-  const [progressCompletions, setProgressCompletions] = useState([])
+  const { progressCompletions, setProgressCompletions } = useProgressCompletions(user?.id)
   const [selectedProgressDate, setSelectedProgressDate] = useState(null)
   const [dayDetailSteps, setDayDetailSteps] = useState(null)
   const [dayDetailLoading, setDayDetailLoading] = useState(false)
   const [progressMonthOffset, setProgressMonthOffset] = useState(0)
-  const [skinLogs, setSkinLogs] = useState([])
+  const { skinLogs, setSkinLogs, loadSkinLogs } = useSkinLogs(user?.id)
   const [monthlyReport, setMonthlyReport] = useState(null)
   const [monthlyReportLoading, setMonthlyReportLoading] = useState(false)
   const [reportMonthOffset, setReportMonthOffset] = useState(0)
-  const [progressPhotos, setProgressPhotos] = useState([])
-  const [photoUrls, setPhotoUrls] = useState({})
+  // Diary photos, logs and history live in the shared data cache (src/data/diary).
+  const { progressPhotos, setProgressPhotos, photoUrls, loadProgressPhotos } = useProgressPhotos(user?.id)
   const [photoUploading, setPhotoUploading] = useState(false)
   const [photoError, setPhotoError] = useState(null)
   const [pendingPhoto, setPendingPhoto] = useState(null)
@@ -583,77 +597,6 @@ setRoutineHistory(groupedRoutines)
     // every mount (plus a fifth from checkUser) is what was slowing the
     // home screen down; now the caller resolves the session once and
     // hands the id in.
-    const loadProducts = async (userId) => {
-      if (!userId) return
-
-      const { data, error } = await supabase
-        .from('user_products')
-        .select(`
-          id,
-          product_id,
-          opened_date,
-          pao_months,    
-          expiry_date,
-          added_at,
-          photo_path,
-          finished_at,
-          marked_expired_at,
-          products (
-            id,
-            brand,
-            name,
-            category,
-            ingredients,
-            image_url
-          )
-        `)
-        .eq('user_id', userId)
-        .eq('is_active', true)
-
-      if (error) {
-        console.error(error)
-        return
-      }
-
-      setProducts(data || [])
-    }
-
-    const loadCompletedSteps = async (userId) => {
-      if (!userId) return
-
-      const { data, error } = await supabase
-        .from('routine_step_completions')
-        .select('routine_step_id, completed_at')
-        .eq('user_id', userId)
-        .eq('local_date', localDateString())
-
-      if (error) {
-        console.error(error)
-        return
-      }
-
-      setCompletedSteps(
-        (data || []).map((item) => item.routine_step_id)
-      )
-    }
-
-    const loadProgressCompletions = async (userId) => {
-      if (!userId) return
-
-      const { data, error } = await supabase
-        .from('routine_completions')
-        .select('completed_date, completed_at, time_of_day')
-        .eq('user_id', userId)
-        .order('completed_date', { ascending: true })
-
-      if (error) {
-        console.error(error)
-        return
-      }
-
-      setProgressCompletions(data || [])
-    }
-
     // Redeems a pending professional invite once a real session exists in
     // THIS browser. Invite links are shared over WhatsApp, so the click can
     // land in an in-app browser that's a different storage context than the
@@ -806,9 +749,6 @@ setRoutineHistory(groupedRoutines)
       }
 
       checkUser(user)
-      loadProducts(user.id)
-      loadCompletedSteps(user.id)
-      loadProgressCompletions(user.id)
     }
 
     // Unconditional on auth state — this only gates which buttons render,
@@ -875,16 +815,6 @@ setRoutineHistory(groupedRoutines)
 
       if (session?.user) {
         setUser(session.user)
-        setProducts([])
-        setTodayAmRoutine(null)
-        setTodayPmRoutine(null)
-        setTodayAmSteps([])
-        setTodayPmSteps([])
-        setCompletedSteps([])
-        setProgressCompletions([])
-        loadProducts(session.user.id)
-        loadCompletedSteps(session.user.id)
-        loadProgressCompletions(session.user.id)
         redeemPendingInvite()
         claimReferralWhenReady()
       }
@@ -894,23 +824,6 @@ setRoutineHistory(groupedRoutines)
       subscription.unsubscribe()
     }
   }, [])
-   
-  const loadStepHistory = async () => {
-  if (!user) return
-
-  const { data, error } = await supabase
-    .from('routine_step_completions')
-    .select('routine_step_id, local_date')
-    .eq('user_id', user.id)
-    .gte('local_date', addDays(localDateString(), -21))
-
-  if (error) {
-    console.error('STEP HISTORY ERROR:', error)
-    return
-  }
-
-  setStepHistory(data || [])
-}
 
 const loadDayDetails = async (date) => {
   setDayDetailLoading(true)
@@ -984,25 +897,6 @@ const loadDayDetails = async (date) => {
 
   setDayDetailSteps(dedupedSteps)
   setDayDetailLoading(false)
-}
-
-const loadSkinLogs = async () => {
-  if (!user) return
-
-  // No date floor — notes now live here too, and the Skin diary
-  // timeline shows them the same way it shows photos, which also aren't
-  // capped to the last 30 days.
-  const { data, error } = await supabase
-    .from('skin_logs')
-    .select('local_date, breakouts, dryness, oiliness, redness, note')
-    .eq('user_id', user.id)
-
-  if (error) {
-    console.error('SKIN LOG HISTORY ERROR:', error)
-    return
-  }
-
-  setSkinLogs(data || [])
 }
 
 // Month-to-date stats for the "Skin reports" screen — always reflects the
@@ -1131,33 +1025,6 @@ const loadMonthlyReport = async (monthOffset = 0) => {
     photosAdded: photosAdded || 0,
   })
   setMonthlyReportLoading(false)
-}
-
-const loadProgressPhotos = async () => {
-  if (!user) return
-
-  const { data, error } = await supabase
-    .from('progress_photos')
-    .select('id, path, local_date, note, created_at')
-    .eq('user_id', user.id)
-    .order('local_date', { ascending: false })
-
-  if (error) {
-    console.error('PROGRESS PHOTOS ERROR:', error)
-    return
-  }
-
-  setProgressPhotos(data || [])
-
-  const signedEntries = await Promise.all(
-    (data || []).map(async (photo) => {
-      const { data: signed } = await supabase.storage
-        .from('progress-photos')
-        .createSignedUrl(photo.path, 3600)
-      return [photo.path, signed?.signedUrl]
-    })
-  )
-  setPhotoUrls(Object.fromEntries(signedEntries))
 }
 
 const loadProfileAvatar = async (path) => {
@@ -1343,6 +1210,7 @@ const shareStreak = async (streak, steps, routineLabel = 'Night Routine') => {
   setShareStreakBusy(true)
 
   try {
+    const { generateStreakImage } = await import('./lib/shareImage')
     const blob = await generateStreakImage({
       streak,
       routineLabel,
@@ -1462,6 +1330,7 @@ const shareSkinReport = async () => {
   setReportSharing(true)
 
   try {
+    const { generateSkinReportImage } = await import('./lib/shareImage')
     const blob = await generateSkinReportImage({ report: monthlyReport, isNight })
     const file = new File([blob], 'tracka-skin-report.png', { type: 'image/png' })
     const caption = `My ${monthlyReport.monthLabel} skin report on Tracka+`
@@ -1489,103 +1358,20 @@ const shareSkinReport = async () => {
   }
 }
 
+  // Refresh the routine in the shared cache (Today, the editor and the
+  // monthly report all read it from there).
   const loadRoutines = async () => {
-  setRoutinesLoading(true)
-
-  if (!user) {
-    setRoutinesLoading(false)
-    return
+  if (!user) return
+  try {
+    await reloadRoutines()
+  } catch (err) {
+    console.error('ROUTINES ERROR:', err)
   }
-
-  // One nested-select round trip (routines -> routine_steps -> user_products
-  // -> products) instead of three sequential ones, each waiting on the ids
-  // from the last. Same embedding pattern already used in loadDayDetails,
-  // just rooted one level higher.
-  const { data: routines, error: routinesError } = await supabase
-    .from('routines')
-    .select(`
-      *,
-      routine_steps (
-        id,
-        routine_id,
-        user_product_id,
-        step_order,
-        step_name,
-        frequency,
-        days_of_week,
-        is_active,
-        user_products (
-          id,
-          opened_date,
-          pao_months,
-          photo_path,
-          expiry_date,
-          marked_expired_at,
-          finished_at,
-          products ( brand, name, category, ingredients, image_url )
-        )
-      )
-    `)
-    .eq('user_id', user.id)
-    .eq('is_active', true)
-    .eq('routine_steps.is_active', true)
-    .order('created_at', { ascending: false })
-    .order('step_order', { foreignTable: 'routine_steps', ascending: true })
-
-  if (routinesError) {
-    console.error('ROUTINES ERROR:', routinesError)
-    setRoutinesLoading(false)
-    return
-  }
-
-  // Steps whose product went to Empties drop out — including ones finished
-  // before "Mark as finished" also switched the step off.
-  for (const routine of routines || []) {
-    routine.routine_steps = (routine.routine_steps || []).filter((step) => !step.user_products?.finished_at)
-  }
-
-  // If more than one active routine ever exists per time-of-day (e.g. from
-  // a double-tapped "Create my routine" before that was guarded against),
-  // take the newest rather than whichever the DB happens to return first.
-  const amRoutine = (routines || []).find(
-    (routine) => routine.time_of_day === 'AM'
-  )
-
-  const pmRoutine = (routines || []).find(
-    (routine) => routine.time_of_day === 'PM'
-  )
-  const editingCurrentRoutine = Boolean(amRoutine || pmRoutine)
-
-  const routineTimes = {}
-  const routineDays = {}
-  for (const routine of [amRoutine, pmRoutine].filter(Boolean)) {
-    for (const step of routine.routine_steps || []) {
-      const productId = step.user_product_id
-      routineTimes[productId] = routineTimes[productId]
-        ? 'BOTH'
-        : routine.time_of_day
-      routineDays[productId] = [...new Set([
-        ...(routineDays[productId] || []),
-        ...(step.days_of_week || [0, 1, 2, 3, 4, 5, 6]),
-      ])]
-    }
-  }
-
-  setTodayAmRoutine(amRoutine || null)
-  setTodayPmRoutine(pmRoutine || null)
-  setTodayAmSteps(amRoutine?.routine_steps || [])
-  setTodayPmSteps(pmRoutine?.routine_steps || [])
-  setRoutineEditMode(editingCurrentRoutine)
-  const excludedProducts = editingCurrentRoutine
-    ? Object.fromEntries(products.map((item) => [item.id, 'NONE']))
-    : {}
-  setProductTimes((current) => ({ ...current, ...excludedProducts, ...routineTimes }))
-  setProductDays((current) => ({ ...current, ...routineDays }))
-
-  setRoutinesLoading(false)
 }
   const toggleStepCompletion = async (stepId) => {
-  const alreadyCompleted = completedSteps.includes(stepId)
+  // Read fresh from the cache: App no longer re-renders on ticks, so a
+  // value captured at its last render could be out of date.
+  const alreadyCompleted = getCompletedSteps(user?.id).includes(stepId)
   const today = localDateString()
 
   if (alreadyCompleted) {
@@ -2166,48 +1952,6 @@ const guessCategory = (text) => {
   return ''
 }
 
-const getDefaultProductTime = (product) => {
-  const text = `${product.products?.name || ''} ${product.products?.category || ''}`.toLowerCase()
-
-  if (
-    text.includes('sunscreen') ||
-    text.includes('spf') ||
-    text.includes('vitamin c')
-  ) {
-    return 'AM'
-  }
-
-  if (
-    text.includes('retinol') ||
-    text.includes('retinoid') ||
-    text.includes('tretinoin') ||
-    text.includes('aha') ||
-    text.includes('bha') ||
-    text.includes('exfol')
-  ) {
-    return 'PM'
-  }
-
-  return 'BOTH'
-} 
-useEffect(() => {
-  if (products.length === 0) return
-
-  const defaultTimes = {}
-
-  products.forEach((item) => {
-    if (!productTimes[item.id]) {
-      defaultTimes[item.id] = routineEditMode ? 'NONE' : getDefaultProductTime(item)
-    }
-  })
-
-  if (Object.keys(defaultTimes).length > 0) {
-    setProductTimes((current) => ({
-      ...current,
-      ...defaultTimes,
-    }))
-  }
-}, [products, routineEditMode])
 
 useEffect(() => {
   if (screen === 'today') {
@@ -2266,15 +2010,6 @@ useEffect(() => {
   if (screen === 'progressPhotos') {
     loadProgressPhotos()
     loadSkinLogs()
-  }
-
-  if (screen === 'admin') {
-    loadAdminUsers()
-    loadPendingPractitioners()
-    loadVerifiedPractitionersAdmin()
-    loadAdminChallengeStats()
-    loadProductInsights()
-    loadReferralReport()
   }
 
   if (screen === 'careTeam') {
@@ -2519,28 +2254,13 @@ const loadSkinProfile = async () => {
 const loadChallenges = async () => {
   if (!user) return null
 
-  const [catalogue, mine] = await Promise.all([
-    supabase
-      .from('challenges')
-      .select('*')
-      .eq('is_published', true)
-      .order('created_at', { ascending: true }),
-    supabase
-      .from('challenge_participants')
-      .select('*, challenges (*), challenge_days (local_date)')
-      .eq('user_id', user.id)
-      .order('joined_at', { ascending: false }),
-  ])
-
-  if (catalogue.error || mine.error) {
-    console.error('LOAD CHALLENGES ERROR:', catalogue.error || mine.error)
-    setChallengesLoading(false)
+  let mine
+  try {
+    mine = { data: (await reloadChallenges()).mine }
+  } catch (err) {
+    console.error('LOAD CHALLENGES ERROR:', err)
     return null
   }
-
-  setChallenges(catalogue.data || [])
-  setMyChallenges(mine.data || [])
-  setChallengesLoading(false)
 
   // Show the end-of-window celebration once, even if this person missed the target.
   let endedCelebrated = []
@@ -2591,6 +2311,7 @@ const saveAward = async (award, participation) => {
     const earnedOn = award.kind === 'cup' && participation.completed_at
       ? new Date(participation.completed_at)
       : new Date()
+    const { generateAwardImage } = await import('./lib/shareImage')
     const blob = await generateAwardImage({
       award,
       challengeTitle,
@@ -2657,16 +2378,12 @@ const openPendingChallenge = async () => {
 
 const loadLeaderboard = async (challengeId = selectedChallengeId) => {
   if (!challengeId) return
-  setLeaderboardLoading(true)
-  const { data, error } = await supabase.rpc('challenge_leaderboard', { p_challenge_id: challengeId })
-  if (error) {
+  try {
+    await reloadLeaderboard(challengeId)
+  } catch (error) {
     console.error('LEADERBOARD ERROR:', error)
     notify('Could not load the leaderboard.')
-    setLeaderboardLoading(false)
-    return
   }
-  setLeaderboard(data || [])
-  setLeaderboardLoading(false)
 }
 
 const setLeaderboardHidden = async (challengeId, hidden) => {
@@ -2683,7 +2400,7 @@ const setLeaderboardHidden = async (challengeId, hidden) => {
   notify(hidden ? 'Your name is now private on the leaderboard.' : 'Your name is now shown on the leaderboard.', 'success')
 }
 
-const joinChallenge = async (challenge) => {
+const joinChallenge = async (challenge, sponsorPlacementId = null) => {
   const { error } = await supabase.rpc('join_challenge', {
     p_challenge_id: challenge.id,
     p_local_date: localDateString(),
@@ -2716,6 +2433,16 @@ const joinChallenge = async (challenge) => {
     return
   }
 
+  // Credit the sign-up to a sponsored ad if that's where they came from:
+  // tapped through from an ad, or joined on a page carrying the sponsor's
+  // card (the server counts one join per person per ad).
+  if (lastAdClickRef.current?.challengeId === challenge.id) {
+    recordAdEvent(supabase, lastAdClickRef.current.placementId, 'challenge_join')
+    lastAdClickRef.current = null
+  } else if (sponsorPlacementId) {
+    recordAdEvent(supabase, sponsorPlacementId, 'challenge_join')
+  }
+
   await loadChallenges()
   notify('Challenge joined!', 'success')
 }
@@ -2746,116 +2473,6 @@ const goToMorningRoutine = () => {
   setTimeout(() => {
     document.getElementById('am-routine')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, 300)
-}
-
-const loadReferralReport = async () => {
-  const { data, error } = await supabase.rpc('admin_referral_report')
-  if (error) {
-    console.error('REFERRAL REPORT ERROR:', error)
-    return
-  }
-  setReferralReport(data)
-}
-
-const saveReferralCode = async () => {
-  const code = newReferral.code.trim().toUpperCase()
-  if (!/^[A-Z0-9][A-Z0-9-]{1,23}$/.test(code)) {
-    notify('Code must be 2–24 letters, numbers or dashes, e.g. BEAUTYHUT-LEKKI.')
-    return
-  }
-  if (!newReferral.partner.trim()) {
-    notify('Add the partner name.')
-    return
-  }
-  const { error } = await supabase.rpc('admin_upsert_referral_code', {
-    p_code: code,
-    p_partner_name: newReferral.partner.trim(),
-    p_kind: newReferral.kind,
-    p_label: newReferral.label.trim() || null,
-    p_city: newReferral.city.trim() || null,
-    p_contact_phone: newReferral.phone.trim() || null,
-  })
-  if (error) {
-    console.error('SAVE REFERRAL CODE ERROR:', error)
-    notify(error.message)
-    return
-  }
-  notify(`${code} is live — print its QR with qr/generate.py.`, 'success')
-  setNewReferral({ code: '', partner: '', kind: 'store', label: '', city: '', phone: '' })
-  setNewReferralOpen(false)
-  await loadReferralReport()
-}
-
-const loadProductInsights = async () => {
-  const { data, error } = await supabase.rpc('admin_product_insights')
-  if (error) {
-    console.error('PRODUCT INSIGHTS ERROR:', error)
-    return
-  }
-  setProductInsights(data)
-}
-
-const loadAdminChallengeStats = async () => {
-  setAdminChallengeStatsLoading(true)
-  const { data, error } = await supabase.rpc('admin_challenge_stats')
-  if (error) {
-    console.error('ADMIN CHALLENGE STATS ERROR:', error)
-    setAdminChallengeStatsLoading(false)
-    return
-  }
-  setAdminChallengeStats(data || [])
-  setAdminChallengeStatsLoading(false)
-}
-
-const toggleAdminChallengeParticipants = async (challengeId) => {
-  if (adminOpenChallengeId === challengeId) {
-    setAdminOpenChallengeId(null)
-    return
-  }
-  setAdminOpenChallengeId(challengeId)
-
-  const { data, error } = await supabase.rpc('admin_challenge_participants', { p_challenge_id: challengeId })
-  if (error) {
-    console.error('ADMIN CHALLENGE PARTICIPANTS ERROR:', error)
-    notify('Could not load participants.')
-    return
-  }
-  setAdminChallengeParticipants((current) => ({ ...current, [challengeId]: data || [] }))
-}
-
-const loadAdminUsers = async () => {
-  setAdminLoading(true)
-  setAdminError(null)
-
-  const { data, error } = await supabase.rpc('admin_list_users')
-
-  if (error) {
-    console.error('ADMIN LIST USERS ERROR:', error)
-    // "Not authorized" only ever means someone other than the admin
-    // account reached this screen — show nothing rather than a raw
-    // Postgres error hinting an authorization check exists at all.
-    setAdminError(error.message === 'Not authorized' ? null : error.message)
-    setAdminLoading(false)
-    return
-  }
-
-  setAdminUsers(data || [])
-  setAdminLoading(false)
-}
-
-const loadPendingPractitioners = async () => {
-  setPendingPractitionersLoading(true)
-
-  const { data, error } = await supabase.rpc('admin_list_pending_practitioners')
-
-  if (error) {
-    console.error('ADMIN LIST PENDING PRACTITIONERS ERROR:', error)
-    setPendingPractitionersLoading(false)
-    return
-  }
-
-  setPendingPractitioners(data || [])
-  setPendingPractitionersLoading(false)
 }
 
 // Moved here (out of the render IIFE below) because the screen-trigger
@@ -3076,180 +2693,6 @@ const loadPendingInvitations = async () => {
   setPendingInvitations(data || [])
 }
 
-const reviewPractitioner = async (targetId, approve) => {
-  if (!approve) {
-    const confirmed = await confirmAction(
-      "Reject this application? They'll need to apply again if they want to reconsider."
-    )
-    if (!confirmed) return
-  }
-
-  const { error } = await supabase.rpc('admin_review_practitioner', {
-    target_id: targetId,
-    approve,
-  })
-
-  if (error) {
-    console.error('ADMIN REVIEW PRACTITIONER ERROR:', error)
-    notify(error.message)
-    return
-  }
-
-  notify(approve ? 'Approved.' : 'Rejected.', 'success')
-  setPendingPractitioners((current) => current.filter((p) => p.user_id !== targetId))
-}
-
-const loadVerifiedPractitionersAdmin = async () => {
-  setVerifiedPractitionersAdminLoading(true)
-
-  const { data, error } = await supabase.rpc('admin_list_verified_practitioners')
-
-  if (error) {
-    console.error('ADMIN LIST VERIFIED PRACTITIONERS ERROR:', error)
-    setVerifiedPractitionersAdminLoading(false)
-    return
-  }
-
-  setVerifiedPractitionersAdmin(data || [])
-  setVerifiedPractitionersAdminLoading(false)
-}
-
-const revokePractitioner = async (targetId, name) => {
-  const confirmed = await confirmAction(
-    `Revoke ${name || 'this practitioner'}'s verification? They'll immediately lose access to every client's data, though the history stays on record. They'd need to apply again to be reconsidered.`
-  )
-  if (!confirmed) return
-
-  const { error } = await supabase.rpc('admin_revoke_practitioner', { target_id: targetId })
-
-  if (error) {
-    console.error('ADMIN REVOKE PRACTITIONER ERROR:', error)
-    notify(error.message)
-    return
-  }
-
-  notify('Verification revoked.', 'success')
-  setVerifiedPractitionersAdmin((current) => current.filter((p) => p.user_id !== targetId))
-}
-
-const togglePractitionersLaunch = async () => {
-  const launching = !practitionersLaunched
-  const confirmed = await confirmAction(
-    launching
-      ? 'Open practitioner applications to everyone? Any of the 109 live users will be able to apply and instantly see client data they have access to.'
-      : 'Park the practitioner feature again? New applications will be blocked; practitioners who are already set up keep working as normal.'
-  )
-  if (!confirmed) return
-
-  const { error } = await supabase.rpc('admin_set_feature_flag', {
-    flag_key: 'practitioners_launch',
-    enabled: launching,
-  })
-
-  if (error) {
-    console.error('ADMIN SET FEATURE FLAG ERROR:', error)
-    notify(error.message)
-    return
-  }
-
-  setPractitionersLaunched(launching)
-  notify(launching ? 'Practitioners launched.' : 'Practitioner feature parked.', 'success')
-}
-
-// "Verified" (can invite clients, self-service) and "listed" (shows up in
-// the public Find a Professional directory) are deliberately separate —
-// auto-verify means anyone who filled in the form can operate, but only an
-// admin-reviewed practitioner should be presented to a client browsing as
-// if they're a known professional.
-const togglePractitionerListed = async (targetId, listed) => {
-  const { error } = await supabase.rpc('admin_set_practitioner_listed', { target_id: targetId, listed })
-
-  if (error) {
-    console.error('ADMIN SET PRACTITIONER LISTED ERROR:', error)
-    notify(error.message)
-    return
-  }
-
-  notify(listed ? 'Listed in the directory.' : 'Removed from the directory.', 'success')
-  setVerifiedPractitionersAdmin((current) =>
-    current.map((p) => (p.user_id === targetId ? { ...p, listed_at: listed ? new Date().toISOString() : null } : p))
-  )
-}
-
-const exportAdminUsersCsv = (users) => {
-  const headers = ['Email', 'Username', 'Onboarded', 'Signed up', 'Last active', 'Email confirmed', 'Suspended']
-
-  const escapeCsv = (value) => {
-    const str = String(value ?? '')
-    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str
-  }
-
-  const rows = users.map((u) => [
-    u.email,
-    u.username || '',
-    u.onboarding_completed ? 'Yes' : 'No',
-    u.created_at,
-    u.last_active_at || u.last_sign_in_at || 'Never',
-    u.email_confirmed_at ? 'Yes' : 'No',
-    isSuspended(u) ? 'Yes' : 'No',
-  ])
-
-  const csv = [headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `tracka-signups-${localDateString()}.csv`
-  link.click()
-
-  URL.revokeObjectURL(url)
-}
-
-const isSuspended = (targetUser) =>
-  Boolean(targetUser.banned_until) && new Date(targetUser.banned_until) > new Date()
-
-const toggleSuspendUser = async (targetUser) => {
-  const suspended = isSuspended(targetUser)
-
-  const confirmed = await confirmAction(
-    suspended
-      ? `Unsuspend ${targetUser.email}? They'll be able to log in again.`
-      : `Suspend ${targetUser.email}? They won't be able to log in until unsuspended.`
-  )
-  if (!confirmed) return
-
-  const { error } = await supabase.rpc('admin_suspend_user', {
-    target_id: targetUser.id,
-    suspend: !suspended,
-  })
-
-  if (error) {
-    notify('Could not update this account: ' + error.message)
-    return
-  }
-
-  notify(suspended ? 'Account unsuspended.' : 'Account suspended.', 'success')
-  loadAdminUsers()
-}
-
-const deleteUserAccount = async (targetUser) => {
-  const confirmed = await confirmAction(
-    `Permanently delete ${targetUser.email}? This deletes their account and all their data. This cannot be undone.`
-  )
-  if (!confirmed) return
-
-  const { error } = await supabase.rpc('admin_delete_user', { target_id: targetUser.id })
-
-  if (error) {
-    notify('Could not delete this account: ' + error.message)
-    return
-  }
-
-  notify('Account deleted.', 'success')
-  loadAdminUsers()
-}
-
 const acceptPreviewedInvite = async () => {
   if (!invitePreview || invitePreviewBusy) return
   setInvitePreviewBusy(true)
@@ -3290,28 +2733,6 @@ const declinePreviewedInvite = () => {
 // on top of whichever screen this resolves to, instead of being pasted
 // into every one of the ~20 screen branches individually.
 // ---- Products: pages, photos, expiry, empties ----------------------------
-
-const PRODUCT_FIELDS = `
-  id, product_id, opened_date, pao_months, expiry_date, added_at,
-  photo_path, finished_at, is_active, marked_expired_at,
-  products ( id, brand, name, category, ingredients, image_url )
-`
-
-const loadEmpties = async () => {
-  if (!user) return
-  const { data, error } = await supabase
-    .from('user_products')
-    .select(PRODUCT_FIELDS)
-    .eq('user_id', user.id)
-    .eq('is_active', false)
-    .not('finished_at', 'is', null)
-    .order('finished_at', { ascending: false })
-  if (error) {
-    console.error('EMPTIES ERROR:', error)
-    return
-  }
-  setEmpties(data || [])
-}
 
 // Private bucket, so photos are shown through short-lived signed links.
 // Only signs paths it hasn't signed yet.
@@ -3651,6 +3072,53 @@ const loadReminderSettings = async () => {
   }
 }
 
+// --- Sponsored placements -------------------------------------------------
+// Live home-banner ads, refreshed whenever Today is opened.
+useEffect(() => {
+  if (!user || screen !== 'today') return
+  let cancelled = false
+  fetchAds(supabase, 'home_banner').then((ads) => {
+    if (!cancelled) setHomeAds(ads)
+  })
+  return () => { cancelled = true }
+}, [user, screen])
+
+const homeAd = homeAds.find((ad) => !isAdHidden(ad.placement_id)) || null
+
+const hideHomeAd = (ad) => {
+  hideAd(ad.placement_id)
+  setHomeAds((current) => current.filter((a) => a.placement_id !== ad.placement_id))
+}
+
+const openAd = (ad) => {
+  // Remembered so a challenge joined from this ad can be credited to it.
+  lastAdClickRef.current = { placementId: ad.placement_id, challengeId: ad.challenge_id || ad.action_target }
+  if (ad.action === 'feature_guide') {
+    guideAdRef.current = ad.placement_id
+    setScreen('featureGuide')
+  } else if (ad.action === 'challenge' && (ad.action_target || ad.challenge_id)) {
+    openChallenge(ad.action_target || ad.challenge_id, 'today')
+  } else if (ad.action === 'screen' && ad.action_target) {
+    setScreen(ad.action_target)
+  } else {
+    const url = ad.action_target || ad.landing_url
+    if (url) window.open(withUtm(url, ad.headline), '_blank', 'noopener')
+  }
+}
+
+const openFeatureFromGuide = async (target) => {
+  if (target === 'skinProfile') await loadSkinProfile()
+  if (target === 'reminders') await loadReminderSettings()
+  setScreen(target)
+}
+
+// Called when the last card is reached (silent) and again on Done; the
+// server counts one completion per person.
+const completeFeatureGuide = (opts) => {
+  if (guideAdRef.current) recordAdEvent(supabase, guideAdRef.current, 'guide_complete')
+  if (!opts?.silent) setScreen('today')
+}
+
 const screenContent = (() => {
 
 if (!authReady) {
@@ -3660,201 +3128,27 @@ if (!authReady) {
 
 if (screen === 'auth') {
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
-
-        <button
-          onClick={() => window.history.back()}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Back
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[40px] font-light leading-[1.05] tracking-tight">
-            Create your account
-          </h1>
-
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Start building a skincare routine you can actually stick to.
-          </p>
-        </div>
-
-        <div className="mt-8 flex flex-col gap-5">
-
-          <div>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Email address
-            </label>
-
-            <input
-              type="email"
-              placeholder="you@example.com"
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
-              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-          </div>
-
-          <div>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Password
-            </label>
-
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                placeholder="Create a password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 pr-12 text-[15px] outline-none`}
-              />
-
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className={`absolute right-4 top-1/2 -translate-y-1/2 ${t.faint}`}
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-              >
-                {showPassword ? (
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.8}
-                    stroke="currentColor"
-                    className="h-5 w-5"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12s-3.75 6.75-9.75 6.75S2.25 12 2.25 12Z"
-                    />
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-                    />
-                  </svg>
-                ) : (
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.8}
-                    stroke="currentColor"
-                    className="h-5 w-5"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M3 3l18 18"
-                    />
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M3.98 8.223A10.477 10.477 0 0 0 2.25 12c1.5 2.7 4.5 6.75 9.75 6.75a9.8 9.8 0 0 0 4.023-.84"
-                    />
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M6.228 6.228A10.45 10.45 0 0 1 12 5.25c5.25 0 8.25 4.05 9.75 6.75a11.05 11.05 0 0 1-2.25 3.15"
-                    />
-                  </svg>
-                )}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              What should we call you?
-            </label>
-
-            <input
-              type="text"
-              placeholder="e.g. Deeyah"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-          </div>
-
-          <button
-            disabled={busyAction === 'signup'}
-            onClick={() =>
-              runBusy('signup', async () => {
-                const email = loginEmail
-                const password = loginPassword
-
-                if (!username || !email || !password) {
-                  notify('Please enter your email, password and name.')
-                  return
-                }
-
-                const { data, error } = await supabase.auth.signUp({
-                  email,
-                  password,
-                  options: {
-                    data: {
-                      username,
-                    },
-                    emailRedirectTo: `${SITE_URL}/?confirmed=true`,
-                  },
-                })
-
-                if (error) {
-                  notify(error.message)
-                  return
-                }
-
-                if (!data.user) {
-                  notify('Account could not be created.')
-                  return
-                }
-
-                setProducts([])
-                setUser(data.user)
-                setDisplayName(username)
-                setOnboardingCompleted(false)
-
-                if (data.user.email === ADMIN_EMAIL) {
-                  setScreen('admin')
-                  return
-                }
-
-                if (data.session) {
-                  setScreen('skinProfile')
-                  return
-                }
-
-                setScreen('checkEmail')
-              })
-            }
-            className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
-          >
-            {busyAction === 'signup' ? 'Creating account…' : 'Create account'}
-          </button>
-
-        </div>
-
-        <p className={`mt-6 text-center text-[15px] ${t.muted}`}>
-          Already have an account?{' '}
-          <button
-            onClick={() => setScreen('login')}
-            className={`font-semibold ${t.mark}`}
-          >
-            Log in
-          </button>
-        </p>
-
-      </div>
-    </main>
+    <SignUpScreen
+      ADMIN_EMAIL={ADMIN_EMAIL}
+      SITE_URL={SITE_URL}
+      busyAction={busyAction}
+      loginEmail={loginEmail}
+      loginPassword={loginPassword}
+      notify={notify}
+      runBusy={runBusy}
+      setDisplayName={setDisplayName}
+      setLoginEmail={setLoginEmail}
+      setLoginPassword={setLoginPassword}
+      setOnboardingCompleted={setOnboardingCompleted}
+      setProducts={setProducts}
+      setScreen={setScreen}
+      setShowPassword={setShowPassword}
+      setUser={setUser}
+      setUsername={setUsername}
+      showPassword={showPassword}
+      t={t}
+      username={username}
+    />
   )
 }
 
@@ -4413,1079 +3707,128 @@ const submitRecommendation = async () => {
 
   if (screen === 'skinProfile') {
     return (
-      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
-
-          <button
-            onClick={() => window.history.back()}
-            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round">
-              <path d="M15 5l-7 7 7 7" />
-            </svg>
-            Back
-          </button>
-
-          {onboardingCompleted && (
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {[
-                ['My progress', 'progress'],
-                ['Skin reports', 'skinTrends'],
-                ['Skin diary', 'progressPhotos'],
-              ].map(([label, target]) => (
-                <button
-                  key={target}
-                  onClick={() => setScreen(target)}
-                  className={`rounded-2xl px-2 py-2.5 text-center text-[12px] font-semibold leading-tight ${t.chip}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {onboardingCompleted && !skinProfileEditing && skinType ? (
-            <>
-              <div className="mt-5">
-                <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
-                  Your skin profile
-                </h1>
-
-                <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-                  What Tracka+ knows about your skin right now.
-                </p>
-              </div>
-
-              <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-                {[
-                  ['Gender', gender || '—'],
-                  [
-                    'Pregnant or breastfeeding',
-                    pregnantOrBreastfeeding === true
-                      ? 'Yes'
-                      : pregnantOrBreastfeeding === false
-                        ? 'No'
-                        : pregnantOrBreastfeeding === null
-                          ? 'Rather not say'
-                          : '—',
-                  ],
-                  ['Skin type', skinType || '—'],
-                  ['Main concerns', concerns.length > 0 ? concerns.join(', ') : '—'],
-                  ['Goals', goals.length > 0 ? goals.join(', ') : '—'],
-                  ['Sensitivity', sensitivity || '—'],
-                ].map(([label, value], index, arr) => (
-                  <div
-                    key={label}
-                    className={`py-3.5 ${index < arr.length - 1 ? `border-b ${t.hair}` : ''}`}
-                  >
-                    <p className={`text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
-                      {label}
-                    </p>
-                    <p className="mt-1 text-[15px] font-medium">
-                      {value}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              <button
-                onClick={() => setSkinProfileEditing(true)}
-                className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
-              >
-                Update
-              </button>
-            </>
-          ) : (
-            <>
-          <div className="mt-5">
-            {!onboardingCompleted && (
-              <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-                Step 1 of 3
-              </p>
-            )}
-
-            <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-              {onboardingCompleted ? 'Update your skin profile' : 'Tell us about your skin'}
-            </h1>
-
-            <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-              {onboardingCompleted
-                ? "Skin changes — update this any time it does."
-                : 'This helps Tracka+ organize your skincare journey around you.'}
-            </p>
-
-            {!onboardingCompleted && (
-              <div className={`mt-5 flex items-center gap-4 rounded-2xl ${t.surface} p-4`}>
-                {renderProfileAvatar('h-16 w-16 text-xl')}
-                <div className="min-w-0">
-                  <p className="text-[14px] font-semibold">Profile picture</p>
-                  <label className={`mt-1 inline-block cursor-pointer text-[13px] font-semibold ${t.mark}`}>
-                    {profilePhotoUploading ? 'Uploading…' : profilePhotoUrl ? 'Change photo' : 'Add a photo'}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={profilePhotoUploading}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0]
-                        event.target.value = ''
-                        if (file) saveProfilePhoto(file)
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {!onboardingCompleted && practitionersLaunched && (
-              <button
-                onClick={async () => {
-                  if (!user) return
-                  setOnboardingCompleted(true)
-                  // The login/checkUser routing decides "already onboarded"
-                  // by whether a skin_profiles row exists at all, not by
-                  // onboarding_completed — so flipping only that flag would
-                  // still bounce them straight back into this screen next
-                  // time they log in. A blank row (everything but user_id
-                  // left null) satisfies that check without claiming any
-                  // skin data that was never actually given.
-                  await Promise.all([
-                    supabase.from('profiles').update({ onboarding_completed: true }).eq('id', user.id),
-                    supabase.from('skin_profiles').upsert({ user_id: user.id }, { onConflict: 'user_id' }),
-                  ])
-                  setScreen('applyPractitioner')
-                }}
-                className={`mt-3 text-[13px] font-semibold ${t.mark}`}
-              >
-                Signing up as a professional, not a client? Skip this →
-              </button>
-            )}
-          </div>
-
-          <div className="mt-8 flex flex-col gap-8">
-
-            <section>
-              <h2 className="mb-3 text-[17px] font-semibold">
-                What is your gender?
-              </h2>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                {['Female', 'Male', 'Non-binary', 'Prefer not to say'].map((option) => (
-                  <button
-                    key={option}
-                    onClick={() => setGender(option)}
-                    className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
-                      gender === option
-                        ? `${t.chip} border-transparent`
-                        : `${t.hair} ${t.muted}`
-                    }`}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="mb-1 text-lg font-semibold">
-                Are you pregnant or breastfeeding?
-              </h2>
-
-              <p className={`mb-4 text-sm leading-relaxed ${t.muted}`}>
-                Some ingredients are usually avoided during pregnancy. We'll leave those
-                out of your routine. You can change this any time.
-              </p>
-
-              <div className="flex gap-3">
-                {[
-                  ['Yes', true],
-                  ['No', false],
-                  ['Rather not say', null],
-                ].map(([label, value]) => (
-                  <button
-                    key={label}
-                    onClick={() => setPregnantOrBreastfeeding(value)}
-                    className={`flex-1 rounded-2xl border px-4 py-3.5 text-[15px] font-medium ${
-                      pregnantOrBreastfeeding === value ? `${t.chip} border-transparent` : `${t.surface} ${t.hair}`
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="mb-3 text-[17px] font-semibold">
-                What is your skin type?
-              </h2>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                {['Normal', 'Dry', 'Oily', 'Combination'].map((type) => (
-                  <button
-                    key={type}
-                    onClick={() => setSkinType(type)}
-                    className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
-                      skinType === type
-                        ? `${t.chip} border-transparent`
-                        : `${t.hair} ${t.muted}`
-                    }`}
-                  >
-                    {type}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="mb-1 text-[17px] font-semibold">
-                What are your main skin concerns?
-              </h2>
-
-              <p className={`mb-3 text-[13px] ${t.faint}`}>
-                Select all that apply.
-              </p>
-
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                {[
-                  'Acne',
-                  'Dark circles',
-                  'Dullness',
-                  'Puffiness',
-                  'Uneven texture',
-                  'Visible pores',
-                  'Dryness',
-                  'Hyperpigmentation',
-                  'Sensitivity',
-                  'None',
-                ].map((concern) => (
-                  <button
-                    key={concern}
-                    onClick={() => {
-                      // "None" is an exclusive choice, not just another
-                      // item in the list — picking it clears everything
-                      // else, and picking anything else clears "None".
-                      // Functional update throughout, same reasoning as
-                      // toggleOption above.
-                      setConcerns((current) => {
-                        if (concern === 'None') {
-                          return current.includes('None') ? [] : ['None']
-                        }
-                        const withoutNone = current.filter((c) => c !== 'None')
-                        return withoutNone.includes(concern)
-                          ? withoutNone.filter((c) => c !== concern)
-                          : [...withoutNone, concern]
-                      })
-                    }}
-                    className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
-                      concerns.includes(concern)
-                        ? `${t.chip} border-transparent`
-                        : `${t.hair} ${t.muted}`
-                    }`}
-                  >
-                    {concern}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="mb-1 text-[17px] font-semibold">
-                What are your skincare goals?
-              </h2>
-
-              <p className={`mb-3 text-[13px] ${t.faint}`}>
-                Select all that apply.
-              </p>
-
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                {[
-                  'Hydration',
-                  'Clearer skin',
-                  'Even skin tone',
-                  'Healthy skin',
-                ].map((goal) => (
-                  <button
-                    key={goal}
-                    onClick={() =>
-                      toggleOption(goal, setGoals)
-                    }
-                    className={`rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
-                      goals.includes(goal)
-                        ? `${t.chip} border-transparent`
-                        : `${t.hair} ${t.muted}`
-                    }`}
-                  >
-                    {goal}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="mb-3 text-[17px] font-semibold">
-                How sensitive is your skin?
-              </h2>
-
-              <div className="flex flex-col gap-2.5">
-                {[
-                  'Not sensitive',
-                  'Sometimes sensitive',
-                  'Very sensitive',
-                ].map((option) => (
-                  <button
-                    key={option}
-                    onClick={() => setSensitivity(option)}
-                    className={`w-full rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition ${
-                      sensitivity === option
-                        ? `${t.chip} border-transparent`
-                        : `${t.hair} ${t.muted}`
-                    }`}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <button
-              disabled={busyAction === 'saveSkinProfile'}
-              onClick={() =>
-                runBusy('saveSkinProfile', async () => {
-                  // getSession() reads the persisted session (no network
-                  // round trip in the normal case) instead of getUser(),
-                  // which validates the token against the auth server every
-                  // time — a signed-in person on a slow connection used to
-                  // get bounced with "Please create an account first," which
-                  // was exactly backwards from what actually happened.
-                  const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-
-                  if (sessionError) {
-                    notify("Couldn't reach the server. Check your connection and try again.")
-                    return
-                  }
-
-                  if (!session?.user) {
-                    notify('Your session ended. Please log in again.')
-                    setScreen('login')
-                    return
-                  }
-
-                  const { error } = await supabase
-                    .from('skin_profiles')
-                    .upsert(
-                      {
-                        user_id: session.user.id,
-                        gender: gender,
-                        pregnant_or_breastfeeding: pregnantOrBreastfeeding ?? null,
-                        skin_type: skinType,
-                        concerns: concerns.join(', '),
-                        goals: goals.join(', '),
-                        sensitivity: sensitivity,
-                      },
-                      { onConflict: 'user_id' }
-                    )
-
-                  if (error) {
-                    notify(error.message)
-                    return
-                  }
-
-                  if (onboardingCompleted) {
-                    notify('Skin profile updated!', 'success')
-                    setSkinProfileEditing(false)
-                  } else {
-                    notify('Skin profile saved!', 'success')
-                    setScreen('products')
-                  }
-                })
-              }
-              className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
-            >
-              {busyAction === 'saveSkinProfile' ? 'Saving…' : onboardingCompleted ? 'Save changes' : 'Continue'}
-            </button>
-
-            {onboardingCompleted && (
-              <button
-                onClick={async () => {
-                  await loadSkinProfile()
-                  setSkinProfileEditing(false)
-                }}
-                className={`w-full rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
-              >
-                Cancel
-              </button>
-            )}
-
-          </div>
-            </>
-          )}
-        </div>
-
-      </main>
+      <SkinProfileScreen
+        busyAction={busyAction}
+        concerns={concerns}
+        gender={gender}
+        goals={goals}
+        loadSkinProfile={loadSkinProfile}
+        notify={notify}
+        onboardingCompleted={onboardingCompleted}
+        practitionersLaunched={practitionersLaunched}
+        pregnantOrBreastfeeding={pregnantOrBreastfeeding}
+        profilePhotoUploading={profilePhotoUploading}
+        profilePhotoUrl={profilePhotoUrl}
+        renderProfileAvatar={renderProfileAvatar}
+        runBusy={runBusy}
+        saveProfilePhoto={saveProfilePhoto}
+        sensitivity={sensitivity}
+        setConcerns={setConcerns}
+        setGender={setGender}
+        setGoals={setGoals}
+        setOnboardingCompleted={setOnboardingCompleted}
+        setPregnantOrBreastfeeding={setPregnantOrBreastfeeding}
+        setScreen={setScreen}
+        setSensitivity={setSensitivity}
+        setSkinProfileEditing={setSkinProfileEditing}
+        setSkinType={setSkinType}
+        skinProfileEditing={skinProfileEditing}
+        skinType={skinType}
+        t={t}
+        toggleOption={toggleOption}
+        user={user}
+      />
     )
   }
 
   if (screen === 'products') {
     return (
-      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
-
-          <button
-            onClick={() => window.history.back()}
-            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round">
-              <path d="M15 5l-7 7 7 7" />
-            </svg>
-            Back
-          </button>
-
-          <div className="mt-5">
-            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-              Step 2 of 3
-            </p>
-
-            <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-              Add your products
-            </h1>
-
-            <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-              Add the products you already own so Tracka+ can organize them for you.
-            </p>
-          </div>
-
-          {(() => {
-            const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-            const withStatus = products.map((item) => ({ item, status: getPaoStatus(item) }))
-            // Expired: past its use-by date, or marked expired by the person.
-            // Expiring soon: today up to 30 days ahead, soonest first.
-            const expired = withStatus
-              .filter(({ status }) => status && (status.marked || status.daysLeft < 0))
-              .sort((a, b) => b.status.daysLeft - a.status.daysLeft)
-            const expiring = withStatus
-              .filter(({ status }) => status && !status.marked && status.daysLeft >= 0 && status.daysLeft <= 30)
-              .sort((a, b) => a.status.daysLeft - b.status.daysLeft)
-
-            const thumb = (item, size = 'h-12 w-12', dim = false) => {
-              const url = productImageFor(item)
-              // Own photos fill the tile; catalogue packshots (white
-              // background) are shown whole.
-              const own = !!item.photo_path && !!productPhotoUrls[item.photo_path]
-              return url ? (
-                <img src={url} alt="" loading="lazy" className={`${size} shrink-0 rounded-xl ${
-                  own ? 'object-cover' : 'bg-white object-contain p-1'
-                } ${dim ? 'opacity-70 grayscale-[35%]' : ''}`} />
-              ) : (
-                renderProductArt(
-                  item.products?.category,
-                  `${size} rounded-xl ${dim ? 'opacity-70 grayscale-[35%]' : ''}`,
-                  size.includes('w-full') ? 'h-[70%] w-[70%]' : 'h-[82%] w-[82%]'
-                )
-              )
-            }
-
-            const countdownTone = (status) =>
-              status.daysLeft <= 0 ? t.danger : status.daysLeft <= 7 ? 'text-amber-600' : t.muted
-
-            const countdownText = (status) =>
-              status.marked
-                ? 'Marked expired'
-                : status.daysLeft < 0
-                ? `Expired ${Math.abs(status.daysLeft)}d ago`
-                : status.daysLeft === 0
-                ? 'Expires today'
-                : `${status.daysLeft}d left`
-
-            const section = (key, title, count, body, hint) => (
-              <section className={`mt-6 overflow-hidden rounded-3xl ${t.surface}`}>
-                <button
-                  type="button"
-                  onClick={() => setProductSections((s) => ({ ...s, [key]: !s[key] }))}
-                  className="flex w-full items-center justify-between px-5 py-4 text-left"
-                  aria-expanded={productSections[key]}
-                >
-                  <span>
-                    <span className="text-[16px] font-semibold">{title}</span>
-                    <span className={`ml-2 text-[13px] tabular-nums ${t.faint}`}>{count}</span>
-                    {hint && <span className={`block text-[12px] ${t.faint}`}>{hint}</span>}
-                  </span>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-                    className={`shrink-0 transition-transform ${productSections[key] ? 'rotate-180' : ''} ${t.faint}`}>
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </button>
-                {productSections[key] && <div className={`border-t ${t.hair}`}>{body}</div>}
-              </section>
-            )
-
-            return (
-              <>
-                {section(
-                  'mine',
-                  'My products',
-                  products.length,
-                  products.length === 0 ? (
-                    <p className={`px-5 py-4 text-[14px] ${t.muted}`}>You haven&apos;t added any products yet.</p>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-3 p-4">
-                      {withStatus.map(({ item, status }) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => openProduct(item.id)}
-                          className={`rounded-2xl border ${t.hair} p-3 text-left`}
-                        >
-                          {thumb(item, 'aspect-square w-full')}
-                          <p className={`mt-2.5 truncate text-[10px] font-semibold uppercase tracking-wide ${t.faint}`}>
-                            {item.products?.brand}
-                          </p>
-                          <p className="line-clamp-2 text-[13px] font-semibold leading-snug">{item.products?.name}</p>
-                          {status && status.daysLeft <= 30 && (
-                            <p className={`mt-1 text-[11px] font-semibold ${countdownTone(status)}`}>{countdownText(status)}</p>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )
-                )}
-
-                {expiring.length > 0 && section(
-                  'expiring',
-                  'Expiring soon',
-                  expiring.length,
-                  <div>
-                    {expiring.map(({ item, status }, i) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => openProduct(item.id)}
-                        className={`flex w-full items-center gap-3 px-5 py-3 text-left ${i > 0 ? `border-t ${t.hair}` : ''}`}
-                      >
-                        {thumb(item)}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14px] font-medium">{item.products?.name}</span>
-                          <span className={`block truncate text-[12px] ${t.faint}`}>Use by {fmtDate(status.expires)}</span>
-                        </span>
-                        <span className={`shrink-0 text-[12px] font-semibold ${countdownTone(status)}`}>
-                          {countdownText(status)}
-                        </span>
-                      </button>
-                    ))}
-                  </div>,
-                  'Within the next 30 days'
-                )}
-
-                {expired.length > 0 && section(
-                  'expired',
-                  'Expired',
-                  expired.length,
-                  <div>
-                    {expired.map(({ item, status }, i) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => openProduct(item.id)}
-                        className={`flex w-full items-center gap-3 px-5 py-3 text-left ${i > 0 ? `border-t ${t.hair}` : ''}`}
-                      >
-                        {thumb(item, 'h-12 w-12', true)}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14px] font-medium">{item.products?.name}</span>
-                          <span className={`block truncate text-[12px] ${t.faint}`}>
-                            {status.marked ? `Marked expired ${fmtDate(status.expires)}` : `Expired ${fmtDate(status.expires)}`}
-                          </span>
-                        </span>
-                        <span className={`shrink-0 text-[12px] font-semibold ${t.danger}`}>
-                          {status.marked ? 'Marked' : countdownText(status)}
-                        </span>
-                      </button>
-                    ))}
-                  </div>,
-                  'Time to replace these'
-                )}
-
-                {section(
-                  'empties',
-                  'Empties',
-                  empties.length,
-                  empties.length === 0 ? (
-                    <p className={`px-5 py-4 text-[13px] leading-relaxed ${t.muted}`}>
-                      Finished a product? Open it and tap <b>Mark as finished</b>. It&apos;ll be kept here as a record.
-                    </p>
-                  ) : (
-                    <div>
-                      {empties.map((item, i) => {
-                        const start = item.opened_date ? new Date(item.opened_date + 'T00:00:00') : new Date(item.added_at)
-                        const days = Math.max(1, Math.round((new Date(item.finished_at) - start) / 86400000))
-                        const lasted = days >= 60 ? `${Math.round(days / 30)} months` : days >= 14 ? `${Math.round(days / 7)} weeks` : `${days} ${days === 1 ? 'day' : 'days'}`
-                        return (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => openProduct(item.id)}
-                            className={`flex w-full items-center gap-3 px-5 py-3 text-left ${i > 0 ? `border-t ${t.hair}` : ''}`}
-                          >
-                            {thumb(item, 'h-12 w-12', true)}
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[14px] font-medium">{item.products?.name}</span>
-                              <span className={`block truncate text-[12px] ${t.faint}`}>
-                                Finished {fmtDate(item.finished_at)} · lasted {lasted}
-                              </span>
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  ),
-                  'Products you’ve used up'
-                )}
-              </>
-            )
-          })()}
-
-          <div className="mt-2">
-
-            <button
-              onClick={() => {
-                setAddProductReturnScreen('products')
-                setScreen('addProduct')
-              }}
-              className={`mt-6 w-full rounded-2xl border py-[18px] text-base font-bold ${t.hair} ${t.muted}`}
-            >
-              + Add a product
-            </button>
-
-            <button
-              onClick={() => {
-                showLocalNotification('New product alert 👀', 'Remember: introduce slowly.')
-                setScreen('routinePlanner')
-              }}
-              className={`mt-3 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
-            >
-              Build my routine
-            </button>
-
-            <div className="mt-3 flex gap-3">
-              <button
-                onClick={() => setScreen('today')}
-                className={`flex-1 rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
-              >
-                Back to today
-              </button>
-
-              <button
-                onClick={() => setScreen('ingredientChecker')}
-                className={`flex-1 rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
-              >
-                Ingredient checker
-              </button>
-            </div>
-
-          </div>
-        </div>
-
-        {onboardingCompleted && renderBottomTabs('products', t)}
-      </main>
+      <ProductsScreen
+        isNight={isNight}
+        openAd={openAd}
+        userId={user?.id}
+        empties={empties}
+        getPaoStatus={getPaoStatus}
+        onboardingCompleted={onboardingCompleted}
+        openProduct={openProduct}
+        productImageFor={productImageFor}
+        productPhotoUrls={productPhotoUrls}
+        products={products}
+        renderBottomTabs={renderBottomTabs}
+        renderProductArt={renderProductArt}
+        setAddProductReturnScreen={setAddProductReturnScreen}
+        setScreen={setScreen}
+        showLocalNotification={showLocalNotification}
+        t={t}
+      />
     )
   }
 
   if (screen === 'addProduct') {
     return (
-      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
+      <AddProductScreen
+        PRODUCT_SUGGESTIONS_ENABLED={PRODUCT_SUGGESTIONS_ENABLED}
+        addProductReturnScreen={addProductReturnScreen}
+        brandSuggestionsOpen={brandSuggestionsOpen}
+        guessCategory={guessCategory}
+        isNight={isNight}
+        liveBrandMatches={liveBrandMatches}
+        liveProductMatches={liveProductMatches}
+        notify={notify}
+        productBrand={productBrand}
+        productCategory={productCategory}
+        productExpiryDate={productExpiryDate}
+        productImageUrl={productImageUrl}
+        productIngredients={productIngredients}
+        productName={productName}
+        productOpenedDate={productOpenedDate}
+        productPaoMonths={productPaoMonths}
+        productSaving={productSaving}
+        productSuggestionsOpen={productSuggestionsOpen}
+        reloadProducts={reloadProducts}
+        setBrandSuggestionsOpen={setBrandSuggestionsOpen}
+        setProductBrand={setProductBrand}
+        setProductCategory={setProductCategory}
+        setProductExpiryDate={setProductExpiryDate}
+        setProductImageUrl={setProductImageUrl}
+        setProductIngredients={setProductIngredients}
+        setProductName={setProductName}
+        setProductOpenedDate={setProductOpenedDate}
+        setProductPaoMonths={setProductPaoMonths}
+        setProductSaving={setProductSaving}
+        setProductSuggestionsOpen={setProductSuggestionsOpen}
+        setScreen={setScreen}
+        t={t}
+      />
+    )
+  }
 
-          <button
-            onClick={() => setScreen(addProductReturnScreen)}
-            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round">
-              <path d="M15 5l-7 7 7 7" />
-            </svg>
-            {addProductReturnScreen === 'routinePlanner' ? 'Edit routine' : 'Products'}
-          </button>
+  if (screen === 'adsConsole') {
+    return (
+      <AdsConsole
+        supabase={supabase}
+        t={t}
+        isNight={isNight}
+        notify={notify}
+        confirmAction={confirmAction}
+        canManage={user?.email === ADMIN_EMAIL}
+        onBack={() => {
+          setAdminTab('ads')
+          setScreen('admin')
+        }}
+      />
+    )
+  }
 
-          <div className="mt-5">
-            <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
-              Add a product
-            </h1>
-
-            <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-              Add a skincare product you already own.
-            </p>
-          </div>
-
-          <div className="mt-8 flex flex-col gap-5">
-
-            <div className="relative">
-              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-                Brand
-              </label>
-
-              <input
-                type="text"
-                placeholder="Search or type a brand"
-                value={productBrand}
-                onChange={(e) => {
-                  setProductBrand(e.target.value)
-                  setBrandSuggestionsOpen(true)
-                }}
-                onFocus={() => setBrandSuggestionsOpen(true)}
-                onBlur={() => setTimeout(() => setBrandSuggestionsOpen(false), 150)}
-                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-              />
-
-              {PRODUCT_SUGGESTIONS_ENABLED && brandSuggestionsOpen && productBrand.trim() && (() => {
-                const merged = searchNigerianBrands(productBrand)
-
-                for (const brand of BRANDS) {
-                  if (
-                    brand.toLowerCase().includes(productBrand.trim().toLowerCase()) &&
-                    !merged.some((m) => m.toLowerCase() === brand.toLowerCase())
-                  ) {
-                    merged.push(brand)
-                  }
-                }
-
-                for (const brand of liveBrandMatches) {
-                  if (!merged.some((m) => m.toLowerCase() === brand.toLowerCase())) {
-                    merged.push(brand)
-                  }
-                }
-                const matches = merged.slice(0, 8)
-
-                if (matches.length === 0) {
-                  return (
-                    <div className={`absolute z-10 mt-1 w-full rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 shadow-lg`}>
-                      <p className={`text-[13px] ${t.muted}`}>
-                        Can't find "{productBrand.trim()}"? Save it as a new brand.
-                      </p>
-                    </div>
-                  )
-                }
-
-                return (
-                  <div className={`absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl border ${t.hair} ${t.surface} shadow-lg`}>
-                    {matches.map((brand) => (
-                      <button
-                        key={brand}
-                        type="button"
-                        onMouseDown={() => {
-                          setProductBrand(brand)
-                          setBrandSuggestionsOpen(false)
-                        }}
-                        className={`block w-full px-4 py-2.5 text-left text-[14px] ${t.muted}`}
-                      >
-                        {brand}
-                      </button>
-                    ))}
-                  </div>
-                )
-              })()}
-
-              <p className={`mt-1.5 text-[12px] ${t.faint}`}>
-                Type the brand name.
-              </p>
-            </div>
-
-            <div className="relative">
-              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-                Product name
-              </label>
-
-              <input
-                type="text"
-                placeholder="e.g. Hydrating Cleanser"
-                value={productName}
-                onChange={(e) => {
-                  setProductName(e.target.value)
-                  setProductIngredients('')
-                  setProductImageUrl('')
-                  setProductSuggestionsOpen(true)
-                }}
-                onFocus={() => setProductSuggestionsOpen(true)}
-                onBlur={() => setTimeout(() => setProductSuggestionsOpen(false), 150)}
-                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-              />
-
-              {PRODUCT_SUGGESTIONS_ENABLED && productSuggestionsOpen && productBrand.trim() && liveProductMatches.length > 0 && (
-                <div className={`absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border ${t.hair} ${t.surface} shadow-lg`}>
-                  {liveProductMatches.slice(0, 8).map((match) => (
-                    <button
-                      key={match.code}
-                      type="button"
-                      onMouseDown={() => {
-                        setProductName(match.name)
-                        const guessed = guessCategory(match.category)
-                        if (guessed) setProductCategory(guessed)
-                        setProductIngredients(match.ingredients || '')
-                        setProductImageUrl(match.image || '')
-                        setProductSuggestionsOpen(false)
-                      }}
-                      className="flex w-full items-center gap-3 px-3 py-2 text-left"
-                    >
-                      {match.image ? (
-                        <img
-                          src={match.image}
-                          alt=""
-                          loading="lazy"
-                          className="h-11 w-11 shrink-0 rounded-lg bg-white object-contain"
-                        />
-                      ) : (
-                        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold uppercase ${
-                          isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'
-                        } ${t.faint}`}>
-                          {(match.brand || match.name || '?').slice(0, 2)}
-                        </span>
-                      )}
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[14px] font-medium">{match.name}</span>
-                        <span className={`block truncate text-[12px] capitalize ${t.faint}`}>
-                          {[match.brand, match.category].filter(Boolean).join(' · ')}
-                        </span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {PRODUCT_SUGGESTIONS_ENABLED && productSuggestionsOpen && productBrand.trim() && productName.trim() && liveProductMatches.length === 0 && (
-                <div className={`absolute z-10 mt-1 w-full rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 shadow-lg`}>
-                  <p className={`text-[13px] ${t.muted}`}>
-                    Can't find "{productName.trim()}"? Save it as a new product.
-                  </p>
-                </div>
-              )}
-
-              <p className={`mt-1.5 text-[12px] ${t.faint}`}>
-                Type the product name.
-              </p>
-            </div>
-
-            <div>
-              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-                Category
-              </label>
-
-              <select
-                value={productCategory}
-                onChange={(e) => setProductCategory(e.target.value)}
-                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-              >
-                <option value="">Select a category</option>
-                <option value="cleanser">Cleanser</option>
-                <option value="toner">Toner</option>
-                <option value="essence">Essence</option>
-                <option value="serum">Serum</option>
-                <option value="treatment">Treatment</option>
-                <option value="moisturizer">Moisturizer</option>
-                <option value="body_wash">Body wash</option>
-                <option value="body_moisturizer">Body moisturizer</option>
-                <option value="body_oil">Body oil</option>
-                <option value="body_scrub">Body scrub</option>
-                <option value="sunscreen">Sunscreen</option>
-                <option value="exfoliant">Exfoliant</option>
-                <option value="mask">Mask</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-
-            <div>
-              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-                Opened date
-              </label>
-
-              <input
-                type="date"
-                value={productOpenedDate}
-                onChange={(e) => setProductOpenedDate(e.target.value)}
-                min={addMonths(localDateString(), -120)}
-                max={localDateString()}
-                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-              />
-            </div>
-
-            <div>
-              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-                Expiry date
-              </label>
-
-              <input
-                type="date"
-                value={productExpiryDate}
-                onChange={(e) => setProductExpiryDate(e.target.value)}
-                min={localDateString()}
-                className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-              />
-
-            </div>
-
-            <div>
-              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-                Use within (after opening)
-              </label>
-
-              <div className="mt-2 flex flex-wrap gap-2">
-                {[
-                  ['None', 0],
-                  ['3 months', 3],
-                  ['6 months', 6],
-                  ['9 months', 9],
-                  ['12 months', 12],
-                  ['18 months', 18],
-                  ['24 months', 24],
-                  ['36 months', 36],
-                ].map(([label, months]) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => setProductPaoMonths(months)}
-                    className={`rounded-full border px-4 py-2 text-[13px] font-semibold transition ${
-                      productPaoMonths === months
-                        ? `${t.chip} border-transparent`
-                        : `${t.hair} ${t.muted}`
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <button
-              disabled={productSaving}
-              onClick={async () => {
-                // Guards against double-tap creating two identical products —
-                // there was no submitting state before, so a second tap while
-                // the first request was still in flight fired a second insert.
-                if (productSaving) return
-
-                if (!productBrand || !productName || !productCategory) {
-                  notify('Please fill in all fields.')
-                  return
-                }
-
-                setProductSaving(true)
-
-                const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-
-                if (sessionError) {
-                  notify("Couldn't reach the server. Check your connection and try again.")
-                  setProductSaving(false)
-                  return
-                }
-
-                if (!session?.user) {
-                  notify('Your session ended. Please log in again.')
-                  setProductSaving(false)
-                  setScreen('login')
-                  return
-                }
-
-                const {
-                  data: product,
-                  error: productError,
-                } = await supabase
-                  .from('products')
-                  .insert({
-                    brand: productBrand,
-                    name: productName,
-                    category: productCategory,
-                    ingredients: productIngredients || null,
-                    // Only Open Beauty Facts' own image host is accepted.
-                    image_url: productImageUrl.startsWith('https://images.openbeautyfacts.org/') ? productImageUrl : null,
-                  })
-                  .select()
-                  .single()
-
-                if (productError) {
-                  notify(productError.message)
-                  setProductSaving(false)
-                  return
-                }
-
-                const { error: userProductError } =
-                  await supabase
-                    .from('user_products')
-                    .insert({
-                      user_id: session.user.id,
-                      product_id: product.id,
-                      is_active: true,
-                      opened_date: productOpenedDate || null,
-                      pao_months: productPaoMonths || null,
-                      expiry_date: productExpiryDate || null,
-                    })
-
-                if (userProductError) {
-                  notify(userProductError.message)
-                  setProductSaving(false)
-                  return
-                }
-
-                const {
-                  data: updatedProducts,
-                  error: updatedProductsError,
-                } = await supabase
-                  .from('user_products')
-                  .select(`
-                    id,
-                    product_id,
-                    opened_date,
-                    pao_months,
-                    expiry_date,
-                    products (
-                      id,
-                      brand,
-                      name,
-                      category,
-                      ingredients
-                    )
-                  `)
-                  .eq('user_id', session.user.id)
-                  .eq('is_active', true)
-
-                if (updatedProductsError) {
-                  console.error(updatedProductsError)
-                } else {
-                  setProducts(updatedProducts || [])
-                  const addedProduct = (updatedProducts || []).find((item) => item.product_id === product.id)
-                  if (addedProduct && addProductReturnScreen === 'routinePlanner') {
-                    setProductTimes((current) => ({
-                      ...current,
-                      [addedProduct.id]: getDefaultProductTime(addedProduct),
-                    }))
-                    setProductDays((current) => ({
-                      ...current,
-                      [addedProduct.id]: [0, 1, 2, 3, 4, 5, 6],
-                    }))
-                  }
-                }
-
-                setProductBrand('')
-                setProductName('')
-                setProductCategory('')
-                setProductIngredients('')
-                setProductImageUrl('')
-                setProductOpenedDate('')
-                setProductPaoMonths(0)
-                setProductExpiryDate('')
-                setProductSaving(false)
-                setScreen(addProductReturnScreen)
-              }}
-              className={`mt-2 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
-            >
-              {productSaving ? 'Saving…' : 'Save product'}
-            </button>
-
-          </div>
-        </div>
-      </main>
+  if (screen === 'featureGuide') {
+    return (
+      <FeatureGuide
+        t={t}
+        isNight={isNight}
+        onBack={() => setScreen('today')}
+        onShowMe={openFeatureFromGuide}
+        onComplete={completeFeatureGuide}
+      />
     )
   }
 
@@ -5741,448 +4084,25 @@ const submitRecommendation = async () => {
   }
 
   if (screen === 'ingredientChecker') {
-    const details = findIngredientDetails(ingredientQuery)
-    const hasQuery = ingredientQuery.trim().length > 0
-    const noMatch = hasQuery && !details
-    const isGenericList = (s) => /^all\b/i.test(s.trim())
-
     return (
-      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
-
-          <button
-            onClick={() => setScreen('products')}
-            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round">
-              <path d="M15 5l-7 7 7 7" />
-            </svg>
-            My products
-          </button>
-
-          <div className="mt-5">
-            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${t.mark}`}>
-              Ingredient checker
-            </p>
-
-            <h1 className="mt-1.5 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-              Know what's inside
-            </h1>
-          </div>
-
-          <div className={`mt-5 grid grid-cols-2 rounded-xl p-0.5 ${isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'}`}>
-            {[['product', 'My products'], ['lookup', 'Look up an ingredient']].map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setCheckerMode(key)}
-                className={`rounded-[10px] py-2 text-[12px] font-semibold transition ${
-                  checkerMode === key ? `${t.surface} shadow-sm` : t.faint
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {checkerMode === 'product' && (() => {
-            const withIngredients = products.filter((p) => (p.products?.ingredients || '').trim().length > 0)
-            const selected = checkerProductId === 'paste'
-              ? null
-              : withIngredients.find((p) => p.id === checkerProductId) || withIngredients[0] || null
-            const pasting = checkerProductId === 'paste' || withIngredients.length === 0
-            const sourceText = pasting ? checkerPasted : selected?.products?.ingredients || ''
-            const analysis = sourceText.trim() ? analyzeIngredients(sourceText) : null
-
-            const TONE = {
-              active: { bar: 'bg-emerald-500', drop: 'text-emerald-500', label: 'Key actives' },
-              helpful: { bar: 'bg-teal-300', drop: 'text-teal-400', label: 'Helpful' },
-              flag: { bar: 'bg-amber-400', drop: 'text-amber-500', label: 'Worth knowing' },
-              neutral: { bar: isNight ? 'bg-white/15' : 'bg-[#101B2D]/15', drop: t.faint, label: 'Base & texture' },
-            }
-            const CONTAINS = {
-              fragrance: 'Contains fragrance',
-              alcohol: 'Contains drying alcohol',
-              essentialOil: 'Contains essential oils',
-              paraben: 'Contains parabens',
-              sulfate: 'Contains sulfates',
-              silicone: 'Contains silicones',
-            }
-            const visible = analysis
-              ? (checkerShowAll ? analysis.items : analysis.items.slice(0, 8))
-              : []
-
-            return (
-              <>
-                {withIngredients.length > 0 && (
-                  <div className="-mx-6 mt-5 flex gap-2 overflow-x-auto px-6 pb-1 [scrollbar-width:none]">
-                    {withIngredients.map((p) => {
-                      const on = !pasting && selected?.id === p.id
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => { setCheckerProductId(p.id); setCheckerShowAll(false) }}
-                          className={`max-w-[160px] shrink-0 rounded-xl border px-3 py-2 text-left transition ${
-                            on ? 'border-emerald-500/60 bg-emerald-500/10' : `${t.hair}`
-                          }`}
-                        >
-                          <span className={`block truncate text-[10px] font-semibold uppercase tracking-wide ${t.faint}`}>
-                            {p.products?.brand}
-                          </span>
-                          <span className="block truncate text-[13px] font-medium">{p.products?.name}</span>
-                        </button>
-                      )
-                    })}
-                    <button
-                      type="button"
-                      onClick={() => { setCheckerProductId('paste'); setCheckerShowAll(false) }}
-                      className={`shrink-0 rounded-xl border border-dashed px-3 py-2 text-[13px] font-medium ${
-                        pasting ? 'border-emerald-500/60 bg-emerald-500/10' : `${t.hair} ${t.muted}`
-                      }`}
-                    >
-                      + Paste a list
-                    </button>
-                  </div>
-                )}
-
-                {pasting && (
-                  <div className="mt-4">
-                    {withIngredients.length === 0 && (
-                      <p className={`mb-3 text-[13px] leading-relaxed ${t.muted}`}>
-                        None of your products has an ingredient list saved yet. Paste one from the packaging or the brand's website:
-                      </p>
-                    )}
-                    <textarea
-                      value={checkerPasted}
-                      onChange={(e) => { setCheckerPasted(e.target.value); setCheckerShowAll(false) }}
-                      rows={4}
-                      placeholder="Water, Glycerin, Niacinamide, …"
-                      className={`w-full resize-none rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 text-[14px] leading-relaxed outline-none`}
-                    />
-                  </div>
-                )}
-
-                {analysis && analysis.items.length > 0 && (
-                  <>
-                    <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
-                      {!pasting && selected && (
-                        <>
-                          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${t.faint}`}>
-                            {selected.products?.brand}
-                          </p>
-                          <p className="mt-0.5 text-[19px] font-semibold leading-snug">{selected.products?.name}</p>
-                        </>
-                      )}
-                      <div className={`grid grid-cols-3 gap-2 ${!pasting && selected ? 'mt-4' : ''}`}>
-                        {[
-                          [analysis.composition.total, 'Ingredients', ''],
-                          [analysis.composition.active, 'Key actives', 'text-emerald-500'],
-                          [analysis.composition.flag, 'Worth knowing', analysis.composition.flag ? 'text-amber-500' : ''],
-                        ].map(([value, label, color]) => (
-                          <div key={label}>
-                            <p className={`text-[24px] font-semibold leading-none tabular-nums ${color}`}>{value}</p>
-                            <p className={`mt-1 text-[11px] ${t.faint}`}>{label}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="mt-7">
-                      <h2 className="text-[17px] font-semibold">What's inside</h2>
-                      <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2.5">
-                        {analysis.freeFrom.map((f) => (
-                          <div key={f.key} className="flex items-center gap-2">
-                            {f.ok ? (
-                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white">
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                  strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M5 12.5l4.5 4.5L19 7.5" />
-                                </svg>
-                              </span>
-                            ) : (
-                              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-400/20 ${isNight ? "text-amber-300" : "text-amber-600"}`}>
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                  strokeWidth="3" strokeLinecap="round">
-                                  <path d="M12 6v8M12 18v.01" />
-                                </svg>
-                              </span>
-                            )}
-                            <span className={`text-[13px] ${f.ok ? '' : t.muted}`}>
-                              {f.ok ? f.label : CONTAINS[f.key]}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className={`mt-7 overflow-hidden rounded-3xl ${t.surface}`}>
-                      <div className="px-5 pt-5">
-                        <div className="flex items-baseline justify-between">
-                          <h2 className="text-[17px] font-semibold">Ingredients</h2>
-                          <span className={`text-[12px] ${t.faint}`}>In label order</span>
-                        </div>
-
-                        <div className="mt-3 flex h-2 gap-[3px] overflow-hidden rounded-full">
-                          {['active', 'helpful', 'flag', 'neutral'].map((tone) =>
-                            analysis.composition[tone] > 0 ? (
-                              <span
-                                key={tone}
-                                className={`h-full ${TONE[tone].bar}`}
-                                style={{ flexGrow: analysis.composition[tone] }}
-                              />
-                            ) : null
-                          )}
-                        </div>
-                        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1">
-                          {['active', 'helpful', 'flag', 'neutral'].map((tone) =>
-                            analysis.composition[tone] > 0 ? (
-                              <span key={tone} className={`flex items-center gap-1.5 text-[11px] ${t.muted}`}>
-                                <span className={`h-1.5 w-1.5 rounded-full ${TONE[tone].bar}`} />
-                                {TONE[tone].label} · {analysis.composition[tone]}
-                              </span>
-                            ) : null
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="mt-4">
-                        {visible.map((item) => {
-                          const clickable = !!item.guide
-                          const Row = clickable ? 'button' : 'div'
-                          return (
-                            <Row
-                              key={item.index}
-                              type={clickable ? 'button' : undefined}
-                              onClick={clickable ? () => {
-                                setIngredientQuery(item.guide.ingredient)
-                                setCheckerMode('lookup')
-                                window.scrollTo(0, 0)
-                              } : undefined}
-                              className={`flex w-full items-center gap-3 border-t px-5 py-3 text-left ${t.hair} ${
-                                item.tone === 'active' ? 'bg-emerald-500/[0.07]' : ''
-                              }`}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
-                                className={`shrink-0 ${TONE[item.tone].drop}`}>
-                                <path d="M12 2.5c3.6 4.4 6.5 8.2 6.5 11.7a6.5 6.5 0 0 1-13 0c0-3.5 2.9-7.3 6.5-11.7Z" />
-                              </svg>
-                              <span className="min-w-0 flex-1">
-                                <span className={`block truncate text-[14px] ${
-                                  item.tone === 'active' ? `font-semibold ${isNight ? 'text-emerald-400' : 'text-emerald-700'}` : 'font-medium'
-                                }`}>
-                                  {item.name}
-                                </span>
-                                {item.role && (
-                                  <span className={`block truncate text-[11px] ${t.faint}`}>{item.role}</span>
-                                )}
-                              </span>
-                              {item.tone === 'active' && (
-                                <span className="flex shrink-0 items-center gap-1 text-[11px] font-semibold text-emerald-600">
-                                  Learn
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M9 5l7 7-7 7" />
-                                  </svg>
-                                </span>
-                              )}
-                              {item.tone === 'flag' && (
-                                <span className={`shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold ${isNight ? "text-amber-300" : "text-amber-700"}`}>
-                                  {item.flag}
-                                </span>
-                              )}
-                            </Row>
-                          )
-                        })}
-                      </div>
-
-                      {analysis.items.length > 8 && (
-                        <button
-                          type="button"
-                          onClick={() => setCheckerShowAll(!checkerShowAll)}
-                          className={`w-full border-t py-3.5 text-center text-[13px] font-semibold ${t.hair}`}
-                        >
-                          {checkerShowAll ? 'Show fewer' : `Show all ${analysis.items.length} ingredients`}
-                        </button>
-                      )}
-                    </div>
-
-                    <p className={`mt-4 text-[11px] leading-relaxed ${t.faint}`}>
-                      Based on the ingredient list only. "Worth knowing" flags common irritants for sensitive skin — they're not necessarily bad for you.
-                    </p>
-                  </>
-                )}
-              </>
-            )
-          })()}
-
-          {checkerMode === 'lookup' && (<>
-          <div className="mt-6">
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Search ingredients
-            </label>
-
-            <input
-              type="text"
-              value={ingredientQuery}
-              onChange={(e) => setIngredientQuery(e.target.value)}
-              placeholder="e.g. Retinol, Vitamin C, Salicylic Acid"
-              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-          </div>
-
-          {details && (
-            <>
-              <div className={`mt-5 rounded-3xl ${t.surface} p-5`}>
-                <h2 className="text-[21px] font-semibold">{details.ingredient}</h2>
-
-                {details.class && (
-                  <span className={`mt-2 inline-block rounded-full px-3 py-1 text-[12px] font-semibold ${t.chip}`}>
-                    {details.class}
-                  </span>
-                )}
-
-                <div className={`mt-4 flex gap-6 border-t pt-4 ${t.hair}`}>
-                  {details.bestTime && (
-                    <div>
-                      <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Best used</p>
-                      <p className="mt-0.5 flex items-center gap-1.5 text-[14px] font-semibold">
-                        {/PM/i.test(details.bestTime) && !/AM/i.test(details.bestTime) ? (
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" strokeWidth="1.8"
-                            strokeLinecap="round" strokeLinejoin="round" className={t.mark}>
-                            <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" />
-                          </svg>
-                        ) : /AM/i.test(details.bestTime) && !/PM/i.test(details.bestTime) ? (
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" strokeWidth="1.8"
-                            strokeLinecap="round" strokeLinejoin="round" className={t.mark}>
-                            <circle cx="12" cy="12" r="4.2" />
-                            <path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7" />
-                          </svg>
-                        ) : null}
-                        {details.bestTime}
-                      </p>
-                    </div>
-                  )}
-
-                  {details.typicalFrequency && (
-                    <div>
-                      <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Frequency</p>
-                      <p className="mt-0.5 text-[14px] font-semibold">{details.typicalFrequency}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {details.about && (
-                <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-                  <h3 className="text-[15px] font-semibold">About {details.ingredient}</h3>
-                  <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>{details.about}</p>
-                </div>
-              )}
-
-              {details.mainUses && (
-                <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-                  <h3 className="flex items-center gap-2 text-[15px] font-semibold">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className={t.mark}>
-                      <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />
-                    </svg>
-                    Main Uses
-                  </h3>
-                  <ul className="mt-3 flex flex-col gap-1.5">
-                    {details.mainUses.split(',').map((use) => use.trim()).filter(Boolean).map((use) => (
-                      <li key={use} className={`flex items-center gap-2 text-[14px] ${t.muted}`}>
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${t.chip}`} />
-                        <span className="capitalize">{use}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {(details.howToUse || details.precaution) && (
-                <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-                  <h3 className="text-[15px] font-semibold">How to use</h3>
-
-                  {details.howToUse && (
-                    <p className="mt-2 text-[14px] leading-relaxed">{details.howToUse}</p>
-                  )}
-
-                  {details.precaution && (
-                    <div className={`mt-3 flex items-start gap-2 rounded-2xl ${t.chip} p-3`}>
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" strokeWidth="1.8"
-                        strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0">
-                        <path d="M12 3.5 21 19H3L12 3.5Z" />
-                        <path d="M12 9.5v4" />
-                        <path d="M12 16.5v.01" />
-                      </svg>
-                      <p className="text-[13px] leading-relaxed">{details.precaution}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {(details.compatibleWith || details.useCautionWith) && (
-                <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-                  <h3 className="text-[15px] font-semibold">Compatibility</h3>
-
-                  {details.compatibleWith && (
-                    <div className="mt-3">
-                      <p className="flex items-center gap-1.5 text-[13px] font-semibold">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="2.2"
-                          strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
-                          <path d="M4 12.5l5.2 5.2L20 7" />
-                        </svg>
-                        Works well with
-                      </p>
-                      <p className={`mt-1 text-[14px] leading-relaxed ${t.muted}`}>
-                        {isGenericList(details.compatibleWith)
-                          ? "Plays well with the rest of your routine."
-                          : details.compatibleWith}
-                      </p>
-                    </div>
-                  )}
-
-                  {details.useCautionWith && (
-                    <div className={`${details.compatibleWith ? `mt-4 border-t pt-4 ${t.hair}` : 'mt-3'}`}>
-                      <p className="flex items-center gap-1.5 text-[13px] font-semibold">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="1.8"
-                          strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-                          <path d="M12 3.5 21 19H3L12 3.5Z" />
-                          <path d="M12 9.5v4" />
-                          <path d="M12 16.5v.01" />
-                        </svg>
-                        Use caution with
-                      </p>
-                      <p className={`mt-1 text-[14px] leading-relaxed ${t.muted}`}>{details.useCautionWith}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-
-          {noMatch && (
-            <div className={`mt-5 rounded-3xl border ${t.hair} p-5`}>
-              <p className={`text-[14px] leading-relaxed ${t.muted}`}>
-                Can't find "{ingredientQuery.trim()}". We can't confirm how to use it
-                or what it mixes with — treat it carefully and check the product's own instructions.
-              </p>
-            </div>
-          )}
-          </>)}
-
-
-        </div>
-
-        {onboardingCompleted && renderBottomTabs('products', t)}
-      </main>
+      <IngredientCheckerScreen
+        checkerMode={checkerMode}
+        checkerPasted={checkerPasted}
+        checkerProductId={checkerProductId}
+        checkerShowAll={checkerShowAll}
+        ingredientQuery={ingredientQuery}
+        isNight={isNight}
+        onboardingCompleted={onboardingCompleted}
+        products={products}
+        renderBottomTabs={renderBottomTabs}
+        setCheckerMode={setCheckerMode}
+        setCheckerPasted={setCheckerPasted}
+        setCheckerProductId={setCheckerProductId}
+        setCheckerShowAll={setCheckerShowAll}
+        setIngredientQuery={setIngredientQuery}
+        setScreen={setScreen}
+        t={t}
+      />
     )
   }
 
@@ -6222,772 +4142,23 @@ if (screen === 'checkEmail') {
 }
 
 if (screen === 'admin') {
-  const adminQuery = adminSignupsQuery.trim().toLowerCase()
-  const filteredAdminUsers = !adminQuery
-    ? adminUsers
-    : adminUsers.filter((u) =>
-        [u.email, u.username].filter(Boolean).some((v) => v.toLowerCase().includes(adminQuery))
-      )
-
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
-
-        <div className="flex items-center justify-between">
-          <div>
-            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-              Admin
-            </p>
-            <h1 className="mt-1 font-display text-[32px] font-light leading-[1.05] tracking-tight">
-              {adminTab === 'signups'
-                ? 'Signups'
-                : adminTab === 'practitioners'
-                ? 'Revoked — awaiting restoration'
-                : adminTab === 'challenges'
-                ? 'Challenges'
-                : adminTab === 'products'
-                ? 'Products'
-                : adminTab === 'referrals'
-                ? 'Referrals'
-                : 'Verified practitioners'}
-            </h1>
-          </div>
-
-          <button
-            type="button"
-            onClick={async () => {
-              const confirmed = await confirmAction('Log out of the admin dashboard?')
-              if (!confirmed) return
-              await supabase.auth.signOut()
-              setUser(null)
-              setPractitionerStatus(null)
-              setScreen('welcome')
-            }}
-            className={`rounded-2xl border px-4 py-2.5 text-[13px] font-semibold ${t.hair} ${t.muted}`}
-          >
-            Log out
-          </button>
-        </div>
-
-        <div className="mt-4 grid grid-cols-3 gap-2.5">
-          <div className={`rounded-2xl ${t.surface} p-3`}>
-            <p className="text-[20px] font-semibold">{adminUsers.length}</p>
-            <p className={`text-[11px] ${t.muted}`}>Total users</p>
-          </div>
-          <div className={`rounded-2xl ${t.surface} p-3`}>
-            <p className="text-[20px] font-semibold">{verifiedPractitionersAdmin.length}</p>
-            <p className={`text-[11px] ${t.muted}`}>Verified pros</p>
-          </div>
-          <div className={`rounded-2xl ${t.surface} p-3`}>
-            <p className="text-[20px] font-semibold">{pendingPractitioners.length}</p>
-            <p className={`text-[11px] ${t.muted}`}>Pending apps</p>
-          </div>
-        </div>
-
-        <div className={`mt-3 flex items-center justify-between rounded-2xl ${t.surface} p-4`}>
-          <div>
-            <p className="text-[14px] font-semibold">
-              Practitioners {practitionersLaunched ? 'launched' : 'parked'}
-            </p>
-            <p className={`mt-0.5 text-[12px] ${t.muted}`}>
-              {practitionersLaunched
-                ? 'Anyone can apply and go live instantly.'
-                : 'New applications are blocked. Existing practitioners still work.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={busyAction === 'togglePractitionersLaunch'}
-            onClick={() => runBusy('togglePractitionersLaunch', togglePractitionersLaunch)}
-            className={`shrink-0 rounded-xl border px-3.5 py-2 text-[13px] font-semibold disabled:opacity-50 ${t.hair} ${t.muted}`}
-          >
-            {busyAction === 'togglePractitionersLaunch' ? '…' : practitionersLaunched ? 'Park it' : 'Launch'}
-          </button>
-        </div>
-
-        <div className="mt-4">
-          <label htmlFor="admin-section" className="sr-only">Admin section</label>
-          <select
-            id="admin-section"
-            value={adminTab}
-            onChange={(e) => setAdminTab(e.target.value)}
-            className={`w-full appearance-none rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 text-[14px] font-semibold outline-none`}
-          >
-            <option value="signups">Signups</option>
-            <option value="practitioners">
-              {`Revoked${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`}
-            </option>
-            <option value="challenges">Challenges</option>
-            <option value="products">Products</option>
-            <option value="referrals">Referrals</option>
-          </select>
-        </div>
-
-        {adminTab === 'signups' && !adminLoading && !adminError && (
-          <>
-            <input
-              type="text"
-              placeholder="Search by email or username…"
-              value={adminSignupsQuery}
-              onChange={(e) => setAdminSignupsQuery(e.target.value)}
-              className={`mt-3 w-full rounded-2xl border ${t.hair} px-4 py-3 text-[14px] outline-none`}
-            />
-
-            <div className="mt-3 flex items-center justify-between">
-              <p className={`text-[13px] ${t.faint}`}>
-                {filteredAdminUsers.length} {filteredAdminUsers.length === 1 ? 'user' : 'users'}
-                {adminQuery && ` of ${adminUsers.length}`}
-              </p>
-
-              <button
-                type="button"
-                disabled={adminUsers.length === 0}
-                onClick={() => exportAdminUsersCsv(adminUsers)}
-                className={`rounded-xl border px-3 py-1.5 text-[12px] font-semibold ${t.hair} ${t.muted} disabled:opacity-40`}
-              >
-                Export CSV
-              </button>
-            </div>
-          </>
-        )}
-
-        {adminTab === 'signups' && adminLoading && (
-          <p className={`mt-8 text-[15px] ${t.muted}`}>Loading…</p>
-        )}
-
-        {adminTab === 'signups' && adminError && (
-          <div className="mt-6 rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4">
-            <p className={`text-[13px] leading-relaxed ${t.danger}`}>{adminError}</p>
-          </div>
-        )}
-
-        {adminTab === 'signups' && !adminLoading && !adminError && (
-          <div className="mt-5 flex flex-col gap-3">
-            {filteredAdminUsers.length === 0 && (
-              <p className={`text-[13px] leading-relaxed ${t.muted}`}>No matches.</p>
-            )}
-            {filteredAdminUsers.map((u) => (
-              <div key={u.id} className={`rounded-2xl border ${t.hair} p-4`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-[15px] font-semibold">
-                      {u.username || 'No username yet'}
-                    </p>
-                    <p className={`truncate text-[13px] ${t.muted}`}>{u.email}</p>
-                  </div>
-
-                  <div className="flex shrink-0 flex-col items-end gap-1.5">
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                        u.onboarding_completed ? t.chip : `border ${t.hair} ${t.faint}`
-                      }`}
-                    >
-                      {u.onboarding_completed ? 'Onboarded' : 'Incomplete'}
-                    </span>
-
-                    {isSuspended(u) && (
-                      <span className="rounded-full border border-rose-400/30 bg-rose-400/10 px-2.5 py-1 text-[11px] font-semibold">
-                        <span className={t.danger}>Suspended</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div className={`mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] ${t.faint}`}>
-                  <span>
-                    Signed up {new Date(u.created_at).toLocaleDateString('en-GB', {
-                      day: 'numeric', month: 'short', year: 'numeric',
-                    })}
-                  </span>
-                  <span>
-                    {(u.last_active_at || u.last_sign_in_at)
-                      ? `Last active ${new Date(u.last_active_at || u.last_sign_in_at).toLocaleDateString('en-GB', {
-                          day: 'numeric', month: 'short', year: 'numeric',
-                        })}`
-                      : 'Never active'}
-                  </span>
-                  {!u.email_confirmed_at && (
-                    <span className={t.danger}>Email not confirmed</span>
-                  )}
-                </div>
-
-                <div className="mt-3 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => toggleSuspendUser(u)}
-                    className={`flex-1 rounded-xl border px-3 py-2 text-[12px] font-semibold ${t.hair} ${t.muted}`}
-                  >
-                    {isSuspended(u) ? 'Unsuspend' : 'Suspend'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => deleteUserAccount(u)}
-                    className={`flex-1 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-[12px] font-semibold ${t.danger}`}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {adminTab === 'practitioners' && (
-          <div className="mt-5">
-            {pendingPractitionersLoading ? (
-              <p className={`text-[15px] ${t.muted}`}>Loading…</p>
-            ) : pendingPractitioners.length === 0 ? (
-              <p className={`text-[13px] leading-relaxed ${t.muted}`}>
-                No one's currently waiting on restoration.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {pendingPractitioners.map((p) => (
-                  <div key={p.user_id} className={`rounded-2xl border ${t.hair} p-4`}>
-                    <p className="text-[15px] font-semibold">{p.display_name}</p>
-                    {p.title && (
-                      <p className={`text-[12px] font-medium ${t.mark}`}>{p.title}</p>
-                    )}
-                    <p className={`truncate text-[13px] ${t.muted}`}>{p.email}</p>
-
-                    {p.bio && (
-                      <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>{p.bio}</p>
-                    )}
-
-                    {p.specialisms?.length > 0 && (
-                      <p className={`mt-2 text-[12px] ${t.faint}`}>
-                        {p.specialisms.join(' · ')}
-                      </p>
-                    )}
-
-                    <div className={`mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] ${t.faint}`}>
-                      {p.instagram && <span>IG: {p.instagram}</span>}
-                      {p.whatsapp && <span>WhatsApp: {p.whatsapp}</span>}
-                      <span>
-                        Applied {new Date(p.created_at).toLocaleDateString('en-GB', {
-                          day: 'numeric', month: 'short', year: 'numeric',
-                        })}
-                      </span>
-                    </div>
-
-                    {p.revoked_at && (
-                      <p className={`mt-2 text-[12px] font-semibold ${t.danger}`}>
-                        Previously revoked {new Date(p.revoked_at).toLocaleDateString('en-GB', {
-                          day: 'numeric', month: 'short', year: 'numeric',
-                        })} — this is a reapplication, not a first-time applicant.
-                      </p>
-                    )}
-
-                    {p.title && (
-                      <p className={`mt-2 text-[11px] leading-relaxed ${t.faint}`}>
-                        Shown to clients next to their name — check it against their Instagram/WhatsApp before approving.
-                      </p>
-                    )}
-
-                    {/* Reject is deliberately not offered here — every entry in
-                        this list is now a previously-revoked reapplicant (first-
-                        time applicants auto-verify and never land in this tab
-                        at all), and admin_review_practitioner's reject branch
-                        explicitly refuses anyone with revoked_at set, to
-                        protect their real client history from deletion. The
-                        only way to keep someone out permanently is to leave
-                        them unapproved. */}
-                    <button
-                      type="button"
-                      disabled={!!busyAction}
-                      onClick={() => runBusy(`reviewPractitioner-${p.user_id}`, () => reviewPractitioner(p.user_id, true))}
-                      className={`mt-3 w-full rounded-xl px-3 py-2 text-[12px] font-bold ${t.btn} disabled:opacity-50`}
-                    >
-                      {busyAction === `reviewPractitioner-${p.user_id}` ? 'Restoring…' : 'Restore access'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {adminTab === 'verified' && (
-          <div className="mt-5">
-            {verifiedPractitionersAdminLoading ? (
-              <p className={`text-[15px] ${t.muted}`}>Loading…</p>
-            ) : verifiedPractitionersAdmin.length === 0 ? (
-              <p className={`text-[13px] leading-relaxed ${t.muted}`}>
-                No verified practitioners yet.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {verifiedPractitionersAdmin.map((p) => (
-                  <div key={p.user_id} className={`rounded-2xl border ${t.hair} p-4`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-[15px] font-semibold">{p.display_name}</p>
-                        {p.title && (
-                          <p className={`text-[12px] font-medium ${t.mark}`}>{p.title}</p>
-                        )}
-                        <p className={`truncate text-[13px] ${t.muted}`}>{p.email}</p>
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1.5">
-                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
-                          {p.client_count} {p.client_count === 1 ? 'client' : 'clients'}
-                        </span>
-                        {p.listed_at ? (
-                          <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-500">
-                            Listed
-                          </span>
-                        ) : (
-                          <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${t.hair} ${t.faint}`}>
-                            Not listed
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {p.bio && (
-                      <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>{p.bio}</p>
-                    )}
-
-                    {p.specialisms?.length > 0 && (
-                      <p className={`mt-2 text-[12px] ${t.faint}`}>
-                        {p.specialisms.join(' · ')}
-                      </p>
-                    )}
-
-                    <div className={`mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] ${t.faint}`}>
-                      {p.instagram && <span>IG: {p.instagram}</span>}
-                      {p.whatsapp && <span>WhatsApp: {p.whatsapp}</span>}
-                      <span>
-                        Verified {new Date(p.verified_at).toLocaleDateString('en-GB', {
-                          day: 'numeric', month: 'short', year: 'numeric',
-                        })}
-                      </span>
-                    </div>
-
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        type="button"
-                        disabled={!!busyAction}
-                        onClick={() =>
-                          runBusy(`toggleListed-${p.user_id}`, () => togglePractitionerListed(p.user_id, !p.listed_at))
-                        }
-                        className={`flex-1 rounded-xl border px-3 py-2 text-[12px] font-semibold ${t.hair} ${t.muted} disabled:opacity-50`}
-                      >
-                        {busyAction === `toggleListed-${p.user_id}`
-                          ? '…'
-                          : p.listed_at ? 'Remove from directory' : 'List in directory'}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!!busyAction}
-                        onClick={() => runBusy(`revokePractitioner-${p.user_id}`, () => revokePractitioner(p.user_id, p.display_name))}
-                        className={`flex-1 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-[12px] font-semibold ${t.danger} disabled:opacity-50`}
-                      >
-                        {busyAction === `revokePractitioner-${p.user_id}` ? 'Revoking…' : 'Revoke'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {adminTab === 'referrals' && (() => {
-          if (!referralReport) {
-            return <p className={`mt-5 text-[15px] ${t.muted}`}>Loading…</p>
-          }
-          const T = referralReport.totals
-          const rows = referralReport.partners
-          const pct = (n, d) => (d > 0 ? `${Math.round((n / d) * 100)}%` : '—')
-          const STAGES = [
-            ['scans', 'Scans'],
-            ['signups', 'Sign-ups'],
-            ['onboarded', 'Onboarded'],
-            ['logged_routine', 'Logged a routine'],
-            ['perfect_day', 'Perfect day'],
-          ]
-          const field = (key, placeholder, extra = '') => (
-            <input
-              value={newReferral[key]}
-              onChange={(e) => setNewReferral((r) => ({ ...r, [key]: e.target.value }))}
-              placeholder={placeholder}
-              className={`w-full min-w-0 rounded-xl border ${t.hair} bg-transparent px-3 py-2.5 text-[13px] outline-none ${extra}`}
-            />
-          )
-
-          return (
-            <div className="mt-5">
-              <button
-                type="button"
-                onClick={() => setScreen('referralConsole')}
-                className={`mb-4 flex w-full items-center justify-between rounded-2xl px-4 py-3.5 text-left ${t.btn}`}
-              >
-                <span>
-                  <span className="block text-[14px] font-bold">Open referral console</span>
-                  <span className="block text-[12px] opacity-80">Partners, new codes, QR flyers and share links</span>
-                </span>
-                <span className="text-[18px]">›</span>
-              </button>
-
-              {/* Funnel: each stage with conversion from the previous one. */}
-              <div className={`overflow-hidden rounded-2xl ${t.surface}`}>
-                {STAGES.map(([key, label], i) => {
-                  const prev = i > 0 ? T[STAGES[i - 1][0]] : null
-                  const width = T.scans > 0 ? Math.max(4, (T[key] / T.scans) * 100) : 0
-                  return (
-                    <div key={key} className={`px-4 py-2.5 ${i > 0 ? `border-t ${t.hair}` : ''}`}>
-                      <div className="flex items-baseline justify-between">
-                        <span className="text-[13px] font-medium">{label}</span>
-                        <span className="text-[15px] font-semibold tabular-nums">
-                          {T[key]}
-                          {prev !== null && (
-                            <span className={`ml-2 text-[11px] font-normal ${t.faint}`}>{pct(T[key], prev)}</span>
-                          )}
-                        </span>
-                      </div>
-                      <span className={`mt-1.5 block h-1 overflow-hidden rounded-full ${isNight ? 'bg-white/10' : 'bg-[#101B2D]/8'}`}>
-                        <span className={`block h-full rounded-full ${t.nodeDone}`} style={{ width: `${width}%` }} />
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-              <p className={`mt-2 text-[11px] leading-relaxed ${t.faint}`}>
-                {T.partners} partners · {T.codes} active codes · {T.visitors} unique visitors. Percentages are from the stage above.
-              </p>
-
-              {/* Add a partner / store code */}
-              {newReferralOpen ? (
-                <div className={`mt-4 rounded-2xl border ${t.hair} p-4`}>
-                  <p className="text-[14px] font-semibold">New referral code</p>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    {field('partner', 'Partner (e.g. Beauty Hut)', 'col-span-2')}
-                    {field('code', 'Code (e.g. BEAUTYHUT-LEKKI)', 'col-span-2 uppercase')}
-                    {field('label', 'Label (e.g. Lekki branch)')}
-                    {field('city', 'City')}
-                    <select
-                      value={newReferral.kind}
-                      onChange={(e) => setNewReferral((r) => ({ ...r, kind: e.target.value }))}
-                      className={`w-full rounded-xl border ${t.hair} ${t.surface} px-3 py-2.5 text-[13px] outline-none`}
-                    >
-                      {['store', 'clinic', 'spa', 'aesthetician', 'brand', 'online', 'event'].map((k) => (
-                        <option key={k} value={k}>{k[0].toUpperCase() + k.slice(1)}</option>
-                      ))}
-                    </select>
-                    {field('phone', 'Contact phone')}
-                  </div>
-                  <p className={`mt-2 text-[11px] leading-relaxed ${t.faint}`}>
-                    Same partner name adds another code to that partner (one per branch).
-                    {newReferral.code.trim() && <> Flyer link: <b>trackaplus.app/?ref={newReferral.code.trim().toUpperCase()}</b></>}
-                  </p>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setNewReferralOpen(false)}
-                      className={`flex-1 rounded-xl border py-2.5 text-[13px] font-semibold ${t.hair} ${t.muted}`}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!!busyAction}
-                      onClick={() => runBusy('saveReferralCode', saveReferralCode)}
-                      className={`flex-1 rounded-xl py-2.5 text-[13px] font-bold ${t.btn} disabled:opacity-60`}
-                    >
-                      {busyAction === 'saveReferralCode' ? 'Saving…' : 'Create code'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setNewReferralOpen(true)}
-                  className={`mt-4 w-full rounded-2xl border border-dashed py-3 text-[13px] font-semibold ${t.hair} ${t.muted}`}
-                >
-                  + Add a store or clinic code
-                </button>
-              )}
-
-              <div className="mt-3 flex flex-col gap-2.5">
-                {rows.length === 0 && <p className={`text-[13px] ${t.muted}`}>No partners yet.</p>}
-                {rows.map((r, i) => (
-                  <div key={`${r.partner}-${i}`} className={`rounded-2xl ${t.surface} p-4`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-[15px] font-semibold">
-                          {r.partner}
-                        </p>
-                        <p className={`truncate text-[12px] capitalize ${t.faint}`}>
-                          {[r.kind, r.city, `${r.codes} ${r.codes === 1 ? 'code' : 'codes'}`].filter(Boolean).join(' · ')}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="mt-3 grid grid-cols-5 gap-1 text-center">
-                      {STAGES.map(([key, label]) => (
-                        <div key={key}>
-                          <p className="text-[16px] font-semibold tabular-nums">{r[key]}</p>
-                          <p className={`text-[9.5px] leading-tight ${t.faint}`}>{label}</p>
-                        </div>
-                      ))}
-                    </div>
-                    <p className={`mt-2.5 text-[11px] ${t.faint}`}>
-                      {r.last_scan_at
-                        ? `Last scan ${new Date(r.last_scan_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
-                        : 'No scans yet'}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )
-        })()}
-
-        {adminTab === 'products' && (() => {
-          if (!productInsights) {
-            return <p className={`mt-5 text-[15px] ${t.muted}`}>Loading…</p>
-          }
-          const q = insightsQuery.trim().toLowerCase()
-          const rows =
-            insightsView === 'products'
-              ? productInsights.products.filter((p) => !q || `${p.brand} ${p.name}`.toLowerCase().includes(q))
-              : insightsView === 'brands'
-              ? productInsights.brands.filter((b) => !q || (b.brand || '').toLowerCase().includes(q))
-              : productInsights.categories
-          const max = Math.max(1, ...rows.map((r) => r.users))
-          const totals = productInsights.totals
-
-          const exportCsv = () => {
-            const esc = (v) => {
-              const s = String(v ?? '')
-              return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-            }
-            const lines =
-              insightsView === 'products'
-                ? [['Brand', 'Product', 'Category', 'Users', 'Have it now', 'In a routine', 'Finished'],
-                   ...rows.map((p) => [p.brand, p.name, p.category, p.users, p.active_users, p.in_routine_users, p.finished_users])]
-                : insightsView === 'brands'
-                ? [['Brand', 'Users', 'Products', 'In a routine'],
-                   ...rows.map((b) => [b.brand, b.users, b.products, b.in_routine_users])]
-                : [['Category', 'Users', 'Saved'], ...rows.map((c) => [c.category, c.users, c.saved])]
-            const blob = new Blob([lines.map((l) => l.map(esc).join(',')).join('\n')], { type: 'text/csv' })
-            const a = document.createElement('a')
-            a.href = URL.createObjectURL(blob)
-            a.download = `tracka-${insightsView}.csv`
-            a.click()
-            URL.revokeObjectURL(a.href)
-          }
-
-          return (
-            <div className="mt-5">
-              <div className="grid grid-cols-3 gap-2.5">
-                {[
-                  [totals.users_with_products, 'People'],
-                  [totals.saved, 'Products saved'],
-                  [totals.distinct_brands, 'Brands'],
-                ].map(([v, l]) => (
-                  <div key={l} className={`rounded-2xl ${t.surface} p-3`}>
-                    <p className="text-[20px] font-semibold">{v}</p>
-                    <p className={`text-[11px] ${t.muted}`}>{l}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div className={`mt-4 grid grid-cols-3 rounded-xl p-0.5 ${isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'}`}>
-                {[['products', 'Products'], ['brands', 'Brands'], ['categories', 'Categories']].map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setInsightsView(key)}
-                    className={`rounded-[10px] py-2 text-[12px] font-semibold ${insightsView === key ? `${t.surface} shadow-sm` : t.faint}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-3 flex gap-2">
-                {insightsView !== 'categories' && (
-                  <input
-                    type="text"
-                    value={insightsQuery}
-                    onChange={(e) => setInsightsQuery(e.target.value)}
-                    placeholder={insightsView === 'products' ? 'Search products…' : 'Search brands…'}
-                    className={`min-w-0 flex-1 rounded-xl border ${t.hair} bg-transparent px-3 py-2 text-[13px] outline-none`}
-                  />
-                )}
-                <button
-                  type="button"
-                  onClick={exportCsv}
-                  className={`ml-auto shrink-0 rounded-xl border px-3 py-2 text-[12px] font-semibold ${t.hair} ${t.muted}`}
-                >
-                  Export CSV
-                </button>
-              </div>
-
-              <div className={`mt-3 overflow-hidden rounded-2xl ${t.surface}`}>
-                {rows.length === 0 && <p className={`p-4 text-[13px] ${t.muted}`}>No matches.</p>}
-                {rows.map((r, i) => {
-                  const title =
-                    insightsView === 'products' ? r.name : insightsView === 'brands' ? r.brand : r.category.replace(/_/g, ' ')
-                  const sub =
-                    insightsView === 'products'
-                      ? [r.brand, r.category].filter(Boolean).join(' · ')
-                      : insightsView === 'brands'
-                      ? `${r.products} ${r.products === 1 ? 'product' : 'products'}`
-                      : `${r.saved} saved`
-                  return (
-                    <div key={`${insightsView}-${i}`} className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? `border-t ${t.hair}` : ''}`}>
-                      <span className={`w-6 shrink-0 text-center text-[12px] font-semibold tabular-nums ${t.faint}`}>{i + 1}</span>
-                      {insightsView === 'products' && (
-                        r.image_url ? (
-                          <img src={r.image_url} alt="" loading="lazy" className="h-9 w-9 shrink-0 rounded-lg bg-white object-contain p-0.5" />
-                        ) : (
-                          renderProductArt(r.category, 'h-9 w-9 rounded-lg', 'h-[86%] w-[86%]')
-                        )
-                      )}
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[14px] font-medium capitalize">{title}</span>
-                        <span className={`block truncate text-[11px] ${t.faint}`}>{sub}</span>
-                        <span className={`mt-1.5 block h-1 overflow-hidden rounded-full ${isNight ? 'bg-white/10' : 'bg-[#101B2D]/8'}`}>
-                          <span className={`block h-full rounded-full ${t.nodeDone}`} style={{ width: `${(r.users / max) * 100}%` }} />
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-right">
-                        <span className="block text-[15px] font-semibold tabular-nums">{r.users}</span>
-                        <span className={`block text-[10px] ${t.faint}`}>
-                          {insightsView === 'categories'
-                            ? 'people'
-                            : `${r.in_routine_users} in routine${insightsView === 'products' && r.finished_users ? ` · ${r.finished_users} finished` : ''}`}
-                        </span>
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })()}
-
-        {adminTab === 'challenges' && (
-          <div className="mt-5">
-            {adminChallengeStatsLoading ? (
-              <p className={`text-[15px] ${t.muted}`}>Loading…</p>
-            ) : adminChallengeStats.length === 0 ? (
-              <p className={`text-[13px] leading-relaxed ${t.muted}`}>No challenges yet.</p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {adminChallengeStats.map((c) => {
-                  const attempts = Number(c.active_count) + Number(c.completed_count) + Number(c.left_count)
-                  const completionRate = attempts > 0 ? Math.round((Number(c.completed_count) / attempts) * 100) : 0
-                  const participants = adminChallengeParticipants[c.challenge_id]
-                  const isOpen = adminOpenChallengeId === c.challenge_id
-                  const STATUS_STYLE = {
-                    active: t.chip,
-                    completed: 'border border-emerald-400/30 bg-emerald-400/10 text-emerald-500',
-                    left: `border border-rose-400/30 bg-rose-400/10 ${t.danger}`,
-                    ended: `border ${t.hair} ${t.muted}`,
-                  }
-                  const fmt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-
-                  return (
-                    <div key={c.challenge_id} className={`rounded-2xl border ${t.hair} p-4`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-[15px] font-semibold">{c.title}</p>
-                          <p className={`text-[12px] ${t.faint}`}>{c.duration_days} days{c.target_days && c.target_days !== c.duration_days ? ` · complete at ${c.target_days}` : ""}</p>
-                        </div>
-                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                          c.is_published ? t.chip : `border ${t.hair} ${t.faint}`
-                        }`}>
-                          {c.is_published ? 'Live' : 'Hidden'}
-                        </span>
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-5 gap-1.5">
-                        {[
-                          [c.participants, 'People'],
-                          [c.active_count, 'Active'],
-                          [c.completed_count, 'Completed'],
-                          [c.ended_count ?? 0, 'Ended'],
-                          [c.left_count, 'Left'],
-                        ].map(([value, label]) => (
-                          <div key={label} className={`rounded-xl ${t.surface} p-2.5`}>
-                            <p className="text-[18px] font-semibold">{value}</p>
-                            <p className={`text-[10px] ${t.muted}`}>{label}</p>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className={`mt-3 flex flex-col gap-1 text-[12px] ${t.muted}`}>
-                        <span>{completionRate}% of attempts completed</span>
-                        <span>
-                          {c.left_before_half} left before the halfway point
-                          {Number(c.left_count) > 0 && c.avg_days_when_left !== null &&
-                            ` · leavers averaged ${c.avg_days_when_left} days`}
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => toggleAdminChallengeParticipants(c.challenge_id)}
-                        className={`mt-3 w-full rounded-xl border px-3 py-2 text-[12px] font-semibold ${t.hair} ${t.muted}`}
-                      >
-                        {isOpen ? 'Hide leaderboard' : 'Leaderboard & participants'}
-                      </button>
-
-                      {isOpen && (
-                        <div className="mt-3 flex flex-col gap-2">
-                          {!participants ? (
-                            <p className={`text-[13px] ${t.muted}`}>Loading…</p>
-                          ) : participants.length === 0 ? (
-                            <p className={`text-[13px] ${t.muted}`}>No one has joined yet.</p>
-                          ) : (
-                            participants.map((p) => (
-                              <div key={p.participant_id} className={`rounded-xl ${t.surface} p-3`}>
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <p className="flex items-center gap-2 truncate text-[14px] font-semibold">
-                                      {p.rank && (
-                                        <span className="shrink-0 rounded-md bg-amber-400/15 px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-amber-600">
-                                          #{p.rank}
-                                        </span>
-                                      )}
-                                      <span className="truncate">{p.username || 'No username'}</span>
-                                      {p.hidden && (
-                                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${t.hair} ${t.faint}`}>
-                                          Hidden
-                                        </span>
-                                      )}
-                                    </p>
-                                    <p className={`truncate text-[12px] ${t.muted}`}>{p.email}</p>
-                                  </div>
-                                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize ${STATUS_STYLE[p.status] || t.chip}`}>
-                                    {p.status}
-                                  </span>
-                                </div>
-                                <div className={`mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] ${t.faint}`}>
-                                  <span>{p.days_completed}/{c.duration_days} days</span>
-                                  <span>Joined {fmt(p.joined_at)}</span>
-                                  {p.last_day && <span>Last tick {fmt(p.last_day)}</span>}
-                                  {p.completed_at && <span>Finished {fmt(p.completed_at)}</span>}
-                                  {p.left_at && <span>Left {fmt(p.left_at)}</span>}
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-      </div>
-    </main>
+    <AdminScreen
+      t={t}
+      isNight={isNight}
+      notify={notify}
+      confirmAction={confirmAction}
+      busyAction={busyAction}
+      runBusy={runBusy}
+      setScreen={setScreen}
+      setUser={setUser}
+      setPractitionerStatus={setPractitionerStatus}
+      practitionersLaunched={practitionersLaunched}
+      setPractitionersLaunched={setPractitionersLaunched}
+      renderProductArt={renderProductArt}
+      adminTab={adminTab}
+      setAdminTab={setAdminTab}
+    />
   )
 }
 
@@ -7659,13 +4830,8 @@ if (screen === 'settings') {
             setDisplayName('')
             setProfilePhotoPath(null)
             setProfilePhotoUrl(null)
-            setProducts([])
-            setTodayAmRoutine(null)
-            setTodayPmRoutine(null)
-            setTodayAmSteps([])
-            setTodayPmSteps([])
-            setCompletedSteps([])
-            setProgressCompletions([])
+            // Products, routine, ticks: everything cached for this account.
+            queryClient.clear()
             // Otherwise a stale 'verified' lingers if a different account
             // logs in next on the same device, sending a plain client
             // straight to someone else's practitioner dashboard.
@@ -7684,97 +4850,16 @@ if (screen === 'settings') {
 }
 
 if (screen === 'findProfessional') {
-  const q = findProfessionalQuery.trim().toLowerCase()
-  const filtered = !q
-    ? verifiedPractitioners
-    : verifiedPractitioners.filter((p) => {
-        const haystack = [p.display_name, p.title, p.bio, ...(p.specialisms || [])]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-        return haystack.includes(q)
-      })
-
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
-
-        <button
-          onClick={() => setScreen('settings')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Settings
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Find a professional
-          </h1>
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Browse verified aestheticians and reach out directly.
-          </p>
-        </div>
-
-        <input
-          type="text"
-          placeholder="Search by name, specialism…"
-          value={findProfessionalQuery}
-          onChange={(e) => setFindProfessionalQuery(e.target.value)}
-          className={`mt-6 w-full rounded-2xl border ${t.hair} ${t.surface} px-4 py-3.5 text-[15px] outline-none`}
-        />
-
-        {verifiedPractitionersLoading ? (
-          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
-        ) : filtered.length === 0 ? (
-          <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
-            {verifiedPractitioners.length === 0
-              ? 'No verified professionals yet — check back soon.'
-              : 'No matches. Try a different search.'}
-          </p>
-        ) : (
-          <div className="mt-6 flex flex-col gap-4">
-            {filtered.map((p) => (
-              <div key={p.user_id} className={`rounded-3xl ${t.surface} p-5`}>
-                <p className="text-[16px] font-semibold">{p.display_name}</p>
-                {p.title && (
-                  <p className={`mt-0.5 text-[13px] font-medium ${t.mark}`}>{p.title}</p>
-                )}
-                {p.bio && (
-                  <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>{p.bio}</p>
-                )}
-                {p.specialisms?.length > 0 && (
-                  <p className={`mt-2 text-[12px] ${t.faint}`}>{p.specialisms.join(' · ')}</p>
-                )}
-
-                <div className="mt-4 flex flex-wrap gap-3">
-                  {p.whatsapp && (
-                    <a
-                      href={whatsappLink(p.whatsapp, `Hi ${p.display_name}, I found your profile on Tracka+ — `)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`rounded-xl px-3.5 py-2 text-[13px] font-semibold ${t.btn}`}
-                    >
-                      Message on WhatsApp
-                    </a>
-                  )}
-                  {p.instagram && (
-                    <span className={`flex items-center rounded-xl border px-3.5 py-2 text-[13px] font-semibold ${t.hair} ${t.muted}`}>
-                      IG: {p.instagram}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-      </div>
-    </main>
+    <FindProfessionalScreen
+      findProfessionalQuery={findProfessionalQuery}
+      setFindProfessionalQuery={setFindProfessionalQuery}
+      setScreen={setScreen}
+      t={t}
+      verifiedPractitioners={verifiedPractitioners}
+      verifiedPractitionersLoading={verifiedPractitionersLoading}
+      whatsappLink={whatsappLink}
+    />
   )
 }
 
@@ -8272,178 +5357,21 @@ if (screen === 'reminders') {
 }
 if (screen === 'careTeam') {
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
-
-        <button
-          onClick={() => setScreen('settings')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Settings
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Care team
-          </h1>
-
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Professionals you've connected with, and exactly what they can see.
-          </p>
-        </div>
-
-        {careTeamLoading ? (
-          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
-        ) : careRelationships.length === 0 ? (
-          <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
-            Nobody yet. If a professional invites you, they'll show up here.
-          </p>
-        ) : (
-          <div className="mt-8 flex flex-col gap-4">
-            {careRelationships.map((rel) => (
-              <div key={rel.id} className={`rounded-3xl ${t.surface} p-5`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[16px] font-semibold">
-                      {rel.practitioners?.display_name || 'Professional'}
-                    </p>
-                    {rel.practitioners?.title && (
-                      <p className={`mt-0.5 text-[12px] font-medium ${t.mark}`}>{rel.practitioners.title}</p>
-                    )}
-                    {rel.practitioners?.bio && (
-                      <p className={`mt-0.5 text-[13px] ${t.muted}`}>{rel.practitioners.bio}</p>
-                    )}
-                  </div>
-                  {rel.status === 'invited' && (
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
-                      Pending
-                    </span>
-                  )}
-                  {rel.status === 'active' && !rel.practitioners?.verified_at && (
-                    <span className="shrink-0 rounded-full border border-rose-400/30 bg-rose-400/10 px-2.5 py-1 text-[11px] font-semibold">
-                      <span className={t.danger}>No longer verified</span>
-                    </span>
-                  )}
-                </div>
-
-                {rel.status === 'invited' ? (
-                  <div className="mt-4 flex gap-2.5">
-                    <button
-                      disabled={!!busyAction}
-                      onClick={() => runBusy(`careInvite-${rel.id}`, () => respondToCareInvite(rel.id, false))}
-                      className={`flex-1 rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-50`}
-                    >
-                      {busyAction === `careInvite-${rel.id}` ? 'Declining…' : 'Decline'}
-                    </button>
-                    <button
-                      disabled={!!busyAction}
-                      onClick={() => runBusy(`careInvite-${rel.id}`, () => respondToCareInvite(rel.id, true))}
-                      className={`flex-1 rounded-2xl py-3 text-[14px] font-bold ${t.btn} disabled:opacity-50`}
-                    >
-                      {busyAction === `careInvite-${rel.id}` ? 'Accepting…' : 'Accept'}
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className={`mt-4 flex flex-col gap-2.5 border-t pt-4 ${t.hair}`}>
-                      {CARE_SCOPES.map(([scope, label]) => {
-                        const isNested = scope === 'pregnancy_status'
-                        const locked = isNested && !rel.scopes.includes('skin_profile')
-
-                        return (
-                          <div
-                            key={scope}
-                            className={`flex items-center justify-between ${isNested ? 'ml-4' : ''}`}
-                          >
-                            <div>
-                              <span className={`text-[14px] ${locked ? t.faint : ''}`}>{label}</span>
-                              {locked && (
-                                <p className={`text-[11px] ${t.faint}`}>Requires skin profile access</p>
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              disabled={locked}
-                              onClick={() => toggleCareScope(rel, scope)}
-                              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                                rel.scopes.includes(scope) ? t.btn : t.rail
-                              } ${locked ? 'opacity-40' : ''}`}
-                            >
-                              <span
-                                className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${
-                                  rel.scopes.includes(scope) ? 'left-6' : 'left-1'
-                                }`}
-                              />
-                            </button>
-                          </div>
-                        )
-                      })}
-                    </div>
-
-                    <div className="mt-4 flex items-center justify-between">
-                      {rel.practitioners?.whatsapp ? (
-                        <a
-                          href={whatsappLink(rel.practitioners.whatsapp, `Hi ${rel.practitioners.display_name || ''}, `)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`text-[13px] font-semibold ${t.mark}`}
-                        >
-                          Message on WhatsApp
-                        </a>
-                      ) : <span />}
-
-                      <button
-                        disabled={!!busyAction}
-                        onClick={() => runBusy(`revokeCare-${rel.id}`, () => revokeCareAccess(rel.id, rel.practitioners?.display_name))}
-                        className={`text-[13px] font-semibold ${t.danger} disabled:opacity-50`}
-                      >
-                        {busyAction === `revokeCare-${rel.id}` ? 'Revoking…' : 'Revoke access'}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {endedRelationships.length > 0 && (
-          <div className="mt-8">
-            <div className="flex flex-col gap-2.5">
-              {endedRelationships.map((rel) => (
-                <p key={rel.id} className={`text-[13px] ${t.faint}`}>
-                  {rel.practitioners?.display_name || 'A professional'} ended your care relationship
-                  {' — '}
-                  {new Date(rel.revoked_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                </p>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {careAccessLog.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-[15px] font-semibold">Recent activity</h2>
-            <div className="mt-3 flex flex-col gap-2.5">
-              {careAccessLog.map((entry, i) => (
-                <p key={i} className={`text-[13px] ${t.muted}`}>
-                  <span className="font-medium">{entry.practitioners?.display_name || 'A professional'}</span>
-                  {' '}viewed your {entry.what === 'view_skin_profile' ? 'skin profile' : entry.what}
-                  {' — '}
-                  {new Date(entry.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                </p>
-              ))}
-            </div>
-          </div>
-        )}
-
-      </div>
-    </main>
+    <CareTeamScreen
+      CARE_SCOPES={CARE_SCOPES}
+      busyAction={busyAction}
+      careAccessLog={careAccessLog}
+      careRelationships={careRelationships}
+      careTeamLoading={careTeamLoading}
+      endedRelationships={endedRelationships}
+      respondToCareInvite={respondToCareInvite}
+      revokeCareAccess={revokeCareAccess}
+      runBusy={runBusy}
+      setScreen={setScreen}
+      t={t}
+      toggleCareScope={toggleCareScope}
+      whatsappLink={whatsappLink}
+    />
   )
 }
 if (screen === 'notifications') {
@@ -8802,603 +5730,41 @@ if (screen === 'challenges') {
 }
 
 if (screen === 'challengeDetail') {
-  const mine = myChallenges.filter((p) => p.challenge_id === selectedChallengeId)
-  // Live = still ticking: active, or completed inside a running window.
-  const participation = mine.find(isLiveParticipation) || null
-  const lastCompleted = participation ? null : mine.find((p) => p.status === 'completed')
-  // Didn't reach the finish line before the window closed — final result.
-  // ('ended' once the database has closed it; still 'active' until then.)
-  const endedRow = participation
-    ? null
-    : mine.find((p) => p.status === 'ended' || (p.status === 'active' && challengeWindow(p.challenges).ended)) || null
-  const challenge =
-    challenges.find((c) => c.id === selectedChallengeId) ||
-    mine[0]?.challenges
-  const win = challengeWindow(challenge)
-
-  const backLabel = challengeReturnScreen === 'today' ? 'Today' : 'Challenges'
-
-  const backButton = (label) => (
-    <button
-      onClick={() => setScreen(challengeReturnScreen)}
-      className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-    >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth="1.8"
-        strokeLinecap="round" strokeLinejoin="round">
-        <path d="M15 5l-7 7 7 7" />
-      </svg>
-      {label}
-    </button>
-  )
-
-  if (!challenge) {
-    return (
-      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
-          {backButton(backLabel)}
-          <p className={`mt-8 text-[14px] ${t.muted}`}>
-            {challengesLoading ? 'Loading…' : "This challenge isn't available any more."}
-          </p>
-        </div>
-      </main>
-    )
-  }
-
-  // Active challenge dashboard.
-  if (participation) {
-    const { total, target, done, doneToday, day, pct, hasWindow, daysLeft } = challengeStats(participation)
-    const reachedTarget = done >= target
-
-    return (
-      <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
-
-          <div className="relative flex items-center justify-between">
-            {backButton('Active Challenge')}
-
-            <div className="flex items-center">
-              <button
-                type="button"
-                aria-label="Invite a friend"
-                onClick={() => shareChallenge(challenge, participation)}
-                className={`flex h-10 w-10 items-center justify-center rounded-full ${t.muted}`}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="1.8"
-                  strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 3v12M7.5 7.5L12 3l4.5 4.5" />
-                  <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
-                </svg>
-              </button>
-
-              <button
-                type="button"
-                aria-label="Challenge options"
-                onClick={() => setChallengeMenuOpen(!challengeMenuOpen)}
-                className={`flex h-10 w-10 items-center justify-center rounded-full ${t.muted}`}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="5" cy="12" r="1.8" />
-                  <circle cx="12" cy="12" r="1.8" />
-                  <circle cx="19" cy="12" r="1.8" />
-                </svg>
-              </button>
-            </div>
-
-            {challengeMenuOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-[5]"
-                  aria-hidden="true"
-                  onClick={() => setChallengeMenuOpen(false)}
-                />
-                <div className={`absolute right-0 top-11 z-10 w-48 overflow-hidden rounded-2xl ${t.surface} shadow-xl`}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setChallengeMenuOpen(false)
-                      leaveChallenge(participation)
-                    }}
-                    className={`block w-full px-5 py-3.5 text-left text-[15px] ${t.danger}`}
-                  >
-                    Leave challenge
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {renderChallengeImage(challenge, 'mt-4 h-52 w-full rounded-3xl')}
-
-          <div className="mt-5 flex items-start justify-between gap-3">
-            <h1 className="text-[26px] font-semibold leading-tight">{challenge.title}</h1>
-            {reachedTarget ? (
-              <span className="mt-1 shrink-0 rounded-full bg-gradient-to-r from-[#F5C451] to-[#E08A1E] px-3 py-1 text-[12px] font-semibold text-white">
-                Completed
-              </span>
-            ) : (
-              <span className="mt-1 shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[12px] font-semibold text-emerald-500">
-                Active
-              </span>
-            )}
-          </div>
-          {challenge.active_subtitle && (
-            <p className={`mt-1.5 text-[15px] leading-relaxed ${t.muted}`}>{challenge.active_subtitle}</p>
-          )}
-
-
-          {(() => {
-            const dates = (participation.challenge_days || []).map((d) => d.local_date).sort()
-            const streak = challengeStreak(dates, todayString)
-            const best = (() => {
-              let longest = 0, run = 0, prev = null
-              for (const d of dates) {
-                run = prev && addDays(prev, 1) === d ? run + 1 : 1
-                longest = Math.max(longest, run)
-                prev = d
-              }
-              return longest
-            })()
-            const points = challengePoints(done)
-            const awards = challengeAwards(dates, target, { overTheLine: hasWindow })
-            const half = Math.ceil(target / 2)
-            const tickedSet = new Set(dates)
-            // Days before you joined aren't "missed" — you weren't in yet.
-            const joinedOn = participation.joined_at
-              ? localDateString(new Date(participation.joined_at))
-              : challenge.starts_on
-
-            // The nearest unearned reward, phrased as what it takes to get it.
-            // Next milestone, shown quietly under the track. Skipped before
-            // the first day — the check-in card below already covers that.
-            // In a shared-window challenge, late joiners can't reach every
-            // award — only point at ones still reachable in the days left.
-            const tickableLeft = hasWindow ? daysLeft - (doneToday ? 1 : 0) : Infinity
-            const needed = (a) =>
-              a.key === 'week' ? 7 - streak : (a.key === 'half' ? half : target) - done
-            const nextAward = awards.find(
-              (a) => !a.earned && a.key !== 'first' && needed(a) <= tickableLeft
-            )
-            const remaining = nextAward ? needed(nextAward) : 0
-            const nextLine = !nextAward || done === 0
-              ? null
-              : {
-                  name: nextAward.key === 'week' ? 'Silver medal' : nextAward.key === 'half' ? 'Gold medal' : 'The cup',
-                  detail: nextAward.key === 'week'
-                    ? `${remaining} ${remaining === 1 ? 'day' : 'days'} in a row`
-                    : `${remaining} ${remaining === 1 ? 'day' : 'days'} to go`,
-                }
-
-            // Progress ring geometry.
-            const R = 52
-            const C = 2 * Math.PI * R
-
-            return (
-              <>
-                <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
-                  <div className="flex items-center gap-5">
-                    <div className="relative h-[124px] w-[124px] shrink-0">
-                      <svg width="124" height="124" viewBox="0 0 124 124" className="-rotate-90">
-                        <defs>
-                          <linearGradient id="challenge-ring" x1="0" y1="0" x2="1" y2="1">
-                            <stop offset="0" stopColor="#F5C451" />
-                            <stop offset="1" stopColor="#E08A1E" />
-                          </linearGradient>
-                        </defs>
-                        <circle cx="62" cy="62" r={R} fill="none" strokeWidth="10"
-                          className={isNight ? 'stroke-white/10' : 'stroke-[#101B2D]/8'} />
-                        <circle cx="62" cy="62" r={R} fill="none" strokeWidth="10"
-                          stroke="url(#challenge-ring)" strokeLinecap="round"
-                          strokeDasharray={C}
-                          strokeDashoffset={C * (1 - Math.min(done, target) / target)}
-                          style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
-                      </svg>
-                      <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="text-[30px] font-semibold leading-none">{done}</span>
-                        <span className={`mt-1 text-[11px] font-medium ${t.faint}`}>{reachedTarget ? `days · goal ${target}` : `of ${target} days`}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex min-w-0 flex-1 flex-col gap-3">
-                      <div>
-                        <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Points</p>
-                        <p className="text-[22px] font-semibold leading-tight text-amber-500">{points}</p>
-                      </div>
-                      <div className="flex gap-5">
-                        <div>
-                          <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Streak</p>
-                          <p className="flex items-center gap-1 text-[17px] font-semibold leading-tight">
-                            {streak}
-                            {streak > 0 && (
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill={flameColorForStreak(streak)}>
-                                <path d={FLAME_PATH} />
-                              </svg>
-                            )}
-                          </p>
-                        </div>
-                        <div>
-                          <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Best</p>
-                          <p className="text-[17px] font-semibold leading-tight">{best}</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p className={`mt-4 text-[13px] ${t.muted}`}>
-                    Day {day} of {total} · {hasWindow ? `${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left` : `${pct}% complete`}
-                  </p>
-
-                  {/* 30-dot journey. The halfway medal and the cup sit on the
-                      track itself so the distance to each is visible. */}
-                  {hasWindow ? (
-                  // Shared-window challenge: one dot per calendar day, so a
-                  // missed day shows as a grey dot in its place. The medal
-                  // and cup sit on the day they were won.
-                  <div className="mt-3 grid grid-cols-10 gap-1.5">
-                    {Array.from({ length: total }).map((_, i) => {
-                      const date = addDays(challenge.starts_on, i)
-                      const ticked = tickedSet.has(date)
-                      const awardKey = date === dates[target - 1] ? 'complete' : date === dates[half - 1] ? 'half' : null
-                      if (awardKey) {
-                        const award = awards.find((a) => a.key === awardKey)
-                        return (
-                          <span key={date} className="flex aspect-square items-center justify-center"
-                            title={`${award.label} · ${formatChallengeDate(date)}`}>
-                            {renderAwardIcon(award, 26, false)}
-                          </span>
-                        )
-                      }
-                      const isToday = date === todayString
-                      const missed = !ticked && date < todayString && date >= joinedOn
-                      return (
-                        <span key={date} className="flex aspect-square items-center justify-center"
-                          title={`${formatChallengeDate(date)}${ticked ? ' · done' : missed ? ' · missed' : ''}`}>
-                          <span
-                            className={`block h-3.5 w-3.5 rounded-full transition ${
-                              ticked
-                                ? 'bg-gradient-to-br from-[#F5C451] to-[#E08A1E]'
-                                : missed
-                                ? isNight ? 'bg-white/35' : 'bg-[#101B2D]/25'
-                                : isToday
-                                ? 'animate-pulse border-2 border-amber-500'
-                                : isNight ? 'bg-white/10' : 'bg-[#101B2D]/8'
-                            }`}
-                          />
-                        </span>
-                      )
-                    })}
-                  </div>
-                  ) : (
-                  <div className="mt-3 grid grid-cols-10 gap-1.5">
-                    {Array.from({ length: total }).map((_, i) => {
-                      const n = i + 1
-                      const filled = n <= done
-                      const isNext = n === done + 1 && !doneToday
-                      if (n === half || n === target) {
-                        const award = awards.find((a) => a.key === (n === target ? 'complete' : 'half'))
-                        return (
-                          <span key={n} className="flex aspect-square items-center justify-center"
-                            title={award.label}>
-                            {renderAwardIcon(award, 26, !award.earned)}
-                          </span>
-                        )
-                      }
-                      return (
-                        <span key={n} className="flex aspect-square items-center justify-center">
-                          <span
-                            className={`block h-3.5 w-3.5 rounded-full transition ${
-                              filled
-                                ? 'bg-gradient-to-br from-[#F5C451] to-[#E08A1E]'
-                                : isNext
-                                ? 'animate-pulse border-2 border-amber-500'
-                                : isNight ? 'bg-white/10' : 'bg-[#101B2D]/8'
-                            }`}
-                          />
-                        </span>
-                      )
-                    })}
-                  </div>
-                  )}
-
-                  {hasWindow && (
-                    <div className={`mt-3 flex items-center gap-4 text-[11px] ${t.faint}`}>
-                      <span className="flex items-center gap-1.5">
-                        <span className="block h-2 w-2 rounded-full bg-gradient-to-br from-[#F5C451] to-[#E08A1E]" />Done
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className={`block h-2 w-2 rounded-full ${isNight ? 'bg-white/35' : 'bg-[#101B2D]/25'}`} />Missed
-                      </span>
-                    </div>
-                  )}
-
-                  {nextLine && (
-                    <div className={`mt-5 flex items-center justify-between gap-3 border-t pt-4 ${t.hair}`}>
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="shrink-0">{renderAwardIcon(nextAward, 28, true)}</span>
-                        <div className="min-w-0">
-                          <p className={`text-[10px] font-semibold uppercase tracking-[0.18em] ${t.faint}`}>Next</p>
-                          <p className="truncate text-[14px] font-medium">{nextLine.name}</p>
-                        </div>
-                      </div>
-                      <p className={`shrink-0 text-[13px] ${t.muted}`}>{nextLine.detail}</p>
-                    </div>
-                  )}
-
-                  {hasWindow && !reachedTarget && done + tickableLeft < target && (
-                    <p className={`mt-4 border-t pt-4 text-[13px] leading-relaxed ${t.hair} ${t.muted}`}>
-                      Not enough days left to reach {target} this round — every day you tick still counts on the leaderboard.
-                    </p>
-                  )}
-                </div>
-
-                {missingAmSunscreen && challenge.rule === 'am_sunscreen' && !doneToday &&
-                  renderSunscreenMissingNotice('mt-4')}
-
-                <div className={`mt-4 rounded-3xl border p-5 ${
-                  doneToday ? 'border-emerald-400/30 bg-emerald-400/5' : `${t.hair} ${t.surface}`
-                }`}>
-                  <div className="flex items-start gap-3">
-                    <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
-                      doneToday ? 'bg-emerald-500 text-white' : 'bg-amber-400/15 text-amber-500'
-                    }`}>
-                      {doneToday ? (
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M5 12.5l4.5 4.5L19 7.5" />
-                        </svg>
-                      ) : (
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                          <circle cx="12" cy="12" r="4" />
-                          <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" />
-                        </svg>
-                      )}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-[16px] font-semibold">Today's sunscreen check-in</p>
-                      {!doneToday && (
-                        <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                          {challenge.goal_text || 'Complete the sunscreen step in your morning routine.'}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {doneToday ? (
-                    <p className="mt-4 rounded-2xl bg-emerald-500/10 py-3 text-center text-[14px] font-semibold text-emerald-600">
-                      Checked in for today ✓
-                    </p>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={goToMorningRoutine}
-                        className={`mt-4 w-full rounded-2xl py-4 text-[15px] font-bold ${t.btn}`}
-                      >
-                        Go to morning routine
-                      </button>
-                      <p className={`mt-2 text-center text-[12px] ${t.faint}`}>
-                        Progress updates automatically when you tick sunscreen.
-                      </p>
-                    </>
-                  )}
-                </div>
-              </>
-            )
-          })()}
-
-          <div className="mt-4 grid grid-cols-2 gap-2.5">
-            <button
-              type="button"
-              onClick={() => setScreen('challengeLeaderboard')}
-              className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair}`}
-            >
-              {renderLaurelIcon(22)}
-              Leaderboard
-            </button>
-            <button
-              type="button"
-              onClick={() => shareChallenge(challenge, participation)}
-              className={`flex items-center justify-center gap-2 rounded-2xl border py-3.5 text-[14px] font-semibold ${t.hair} ${t.mark}`}
-            >
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="1.8"
-                strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="9" cy="8" r="3.5" />
-                <path d="M2.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6" />
-              </svg>
-              Invite a friend
-            </button>
-          </div>
-
-          {renderAchievements(participation)}
-
-        </div>
-      </main>
-    )
-  }
-
-  // Before joining (or after completing / leaving — they can join again).
-  const HOW_IT_WORKS = [
-    ['Apply your sunscreen', 'Follow your usual morning skincare routine.'],
-    ['Tick it in Tracka+', 'Complete the sunscreen step in your existing morning routine. Your challenge progress updates automatically.'],
-    win.hasWindow
-      ? [`Keep going until ${formatChallengeDate(challenge.ends_on)}`, `Tick sunscreen on ${challengeTarget(challenge)} of the ${challenge.duration_days} days. Missed days are fine.`]
-      : [`Keep going for ${challenge.duration_days} days`, 'Track your progress as you build the habit.'],
-  ]
-  const canJoin = !win.ended && !(win.hasWindow && lastCompleted)
-
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
-
-        {backButton(challengeReturnScreen === 'today' ? 'Today' : 'Discover Challenges')}
-
-        {renderChallengeImage(challenge, 'mt-4 h-60 w-full rounded-3xl')}
-
-        {challenge.sponsor_name && (
-          <p className={`mt-3 text-[12px] font-medium ${t.faint}`}>
-            In partnership with {challenge.sponsor_name}
-          </p>
-        )}
-
-        <h1 className="mt-5 font-display text-[34px] font-light leading-[1.05] tracking-tight">
-          {challenge.title}
-        </h1>
-        <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>
-          A little consistency goes a long way.
-        </p>
-
-        {lastCompleted && (() => {
-          const cup = challengeAwards(
-            (lastCompleted.challenge_days || []).map((d) => d.local_date),
-            challengeTarget(challenge)
-          ).find((a) => a.kind === 'cup')
-
-          return (
-            <>
-              <div className="mt-5 rounded-3xl border border-amber-400/40 bg-amber-400/10 p-5 text-center">
-                <div className="flex justify-center">{renderAwardIcon(cup, 96)}</div>
-                <p className="mt-2 text-[18px] font-semibold">Challenge complete!</p>
-                <p className={`mt-1 text-[13px] ${t.muted}`}>
-                  You reached {challengeTarget(challenge)} days on{' '}
-                  {new Date(lastCompleted.completed_at).toLocaleDateString('en-GB', {
-                    day: 'numeric', month: 'long', year: 'numeric',
-                  })}.
-                </p>
-                <button
-                  type="button"
-                  disabled={!!awardSaving}
-                  onClick={() => saveAward(cup, lastCompleted)}
-                  className={`mt-4 w-full rounded-2xl py-3 text-[14px] font-bold ${t.btn} disabled:opacity-60`}
-                >
-                  {awardSaving === 'complete' ? 'Preparing…' : 'Save my trophy'}
-                </button>
-              </div>
-              {renderAchievements(lastCompleted)}
-            </>
-          )
-        })()}
-
-        {win.ended && !lastCompleted && (
-          <div className={`mt-5 rounded-3xl border ${t.hair} ${t.surface} p-5`}>
-            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${t.faint}`}>
-              Ended {formatChallengeDate(challenge.ends_on, true)}
-            </p>
-            <p className="mt-1.5 text-[18px] font-semibold">This challenge is over</p>
-            {endedRow && (
-              <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                You checked in for {endedRow.days_completed} of {challenge.duration_days} days.
-              </p>
-            )}
-          </div>
-        )}
-        {endedRow && renderAchievements(endedRow)}
-
-        {!win.ended && challenge.description && (
-          <section className="mt-7">
-            <h2 className="text-[17px] font-semibold">What's the challenge?</h2>
-            <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>{challenge.description}</p>
-          </section>
-        )}
-
-        {!win.ended && <section className="mt-7">
-          <h2 className="text-[17px] font-semibold">How it works</h2>
-          <ol className="mt-3 flex flex-col gap-4">
-            {HOW_IT_WORKS.map(([title, body], i) => (
-              <li key={title} className="flex gap-3.5">
-                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${t.node}`}>
-                  {i + 1}
-                </span>
-                <span>
-                  <span className="block text-[15px] font-semibold">{title}</span>
-                  <span className={`mt-0.5 block text-[14px] leading-relaxed ${t.muted}`}>{body}</span>
-                </span>
-              </li>
-            ))}
-          </ol>
-        </section>}
-
-        <div className={`mt-7 overflow-hidden rounded-2xl border ${t.hair}`}>
-          <div className="flex items-center justify-between px-4 py-3.5">
-            <span className={`text-[14px] ${t.muted}`}>{win.hasWindow ? 'Runs' : 'Duration'}</span>
-            <span className="text-[15px] font-semibold">
-              {win.hasWindow
-                ? `${formatChallengeDate(challenge.starts_on)} – ${formatChallengeDate(challenge.ends_on)}`
-                : `${challenge.duration_days} days`}
-            </span>
-          </div>
-          {win.hasWindow && !win.ended && (
-            <div className={`flex items-center justify-between border-t px-4 py-3.5 ${t.hair}`}>
-              <span className={`text-[14px] ${t.muted}`}>{win.notStarted ? 'Starts in' : 'Days left'}</span>
-              <span className="text-[15px] font-semibold text-amber-600">
-                {win.notStarted
-                  ? `${1 - win.challengeDay} ${1 - win.challengeDay === 1 ? 'day' : 'days'}`
-                  : `${win.daysLeft} of ${challenge.duration_days}`}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {canJoin ? (
-          <>
-            {win.hasWindow && !win.notStarted && win.daysLeft < challengeTarget(challenge) && (
-              <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3.5">
-                <p className="text-[14px] font-semibold text-amber-700">
-                  Too late to complete this challenge
-                </p>
-                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                  Only {win.daysLeft} {win.daysLeft === 1 ? 'day is' : 'days are'} left. The challenge requires {challengeTarget(challenge)} check-ins, but every check-in still counts on the leaderboard.
-                </p>
-              </div>
-            )}
-
-            <p className={`mt-4 text-[12px] leading-relaxed ${t.faint}`}>
-              Joining adds your username and days to this challenge's public leaderboard. You can hide your name at any time from the leaderboard.
-            </p>
-
-            <button
-              type="button"
-              disabled={!!busyAction}
-              onClick={() => runBusy(`joinChallenge-${challenge.id}`, () => joinChallenge(challenge))}
-              className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
-            >
-              {busyAction === `joinChallenge-${challenge.id}`
-                ? 'Joining…'
-                : lastCompleted ? 'Join again' : 'Join challenge'}
-            </button>
-
-            <div className="mt-3 flex items-center justify-center gap-6">
-              <button
-                type="button"
-                onClick={() => setScreen('challengeLeaderboard')}
-                className={`flex items-center gap-1.5 py-2 text-[14px] font-semibold ${t.mark}`}
-              >
-                {renderLaurelIcon(20)}
-                See the leaderboard
-              </button>
-              <button
-                type="button"
-                onClick={() => shareChallenge(challenge, null)}
-                className={`py-2 text-[14px] font-semibold ${t.mark}`}
-              >
-                Invite a friend
-              </button>
-            </div>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setScreen('challengeLeaderboard')}
-            className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
-          >
-            {win.ended ? 'See final results' : 'See the leaderboard'}
-          </button>
-        )}
-
-      </div>
-    </main>
+    <ChallengeDetailScreen
+      openAd={openAd}
+      userId={user?.id}
+      awardSaving={awardSaving}
+      busyAction={busyAction}
+      challengeMenuOpen={challengeMenuOpen}
+      challengeReturnScreen={challengeReturnScreen}
+      challengeStats={challengeStats}
+      challengeTarget={challengeTarget}
+      challengeWindow={challengeWindow}
+      challenges={challenges}
+      challengesLoading={challengesLoading}
+      formatChallengeDate={formatChallengeDate}
+      goToMorningRoutine={goToMorningRoutine}
+      isLiveParticipation={isLiveParticipation}
+      isNight={isNight}
+      joinChallenge={joinChallenge}
+      leaveChallenge={leaveChallenge}
+      missingAmSunscreen={missingAmSunscreen}
+      myChallenges={myChallenges}
+      renderAchievements={renderAchievements}
+      renderAwardIcon={renderAwardIcon}
+      renderChallengeImage={renderChallengeImage}
+      renderLaurelIcon={renderLaurelIcon}
+      renderSunscreenMissingNotice={renderSunscreenMissingNotice}
+      runBusy={runBusy}
+      saveAward={saveAward}
+      selectedChallengeId={selectedChallengeId}
+      setChallengeMenuOpen={setChallengeMenuOpen}
+      setScreen={setScreen}
+      shareChallenge={shareChallenge}
+      t={t}
+      todayString={todayString}
+    />
   )
 }
 
@@ -9590,1981 +5956,223 @@ if (screen === 'challengeLeaderboard') {
 }
 
 if (screen === 'recommendationHistory') {
-  const STATUS_LABEL = {
-    accepted: 'Accepted',
-    declined: 'Declined',
-    superseded: 'Withdrawn by practitioner',
-  }
-
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
-
-        <button
-          onClick={() => setScreen('notifications')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Notifications
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[34px] font-light leading-[1.05] tracking-tight">
-            Past recommendations
-          </h1>
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Everything a professional has proposed for you, resolved or not.
-          </p>
-        </div>
-
-        {recommendationHistoryLoading ? (
-          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
-        ) : recommendationHistory.length === 0 ? (
-          <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
-            Nothing here yet.
-          </p>
-        ) : (
-          <div className="mt-8 flex flex-col gap-3">
-            {recommendationHistory.map((rec) => (
-              <div key={rec.id} className={`rounded-2xl ${t.surface} p-4`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[15px] font-semibold">
-                      {rec.practitioners?.display_name || 'A professional'}
-                    </p>
-                    {rec.practitioners?.title && (
-                      <p className={`mt-0.5 text-[12px] font-medium ${t.mark}`}>{rec.practitioners.title}</p>
-                    )}
-                  </div>
-                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
-                    {STATUS_LABEL[rec.status] || rec.status}
-                  </span>
-                </div>
-                <p className={`mt-2 text-[12px] ${t.muted}`}>
-                  {new Date(rec.responded_at || rec.created_at).toLocaleDateString('en-GB', {
-                    day: 'numeric', month: 'short', year: 'numeric',
-                  })}
-                </p>
-                {rec.note && (
-                  <p className={`mt-2 text-[13px] italic ${t.faint}`}>"{rec.note}"</p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-      </div>
-    </main>
+    <RecommendationHistoryScreen
+      recommendationHistory={recommendationHistory}
+      recommendationHistoryLoading={recommendationHistoryLoading}
+      setScreen={setScreen}
+      t={t}
+    />
   )
 }
 if (screen === 'applyPractitioner') {
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
-
-        <button
-          onClick={() => setScreen('settings')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Settings
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            {practitionerStatus === 'verified' ? 'Your practitioner profile' : 'Become a professional'}
-          </h1>
-
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            {practitionerStatus === 'verified'
-              ? 'Clients see this when you invite them. You can update it any time.'
-              : practitionerStatus === 'pending'
-              ? 'Your access was revoked and needs to be reviewed again before you can continue.'
-              : "Tell us a bit about your practice. You'll get instant access to invite clients."}
-          </p>
-        </div>
-
-        <div className={`mt-8 flex flex-col gap-5 rounded-3xl ${t.surface} p-5`}>
-          <div>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Display name
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Deeyah Skin Studio"
-              value={applyDisplayName}
-              onChange={(e) => setApplyDisplayName(e.target.value)}
-              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-          </div>
-
-          <div>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Your title
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Esthetician, Dermatologist, Skincare Brand, Clinic"
-              value={applyTitle}
-              onChange={(e) => setApplyTitle(e.target.value)}
-              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-            <p className={`mt-1.5 text-[12px] ${t.faint}`}>
-              Shown to clients wherever your name appears.
-            </p>
-          </div>
-
-          <div>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Bio
-            </label>
-            <textarea
-              placeholder="A short intro clients will see"
-              value={applyBio}
-              onChange={(e) => setApplyBio(e.target.value)}
-              rows={3}
-              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-          </div>
-
-          <div>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Specialisms
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Acne, hyperpigmentation, sensitive skin"
-              value={applySpecialisms}
-              onChange={(e) => setApplySpecialisms(e.target.value)}
-              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-            <p className={`mt-1.5 text-[12px] ${t.faint}`}>Separate with commas</p>
-          </div>
-
-          <div>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Instagram
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. @deeyahskin"
-              value={applyInstagram}
-              onChange={(e) => setApplyInstagram(e.target.value)}
-              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-          </div>
-
-          <div>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              WhatsApp number
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. +2348012345678"
-              value={applyWhatsapp}
-              onChange={(e) => setApplyWhatsapp(e.target.value)}
-              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-          </div>
-
-          <button
-            onClick={submitPractitionerApplication}
-            disabled={applySaving}
-            className={`mt-2 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn} disabled:opacity-60`}
-          >
-            {applySaving
-              ? 'Saving…'
-              : practitionerStatus === 'verified'
-              ? 'Save changes'
-              : practitionerStatus === 'pending'
-              ? 'Update application'
-              : 'Submit application'}
-          </button>
-        </div>
-
-      </div>
-    </main>
+    <ApplyPractitionerScreen
+      applyBio={applyBio}
+      applyDisplayName={applyDisplayName}
+      applyInstagram={applyInstagram}
+      applySaving={applySaving}
+      applySpecialisms={applySpecialisms}
+      applyTitle={applyTitle}
+      applyWhatsapp={applyWhatsapp}
+      practitionerStatus={practitionerStatus}
+      setApplyBio={setApplyBio}
+      setApplyDisplayName={setApplyDisplayName}
+      setApplyInstagram={setApplyInstagram}
+      setApplySpecialisms={setApplySpecialisms}
+      setApplyTitle={setApplyTitle}
+      setApplyWhatsapp={setApplyWhatsapp}
+      setScreen={setScreen}
+      submitPractitionerApplication={submitPractitionerApplication}
+      t={t}
+    />
   )
 }
 if (screen === 'practitionerDashboard') {
-  const pendingClients = practitionerClients.filter((c) => c.status === 'invited')
-
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
-
-        <button
-          onClick={() => setScreen('settings')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Settings
-        </button>
-
-        <div className="mt-5">
-          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            Practitioner
-          </p>
-          <h1 className="mt-1.5 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Hello, {applyDisplayName || displayName}
-          </h1>
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Help your clients stay consistent with their skincare routines.
-          </p>
-
-          <button
-            onClick={() => setScreen('applyPractitioner')}
-            className={`mt-2 text-[13px] font-semibold ${t.mark}`}
-          >
-            Edit your profile
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setScreen('today')}
-            className={`mt-4 w-full rounded-2xl border px-4 py-3 text-left text-[14px] font-semibold ${t.hair} ${t.muted}`}
-          >
-            My Today screen
-          </button>
-        </div>
-
-        <button
-          onClick={() => {
-            setAddClientEmail('')
-            setAddClientResult(null)
-            setScreen('addClient')
-          }}
-          className={`mt-6 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn}`}
-        >
-          + Add Client
-        </button>
-
-        <div className="mt-6 grid grid-cols-2 gap-3">
-          <div className={`rounded-3xl ${t.surface} p-4`}>
-            <p className="text-[28px] font-semibold">{practitionerClients.length}</p>
-            <p className={`text-[13px] ${t.muted}`}>Total clients</p>
-          </div>
-          <div className={`rounded-3xl ${t.surface} p-4`}>
-            <p className="text-[28px] font-semibold">{pendingClients.length}</p>
-            <p className={`text-[13px] ${t.muted}`}>Pending acceptance</p>
-          </div>
-        </div>
-
-        <button
-          onClick={() => setScreen('practitionerRoutines')}
-          className={`mt-4 flex w-full items-center justify-between rounded-2xl border ${t.hair} px-4 py-3 text-left text-[14px] font-semibold ${t.muted}`}
-        >
-          All routines sent
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
-
-        {!pendingInvitationsLoading && pendingInvitations.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-[15px] font-semibold">Pending invites</h2>
-            <p className={`mt-1 text-[13px] ${t.muted}`}>
-              Links you've sent that haven't been opened yet.
-            </p>
-            <div className="mt-4 flex flex-col gap-2.5">
-              {pendingInvitations.map((inv) => (
-                <div key={inv.token} className={`flex items-center justify-between rounded-2xl ${t.surface} p-4`}>
-                  <div className="min-w-0">
-                    <p className="truncate text-[14px] font-semibold">
-                      {inv.label || inv.invited_email || 'Shared link'}
-                    </p>
-                    <p className={`mt-0.5 text-[12px] ${t.muted}`}>
-                      Sent {new Date(inv.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => shareClientInviteLink(`${SITE_URL}/?invite=${inv.token}`)}
-                      className={`text-[13px] font-semibold ${t.mark}`}
-                    >
-                      Share
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!!busyAction}
-                      onClick={() => runBusy(`cancelInvite-${inv.token}`, () => cancelInvitation(inv.token))}
-                      className={`text-[13px] font-semibold ${t.danger} disabled:opacity-50`}
-                    >
-                      {busyAction === `cancelInvite-${inv.token}` ? '…' : 'Cancel'}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-8">
-          <h2 className="text-[15px] font-semibold">Clients</h2>
-
-          {practitionerClientsLoading ? (
-            <p className={`mt-4 text-[13px] ${t.muted}`}>Loading…</p>
-          ) : practitionerClients.length === 0 ? (
-            <p className={`mt-4 text-[13px] leading-relaxed ${t.muted}`}>
-              No clients yet. Tap "Add Client" above to invite your first one.
-            </p>
-          ) : (
-            <div className="mt-4 flex flex-col gap-3">
-              {practitionerClients.map((c) => {
-                // Flags a connection accepted in the last 24h — surfaces who
-                // just claimed a link, since that's otherwise invisible
-                // until the practitioner happens to check back. Relies on
-                // practitioner_list_clients() already sorting most-recently-
-                // accepted first, so these naturally land at the top.
-                const isRecent =
-                  c.status === 'active' &&
-                  c.accepted_at &&
-                  Date.now() - new Date(c.accepted_at).getTime() < 24 * 60 * 60 * 1000
-
-                return (
-                <button
-                  key={c.relationship_id}
-                  onClick={() => c.status === 'active' && openClientDetail(c.client_id)}
-                  className={`flex items-center justify-between rounded-2xl ${t.surface} p-4 text-left`}
-                >
-                  <div>
-                    <p className="text-[15px] font-semibold">
-                      {c.username || 'Client'}
-                      {isRecent && (
-                        <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
-                          New
-                        </span>
-                      )}
-                    </p>
-                    <p className={`mt-0.5 text-[13px] ${t.muted}`}>
-                      {c.status === 'invited' ? 'Waiting for acceptance' : 'Active'}
-                    </p>
-                  </div>
-                  {c.status === 'invited' ? (
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
-                      Pending
-                    </span>
-                  ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="1.8"
-                      strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
-                      <path d="M9 5l7 7-7 7" />
-                    </svg>
-                  )}
-                </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        {practitionerRecommendations.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-[15px] font-semibold">Recent activity</h2>
-            <div className="mt-4 flex flex-col gap-2.5">
-              {practitionerRecommendations.slice(0, 5).map((rec) => {
-                const label =
-                  rec.status === 'proposed' ? 'Routine sent to'
-                  : rec.status === 'accepted' ? 'Accepted by'
-                  : rec.status === 'declined' ? 'Declined by'
-                  : 'Withdrawn for'
-                const at = rec.status === 'proposed' ? rec.created_at : rec.responded_at || rec.created_at
-
-                return (
-                  <p key={rec.id} className={`text-[13px] ${t.muted}`}>
-                    <span className="font-medium">{label} {rec.profiles?.username || 'a client'}</span>
-                    {' — '}
-                    {new Date(at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                  </p>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-      </div>
-    </main>
+    <PractitionerDashboardScreen
+      SITE_URL={SITE_URL}
+      applyDisplayName={applyDisplayName}
+      busyAction={busyAction}
+      cancelInvitation={cancelInvitation}
+      displayName={displayName}
+      openClientDetail={openClientDetail}
+      pendingInvitations={pendingInvitations}
+      pendingInvitationsLoading={pendingInvitationsLoading}
+      practitionerClients={practitionerClients}
+      practitionerClientsLoading={practitionerClientsLoading}
+      practitionerRecommendations={practitionerRecommendations}
+      runBusy={runBusy}
+      setAddClientEmail={setAddClientEmail}
+      setAddClientResult={setAddClientResult}
+      setScreen={setScreen}
+      shareClientInviteLink={shareClientInviteLink}
+      t={t}
+    />
   )
 }
 if (screen === 'practitionerClientDetail') {
-  const client = practitionerClients.find((c) => c.client_id === selectedClientId)
-
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
-
-        <button
-          onClick={() => setScreen('practitionerDashboard')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Clients
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[32px] font-light leading-[1.05] tracking-tight">
-            {client?.username || 'Client'}
-          </h1>
-        </div>
-
-        {clientDetailLoading ? (
-          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
-        ) : (
-          <>
-            <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
-              <h2 className="text-[15px] font-semibold">Skin profile</h2>
-              {clientDetail ? (
-                <div className="mt-3 flex flex-col gap-2 text-[14px]">
-                  {clientDetail.skin_type && (
-                    <p><span className={t.muted}>Skin type — </span>{clientDetail.skin_type}</p>
-                  )}
-                  {clientDetail.concerns && (
-                    <p><span className={t.muted}>Concerns — </span>{clientDetail.concerns}</p>
-                  )}
-                  {clientDetail.goals && (
-                    <p><span className={t.muted}>Goals — </span>{clientDetail.goals}</p>
-                  )}
-                  {!clientDetail.skin_type && !clientDetail.concerns && !clientDetail.goals && (
-                    <p className={t.muted}>Not filled in yet.</p>
-                  )}
-                </div>
-              ) : (
-                <p className={`mt-3 text-[13px] ${t.muted}`}>Not shared, or not filled in yet.</p>
-              )}
-            </div>
-
-            <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-              <h2 className="text-[15px] font-semibold">Products</h2>
-              {clientProducts.length === 0 ? (
-                <p className={`mt-3 text-[13px] ${t.muted}`}>None added yet.</p>
-              ) : (
-                <div className="mt-3 flex flex-col gap-2">
-                  {clientProducts.map((p) => (
-                    <p key={p.id} className="text-[14px]">
-                      <span className="font-medium">{p.products?.brand}</span>
-                      {' '}{p.products?.name}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-              <h2 className="text-[15px] font-semibold">Routine</h2>
-
-              <p className={`mt-3 text-[13px] font-semibold ${t.mark}`}>Morning</p>
-              {clientRoutineSteps.am.length === 0 ? (
-                <p className={`mt-1 text-[13px] ${t.muted}`}>No AM routine.</p>
-              ) : (
-                clientRoutineSteps.am.map((s, i) => (
-                  <p key={i} className="mt-1 text-[14px]">{s.step_name}</p>
-                ))
-              )}
-
-              <p className={`mt-4 text-[13px] font-semibold ${t.mark}`}>Night</p>
-              {clientRoutineSteps.pm.length === 0 ? (
-                <p className={`mt-1 text-[13px] ${t.muted}`}>No PM routine.</p>
-              ) : (
-                clientRoutineSteps.pm.map((s, i) => (
-                  <p key={i} className="mt-1 text-[14px]">{s.step_name}</p>
-                ))
-              )}
-            </div>
-
-            <button
-              onClick={openComposer}
-              className={`mt-6 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn}`}
-            >
-              Propose a routine
-            </button>
-
-            <button
-              disabled={!!busyAction}
-              onClick={() => runBusy(`removeClient-${client?.relationship_id}`, () => removeClient(client?.relationship_id, client?.username))}
-              className={`mt-3 w-full text-center text-[13px] font-semibold ${t.danger} disabled:opacity-50`}
-            >
-              {busyAction === `removeClient-${client?.relationship_id}` ? 'Removing…' : 'Remove client'}
-            </button>
-          </>
-        )}
-
-      </div>
-    </main>
+    <PractitionerClientDetailScreen
+      busyAction={busyAction}
+      clientDetail={clientDetail}
+      clientDetailLoading={clientDetailLoading}
+      clientProducts={clientProducts}
+      clientRoutineSteps={clientRoutineSteps}
+      openComposer={openComposer}
+      practitionerClients={practitionerClients}
+      removeClient={removeClient}
+      runBusy={runBusy}
+      selectedClientId={selectedClientId}
+      setScreen={setScreen}
+      t={t}
+    />
   )
 }
 if (screen === 'addClient') {
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
-
-        <button
-          onClick={() => setScreen('practitionerDashboard')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Dashboard
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[34px] font-light leading-[1.05] tracking-tight">
-            Add Client
-          </h1>
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Invite a client to receive their personalized skincare routine.
-          </p>
-        </div>
-
-        {!addClientResult ? (
-          <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-            <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              Client email
-            </label>
-
-            <input
-              type="email"
-              placeholder="e.g. sarah@email.com"
-              value={addClientEmail}
-              onChange={(e) => setAddClientEmail(e.target.value)}
-              className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-
-            <p className={`mt-1.5 text-[12px] ${t.faint}`}>
-              This email is used to find or create their Tracka+ account.
-            </p>
-
-            <button
-              onClick={inviteClientByEmail}
-              disabled={addClientSaving}
-              className={`mt-5 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn} disabled:opacity-60`}
-            >
-              {addClientSaving ? 'Sending…' : 'Continue'}
-            </button>
-          </div>
-        ) : null}
-
-        {!addClientResult && (
-          <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-            <p className="text-[15px] font-semibold">Don't know their email?</p>
-            <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-              Generate a link instead — it works whether or not they already have an account, no email needed.
-            </p>
-
-            <input
-              type="text"
-              placeholder="A name to remind you who this is for (optional)"
-              value={addLinkLabel}
-              onChange={(e) => setAddLinkLabel(e.target.value)}
-              className={`mt-3 w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-            />
-
-            <button
-              onClick={createInviteLink}
-              disabled={addLinkSaving}
-              className={`mt-3 w-full rounded-2xl border py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted} disabled:opacity-60`}
-            >
-              {addLinkSaving ? 'Creating…' : 'Generate invite link'}
-            </button>
-          </div>
-        )}
-
-        {addClientResult && (
-          <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-            <p className="text-[15px] font-semibold">Ready to share</p>
-            <p className={`mt-2 text-[14px] leading-relaxed ${t.muted}`}>
-              Share this link with them — opening it connects them with you, whether they already have a Tracka+ account or not.
-            </p>
-
-            <div className={`mt-4 rounded-2xl border ${t.hair} px-4 py-3`}>
-              <p className="break-all text-[13px]">{addClientResult.link}</p>
-            </div>
-
-            <button
-              onClick={() => shareClientInviteLink(addClientResult.link)}
-              className={`mt-4 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn}`}
-            >
-              Share link
-            </button>
-
-            <button
-              onClick={() => {
-                setAddClientEmail('')
-                setAddClientResult(null)
-                setScreen('practitionerDashboard')
-              }}
-              className={`mt-3 w-full text-[13px] font-semibold ${t.muted}`}
-            >
-              Done
-            </button>
-          </div>
-        )}
-
-      </div>
-    </main>
+    <AddClientScreen
+      addClientEmail={addClientEmail}
+      addClientResult={addClientResult}
+      addClientSaving={addClientSaving}
+      addLinkLabel={addLinkLabel}
+      addLinkSaving={addLinkSaving}
+      createInviteLink={createInviteLink}
+      inviteClientByEmail={inviteClientByEmail}
+      setAddClientEmail={setAddClientEmail}
+      setAddClientResult={setAddClientResult}
+      setAddLinkLabel={setAddLinkLabel}
+      setScreen={setScreen}
+      shareClientInviteLink={shareClientInviteLink}
+      t={t}
+    />
   )
 }
 if (screen === 'composeRecommendation') {
-  const client = practitionerClients.find((c) => c.client_id === selectedClientId)
-
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
-
-        <button
-          onClick={() => setScreen('practitionerClientDetail')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          {client?.username || 'Client'}
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[32px] font-light leading-[1.05] tracking-tight">
-            Propose a routine
-          </h1>
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            They'll review everything and can accept or decline it.
-          </p>
-        </div>
-
-        <div className={`mt-6 rounded-3xl ${t.surface} p-5`}>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !composeIncludeSkinProfile
-              setComposeIncludeSkinProfile(next)
-              if (next && !composeSkinType && clientDetail) {
-                setComposeGender(clientDetail.gender || '')
-                setComposePregnant(clientDetail.pregnant_or_breastfeeding ?? undefined)
-                setComposeSkinType(clientDetail.skin_type || '')
-                setComposeConcerns(clientDetail.concerns ? clientDetail.concerns.split(', ').filter(Boolean) : [])
-                setComposeGoals(clientDetail.goals ? clientDetail.goals.split(', ').filter(Boolean) : [])
-                setComposeSensitivity(clientDetail.sensitivity || '')
-              }
-            }}
-            className="flex w-full items-center justify-between"
-          >
-            <span className="text-[15px] font-semibold">Include a skin profile</span>
-            <span
-              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                composeIncludeSkinProfile ? t.btn : t.rail
-              }`}
-            >
-              <span
-                className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${
-                  composeIncludeSkinProfile ? 'left-6' : 'left-1'
-                }`}
-              />
-            </span>
-          </button>
-
-          {composeIncludeSkinProfile && (
-            <div className="mt-6 flex flex-col gap-6">
-              <section>
-                <h3 className="mb-2.5 text-[14px] font-semibold">Gender</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {['Female', 'Male', 'Non-binary', 'Prefer not to say'].map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => setComposeGender(option)}
-                      className={`rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
-                        composeGender === option ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
-                      }`}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              <section>
-                <h3 className="mb-2.5 text-[14px] font-semibold">Pregnant or breastfeeding?</h3>
-                <div className="flex gap-2">
-                  {[['Yes', true], ['No', false], ['Rather not say', null]].map(([label, value]) => (
-                    <button
-                      key={label}
-                      type="button"
-                      onClick={() => setComposePregnant(value)}
-                      className={`flex-1 rounded-xl border px-3 py-3 text-[13px] font-medium ${
-                        composePregnant === value ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              <section>
-                <h3 className="mb-2.5 text-[14px] font-semibold">Skin type</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {['Normal', 'Dry', 'Oily', 'Combination'].map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setComposeSkinType(type)}
-                      className={`rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
-                        composeSkinType === type ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              <section>
-                <h3 className="mb-2.5 text-[14px] font-semibold">Main concerns</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {['Acne', 'Dark circles', 'Dullness', 'Puffiness', 'Uneven texture', 'Visible pores', 'Dryness', 'Hyperpigmentation', 'Sensitivity', 'None'].map((concern) => (
-                    <button
-                      key={concern}
-                      type="button"
-                      onClick={() => {
-                        setComposeConcerns((current) => {
-                          if (concern === 'None') {
-                            return current.includes('None') ? [] : ['None']
-                          }
-                          const withoutNone = current.filter((c) => c !== 'None')
-                          return withoutNone.includes(concern)
-                            ? withoutNone.filter((c) => c !== concern)
-                            : [...withoutNone, concern]
-                        })
-                      }}
-                      className={`rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
-                        composeConcerns.includes(concern) ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
-                      }`}
-                    >
-                      {concern}
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              <section>
-                <h3 className="mb-2.5 text-[14px] font-semibold">Goals</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {['Hydration', 'Clearer skin', 'Even skin tone', 'Healthy skin'].map((goal) => (
-                    <button
-                      key={goal}
-                      type="button"
-                      onClick={() =>
-                        setComposeGoals((current) =>
-                          current.includes(goal)
-                            ? current.filter((g) => g !== goal)
-                            : [...current, goal]
-                        )
-                      }
-                      className={`rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
-                        composeGoals.includes(goal) ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
-                      }`}
-                    >
-                      {goal}
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              <section>
-                <h3 className="mb-2.5 text-[14px] font-semibold">Sensitivity</h3>
-                <div className="flex flex-col gap-2">
-                  {['Not sensitive', 'Sometimes sensitive', 'Very sensitive'].map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => setComposeSensitivity(option)}
-                      className={`w-full rounded-xl border px-3 py-3 text-left text-[13px] font-medium ${
-                        composeSensitivity === option ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
-                      }`}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              </section>
-            </div>
-          )}
-        </div>
-
-        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-          <h2 className="text-[15px] font-semibold">Products</h2>
-
-          {composeItems.length > 0 && (
-            <div className="mt-4 flex flex-col gap-2.5">
-              {composeItems.map((item) => (
-                <div key={item.tempId} className={`flex items-start justify-between rounded-2xl border ${t.hair} p-3.5`}>
-                  <div className="min-w-0">
-                    <p className="truncate text-[14px] font-semibold">{item.brand} — {item.name}</p>
-                    <p className={`mt-0.5 text-[12px] ${t.muted}`}>
-                      {item.category} • {item.slot} • {item.days_of_week.length === 7 ? 'Every day' : `${item.days_of_week.length} days/week`}
-                    </p>
-                    {item.reason && (
-                      <p className={`mt-1 text-[12px] italic ${t.faint}`}>"{item.reason}"</p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeComposeItem(item.tempId)}
-                    className={`shrink-0 text-[12px] font-semibold ${t.danger}`}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className={`mt-4 rounded-2xl border ${t.hair} p-4`}>
-            <div className="grid grid-cols-2 gap-2.5">
-              <input
-                type="text"
-                placeholder="Brand"
-                value={composeItemBrand}
-                onChange={(e) => setComposeItemBrand(e.target.value)}
-                className={`rounded-xl border ${t.hair} px-3 py-2.5 text-[13px] outline-none`}
-              />
-              <input
-                type="text"
-                placeholder="Product name"
-                value={composeItemName}
-                onChange={(e) => setComposeItemName(e.target.value)}
-                className={`rounded-xl border ${t.hair} px-3 py-2.5 text-[13px] outline-none`}
-              />
-            </div>
-
-            <select
-              value={composeItemCategory}
-              onChange={(e) => setComposeItemCategory(e.target.value)}
-              className={`mt-2.5 w-full rounded-xl border ${t.hair} px-3 py-2.5 text-[13px] outline-none`}
-            >
-              <option value="">Select a category</option>
-              <option value="cleanser">Cleanser</option>
-              <option value="toner">Toner</option>
-              <option value="essence">Essence</option>
-              <option value="serum">Serum</option>
-              <option value="treatment">Treatment</option>
-              <option value="moisturizer">Moisturizer</option>
-              <option value="body_wash">Body wash</option>
-              <option value="body_moisturizer">Body moisturizer</option>
-              <option value="body_oil">Body oil</option>
-              <option value="body_scrub">Body scrub</option>
-              <option value="sunscreen">Sunscreen</option>
-              <option value="exfoliant">Exfoliant</option>
-              <option value="mask">Mask</option>
-              <option value="other">Other</option>
-            </select>
-
-            <div className="mt-2.5 flex gap-2">
-              {['AM', 'PM'].map((slot) => (
-                <button
-                  key={slot}
-                  type="button"
-                  onClick={() => setComposeItemSlot(slot)}
-                  className={`flex-1 rounded-xl border px-3 py-2.5 text-[13px] font-semibold ${
-                    composeItemSlot === slot ? `${t.chip} border-transparent` : `${t.hair} ${t.muted}`
-                  }`}
-                >
-                  {slot}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-2.5 flex justify-between">
-              {[['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6], ['Sun', 0]].map(([label, day]) => {
-                const selected = composeItemDays.includes(day)
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    onClick={() =>
-                      setComposeItemDays((current) =>
-                        current.includes(day) ? current.filter((d) => d !== day) : [...current, day]
-                      )
-                    }
-                    className={`flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-semibold ${
-                      selected ? `${t.chip} border-transparent` : `border ${t.hair} ${t.muted}`
-                    }`}
-                  >
-                    {label[0]}
-                  </button>
-                )
-              })}
-            </div>
-
-            <input
-              type="text"
-              placeholder="Why this product? (optional)"
-              value={composeItemReason}
-              onChange={(e) => setComposeItemReason(e.target.value)}
-              className={`mt-2.5 w-full rounded-xl border ${t.hair} px-3 py-2.5 text-[13px] outline-none`}
-            />
-
-            <button
-              type="button"
-              onClick={addComposeItem}
-              className={`mt-2.5 w-full rounded-xl py-2.5 text-[13px] font-bold ${t.btn}`}
-            >
-              + Add product
-            </button>
-          </div>
-        </div>
-
-        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-          <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-            Notes for your client
-          </label>
-          <textarea
-            placeholder='e.g. "Use sunscreen daily. Introduce actives slowly."'
-            value={composeNote}
-            onChange={(e) => setComposeNote(e.target.value)}
-            rows={3}
-            className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-          />
-        </div>
-
-        <button
-          onClick={submitRecommendation}
-          disabled={composeSaving}
-          className={`mt-6 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn} disabled:opacity-60`}
-        >
-          {composeSaving ? 'Sending…' : 'Share Routine'}
-        </button>
-
-      </div>
-    </main>
+    <ComposeRecommendationScreen
+      addComposeItem={addComposeItem}
+      clientDetail={clientDetail}
+      composeConcerns={composeConcerns}
+      composeGender={composeGender}
+      composeGoals={composeGoals}
+      composeIncludeSkinProfile={composeIncludeSkinProfile}
+      composeItemBrand={composeItemBrand}
+      composeItemCategory={composeItemCategory}
+      composeItemDays={composeItemDays}
+      composeItemName={composeItemName}
+      composeItemReason={composeItemReason}
+      composeItemSlot={composeItemSlot}
+      composeItems={composeItems}
+      composeNote={composeNote}
+      composePregnant={composePregnant}
+      composeSaving={composeSaving}
+      composeSensitivity={composeSensitivity}
+      composeSkinType={composeSkinType}
+      practitionerClients={practitionerClients}
+      removeComposeItem={removeComposeItem}
+      selectedClientId={selectedClientId}
+      setComposeConcerns={setComposeConcerns}
+      setComposeGender={setComposeGender}
+      setComposeGoals={setComposeGoals}
+      setComposeIncludeSkinProfile={setComposeIncludeSkinProfile}
+      setComposeItemBrand={setComposeItemBrand}
+      setComposeItemCategory={setComposeItemCategory}
+      setComposeItemDays={setComposeItemDays}
+      setComposeItemName={setComposeItemName}
+      setComposeItemReason={setComposeItemReason}
+      setComposeItemSlot={setComposeItemSlot}
+      setComposeNote={setComposeNote}
+      setComposePregnant={setComposePregnant}
+      setComposeSensitivity={setComposeSensitivity}
+      setComposeSkinType={setComposeSkinType}
+      setScreen={setScreen}
+      submitRecommendation={submitRecommendation}
+      t={t}
+    />
   )
 }
 if (screen === 'practitionerRoutines') {
-  const FILTERS = [
-    ['all', 'All'],
-    ['proposed', 'Sent'],
-    ['accepted', 'Accepted'],
-    ['declined', 'Declined'],
-    ['superseded', 'Withdrawn'],
-  ]
-
-  const filtered = recommendationsFilter === 'all'
-    ? practitionerRecommendations
-    : practitionerRecommendations.filter((r) => r.status === recommendationsFilter)
-
-  const STATUS_LABEL = {
-    proposed: 'Sent — awaiting response',
-    accepted: 'Accepted',
-    declined: 'Declined',
-    superseded: 'Withdrawn',
-  }
-
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
-
-        <button
-          onClick={() => setScreen('practitionerDashboard')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Dashboard
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[34px] font-light leading-[1.05] tracking-tight">
-            Routines
-          </h1>
-        </div>
-
-        <div className="mt-5 flex gap-2 overflow-x-auto">
-          {FILTERS.map(([value, label]) => (
-            <button
-              key={value}
-              onClick={() => setRecommendationsFilter(value)}
-              className={`shrink-0 rounded-full px-3.5 py-2 text-[13px] font-semibold ${
-                recommendationsFilter === value ? `${t.chip} border-transparent` : `border ${t.hair} ${t.muted}`
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {practitionerRecommendationsLoading ? (
-          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
-        ) : filtered.length === 0 ? (
-          <p className={`mt-8 text-[13px] leading-relaxed ${t.muted}`}>
-            Nothing here yet.
-          </p>
-        ) : (
-          <div className="mt-6 flex flex-col gap-3">
-            {filtered.map((rec) => (
-              <div key={rec.id} className={`rounded-2xl ${t.surface} p-4`}>
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-[15px] font-semibold">{rec.profiles?.username || 'Client'}</p>
-                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}>
-                    {STATUS_LABEL[rec.status] || rec.status}
-                  </span>
-                </div>
-                <p className={`mt-1 text-[12px] ${t.muted}`}>
-                  {new Date(rec.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                </p>
-                {rec.note && (
-                  <p className={`mt-2 text-[13px] italic ${t.faint}`}>"{rec.note}"</p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-      </div>
-    </main>
+    <PractitionerRoutinesScreen
+      practitionerRecommendations={practitionerRecommendations}
+      practitionerRecommendationsLoading={practitionerRecommendationsLoading}
+      recommendationsFilter={recommendationsFilter}
+      setRecommendationsFilter={setRecommendationsFilter}
+      setScreen={setScreen}
+      t={t}
+    />
   )
 }
 if (screen === 'today') {
-  const amSteps = amPlan.steps
-
-  const pmSteps = nightPlan.steps
-
-  const amDone = amSteps.filter((s) => completedSteps.includes(s.id)).length
-  const pmDone = pmSteps.filter((s) => completedSteps.includes(s.id)).length
-
-  const amIngredientWarnings = checkRoutineConflicts(amSteps)
-  const pmIngredientWarnings = checkRoutineConflicts(pmSteps)
-
-  // Products the person marked as expired are left out of the plan
-  // (planNight → skipped, reason 'expired_marked'). Say so, so it never
-  // looks like a step silently vanished — firmer wording for sunscreen.
-  const renderExpiredNotice = (plan) => {
-    const gone = plan.skipped.filter((s) => s.reason === 'expired_marked')
-    if (gone.length === 0) return null
-    return (
-      <div className="mt-4 flex flex-col gap-2">
-        {gone.map(({ step }) => {
-          const isSpf = (step.category || '').toLowerCase() === 'sunscreen'
-          return (
-            <button
-              key={step.id}
-              type="button"
-              onClick={() => step.userProduct?.id && openProduct(step.userProduct.id)}
-              className="w-full border-l-2 border-rose-400/70 py-1 pl-3.5 text-left"
-            >
-              <span className="block text-[13px] font-medium">
-                {isSpf ? 'Your sunscreen is marked expired' : `${step.name} is left out today`}
-              </span>
-              <span className={`block text-[12px] leading-relaxed ${t.muted}`}>
-                {isSpf
-                  ? `${step.name} isn't in today's routine. Replace it before you rely on it for protection.`
-                  : 'You marked it as expired. Replace it, then swap it in My routine.'}
-              </span>
-            </button>
-          )
-        })}
-      </div>
-    )
-  }
-
-  const renderSteps = (steps, palette) => (
-    <div className="flex flex-col gap-3">
-      {steps.map((step, index) => {
-        const done = completedSteps.includes(step.id)
-        const stepImage = productImageFor(step.userProduct)
-
-        return (
-          <button
-            key={step.id}
-            onClick={() => toggleStepCompletion(step.id)}
-            className={`relative flex min-h-[88px] w-full items-center gap-4 overflow-hidden rounded-2xl p-4 pr-28 text-left transition ${
-              done ? palette.chip : `border ${palette.hair}`
-            }`}
-          >
-            {/* Product photo (or its category art) fills the card's right
-                edge and fades into it; muted to grey once ticked. */}
-            {(() => {
-              const fade = {
-                WebkitMaskImage: 'linear-gradient(to right, transparent 0%, #000 55%)',
-                maskImage: 'linear-gradient(to right, transparent 0%, #000 55%)',
-              }
-              const muted = done ? 'opacity-50 grayscale' : ''
-              return stepImage ? (
-                <img
-                  src={stepImage}
-                  alt=""
-                  loading="lazy"
-                  aria-hidden="true"
-                  className={`pointer-events-none absolute inset-y-0 right-0 h-full w-32 object-cover transition ${muted}`}
-                  style={fade}
-                />
-              ) : (
-                <span className={`pointer-events-none absolute inset-y-0 right-0 w-32 transition ${muted}`} style={fade}>
-                  {renderProductArt(step.category, 'h-full w-full pl-8', 'h-[72%] w-[72%]')}
-                </span>
-              )
-            })()}
-            <span
-              className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${
-                done ? palette.nodeDone : palette.node
-              }`}
-            >
-              {done ? (
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2.4"
-                  strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 12.5l5.2 5.2L20 7" />
-                </svg>
-              ) : (
-                index + 1
-              )}
-            </span>
-
-            <span className="relative min-w-0 flex-1">
-              {step.brand && (
-                <span className={`block truncate text-[12px] font-medium ${palette.faint}`}>
-                  {step.brand}
-                </span>
-              )}
-
-              <span
-                className={`mt-0.5 block text-[16px] font-semibold ${
-                  done ? 'line-through' : ''
-                }`}
-              >
-                {step.name}
-              </span>
-
-              {step.category && (
-                <span className={`mt-0.5 block text-[12px] capitalize ${palette.muted}`}>
-                  {step.category}
-                </span>
-              )}
-
-              {!done && step.expired && (
-                <span className="mt-2 flex flex-wrap gap-1.5">
-                  <span className={`inline-block rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-semibold ${palette.danger}`}>
-                    Past use-by date
-                  </span>
-                </span>
-              )}
-            </span>
-
-          </button>
-        )
-      })}
-    </div>
-  )
-
   return (
-    <main className="min-h-screen">
-
-      <div className={`${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex w-full max-w-md flex-col px-6 pt-7">
-
-        <div className="relative">
-          <button
-            type="button"
-            aria-label="Open profile menu"
-            onClick={() => setMenuOpen(!menuOpen)}
-            className="absolute right-0 top-1 rounded-full"
-          >
-            {renderProfileAvatar('h-14 w-14 text-lg')}
-          </button>
-
-          {menuOpen && (
-            <>
-              <div
-                className="fixed inset-0 z-[5]"
-                aria-hidden="true"
-                onClick={() => setMenuOpen(false)}
-              />
-
-              <div className={`absolute right-0 top-16 z-10 w-52 overflow-hidden rounded-2xl ${t.surface} shadow-xl`}>
-                {[
-                  ['Skin profile', 'skinProfile'],
-                  ['Skin progress', 'progress'],
-                  ['Challenges', 'challenges'],
-                  ['Skin diary', 'progressPhotos'],
-                  ['My profile & settings', 'settings'],
-                ].map(([label, target]) => (
-                  <button
-                    key={target}
-                    onClick={async () => {
-                      setMenuOpen(false)
-                      if (target === 'skinProfile') await loadSkinProfile()
-                      setScreen(target)
-                    }}
-                    className={`block w-full px-5 py-3.5 text-left text-[15px] ${t.muted}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          <div className="mt-1 pr-16">
-            <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-              Today
-            </p>
-
-            <h1 className="mt-1.5 font-display text-[44px] font-light leading-[1.02] tracking-tight">
-              Hello, {displayName}
-            </h1>
-
-            {!onboardingCompleted && (
-              <button
-                onClick={() => setScreen('routinePlanner')}
-                className={`mt-2 inline-block rounded-full px-2.5 py-1 text-[11px] font-semibold ${t.chip}`}
-              >
-                Complete your profile →
-              </button>
-            )}
-
-          <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>
-            Here's your skincare routine for today
-          </p>
-
-          <p className={`mt-2.5 text-sm ${t.muted}`}>
-            {new Date(todayString + 'T00:00:00').toLocaleDateString('en-GB', {
-              weekday: 'long',
-              day: 'numeric',
-              month: 'long',
-            })}
-          </p>
-          </div>
-        </div>
-
-        {/* Skin tip: white melting into soft brand blue, with a faint drop
-            watermark in the corner. */}
-        <div
-          className={`relative mt-4 overflow-hidden rounded-3xl border p-5 ${
-            isNight ? 'border-white/10' : 'border-[#1463F4]/10 shadow-[0_10px_30px_-18px_rgba(20,99,244,0.45)]'
-          }`}
-          style={{
-            background: isNight
-              ? 'linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(20,99,244,0.22) 100%)'
-              : 'linear-gradient(135deg, #FFFFFF 0%, #F3F7FF 45%, #DCE8FF 100%)',
-          }}
-        >
-          <svg aria-hidden="true" width="120" height="150" viewBox="0 0 24 30"
-            className={`pointer-events-none absolute -bottom-8 -right-5 ${isNight ? 'text-white/[0.06]' : 'text-[#1463F4]/[0.08]'}`}>
-            <path fill="currentColor" d="M12 1.5c.5 0 .9.3 1.2.8l7.6 14.6A9 9 0 1 1 3.2 16.9L10.8 2.3c.3-.5.7-.8 1.2-.8Z" />
-          </svg>
-          <div className="relative flex items-center gap-2">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#1463F4] text-white shadow-sm">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12.5l4.5 4.5L19 7.5" />
-              </svg>
-            </span>
-            <p className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${isNight ? 'text-[#9BBEFF]' : 'text-[#1463F4]'}`}>
-              {dailySkinTip[0]}
-            </p>
-          </div>
-          <p className="relative mt-3 pr-10 font-display text-[21px] leading-snug">{dailySkinTip[1]}</p>
-        </div>
-
-        {(() => {
-          const pendingInvites = careRelationships.filter((r) => r.status === 'invited')
-          const totalPending = pendingRecommendations.length + pendingInvites.length
-          if (totalPending === 0) return null
-
-          const label =
-            pendingRecommendations.length > 0 && pendingInvites.length === 0
-              ? pendingRecommendations.length === 1
-                ? `${pendingRecommendations[0].practitioners?.display_name || 'A professional'} sent you a routine`
-                : `${pendingRecommendations.length} new recommendations waiting`
-              : pendingInvites.length > 0 && pendingRecommendations.length === 0
-              ? pendingInvites.length === 1
-                ? `${pendingInvites[0].practitioners?.display_name || 'A professional'} wants to connect`
-                : `${pendingInvites.length} professionals want to connect`
-              : `${totalPending} things need your attention`
-
-          return (
-            <button
-              onClick={() => setScreen('notifications')}
-              className={`mt-5 flex w-full items-center justify-between rounded-2xl ${t.chip} px-4 py-3.5 text-left`}
-            >
-              <span className="text-[14px] font-semibold">{label}</span>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="1.8"
-                strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          )
-        })()}
-
-        {(() => {
-          const env = getInstallEnv()
-          if (env.standalone && env.notifications === 'granted') return null
-          return (
-            <button
-              type="button"
-              onClick={openSetupGuide}
-              className={`mt-6 flex w-full items-center gap-3 border-l-2 border-amber-400/80 py-1 pl-3.5 text-left`}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium">
-                  {env.standalone ? 'Turn on reminders' : 'Add Tracka+ to your home screen'}
-                </span>
-                <span className={`block text-[12px] ${t.muted}`}>
-                  {env.standalone
-                    ? 'Get a nudge when it’s time for your routine.'
-                    : 'One tap to open, plus morning and night reminders.'}
-                </span>
-              </span>
-              <span className="shrink-0 text-[12px] font-semibold text-amber-600">Show me how</span>
-            </button>
-          )
-        })()}
-
-        <div id="am-routine" className="mt-10 scroll-mt-6">
-          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            Morning
-          </p>
-
-          <h2 className="mt-1 font-display text-[28px] font-light leading-[1.05] tracking-tight">
-            AM Routine
-          </h2>
-
-          <div className="mt-6">
-            {routinesLoading ? (
-              <p className={`text-sm ${t.muted}`}>Getting your routine…</p>
-            ) : !todayAmRoutine ? (
-              <div>
-                <p className={`text-[15px] leading-relaxed ${t.muted}`}>
-                  You haven't set up a morning routine yet.
-                </p>
-                <button
-                  onClick={() => {
-                    showLocalNotification('New product alert 👀', 'Remember: introduce slowly.')
-                    setScreen('routinePlanner')
-                  }}
-                  className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${t.btn}`}
-                >
-                  Build my routine
-                </button>
-              </div>
-            ) : (
-              <>
-                {renderSteps(amSteps, t)}
-                {renderExpiredNotice(amPlan)}
-              </>
-            )}
-          </div>
-
-          {amIngredientWarnings.length > 0 && (
-            <div className={`mt-4 flex flex-col gap-2.5 rounded-2xl border ${t.hair} p-4`}>
-              {amIngredientWarnings.map((w, i) => (
-                <div key={i}>
-                  <p className="text-[13px] font-semibold">
-                    {w.ingredientA} + {w.ingredientB}
-                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
-                      {w.relationship}
-                    </span>
-                  </p>
-                  <p className={`mt-0.5 text-[13px] leading-relaxed ${t.muted}`}>{w.message}</p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {todayAmRoutine && !routinesLoading && (
-            <div className="mt-7 flex flex-col gap-3.5">
-              <p className={`text-[13px] ${t.faint}`}>
-                {amDone} of {amSteps.length} done
-              </p>
-
-              <button
-                onClick={() => {
-                  if (amSteps.length === 0 || amDone < amSteps.length) {
-                    notify(amSteps.length === 0 ? 'Nothing is scheduled for this routine today.' : 'Complete every scheduled step first.')
-                    return
-                  }
-                  finishRoutine('AM')
-                }}
-                className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
-              >
-                Complete morning routine
-              </button>
-            </div>
-          )}
-        </div>
-
-      </div>
-      </div>
-
-      <div className={`${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex w-full max-w-md flex-col px-6 pb-28">
-          <div className={`mt-10 border-t ${t.hair}`} aria-hidden="true" />
-
-          <p className={`mt-10 text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            Night
-          </p>
-
-          <h2 className="mt-1 font-display text-[28px] font-light leading-[1.05] tracking-tight">
-            PM Routine
-          </h2>
-
-          {(() => {
-            const held = nightPlan.skipped.filter((s) => s.reason === 'restricted')
-            if (held.length === 0) return null
-
-            return (
-              <div className={`mt-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4`}>
-                <p className="text-[13px] font-semibold text-amber-300">
-                  Held back: {held.map((s) => s.step.name).join(', ')}
-                </p>
-                <p className="mt-1 text-[13px] leading-relaxed text-amber-200/90">
-                  {PREGNANCY_NOTE}
-                </p>
-              </div>
-            )
-          })()}
-
-          <div className="mt-6">
-            {routinesLoading ? (
-              <p className={`text-sm ${t.muted}`}>Getting your routine…</p>
-            ) : !todayPmRoutine ? (
-              <div>
-                <p className={`text-[15px] leading-relaxed ${t.muted}`}>
-                  You haven't set up a night routine yet.
-                </p>
-                <button
-                  onClick={() => {
-                    showLocalNotification('New product alert 👀', 'Remember: introduce slowly.')
-                    setScreen('routinePlanner')
-                  }}
-                  className={`mt-5 rounded-2xl px-5 py-3.5 text-[15px] font-bold ${t.btn}`}
-                >
-                  Build my routine
-                </button>
-              </div>
-            ) : (
-              <>
-                {renderSteps(pmSteps, t)}
-                {renderExpiredNotice(nightPlan)}
-              </>
-            )}
-          </div>
-
-          {pmIngredientWarnings.length > 0 && (
-            <div className={`mt-4 flex flex-col gap-2.5 rounded-2xl border ${t.hair} p-4`}>
-              {pmIngredientWarnings.map((w, i) => (
-                <div key={i}>
-                  <p className="text-[13px] font-semibold">
-                    {w.ingredientA} + {w.ingredientB}
-                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.chip}`}>
-                      {w.relationship}
-                    </span>
-                  </p>
-                  <p className={`mt-0.5 text-[13px] leading-relaxed ${t.muted}`}>{w.message}</p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {todayPmRoutine && !routinesLoading && (
-            <div className="mt-7 flex flex-col gap-3.5">
-              <p className={`text-[13px] ${t.faint}`}>
-                {pmDone} of {pmSteps.length} done
-              </p>
-
-              <button
-                onClick={() => {
-                  if (pmSteps.length === 0 || pmDone < pmSteps.length) {
-                    notify(pmSteps.length === 0 ? 'Nothing is scheduled for this routine today.' : 'Complete every scheduled step first.')
-                    return
-                  }
-                  finishRoutine('PM')
-                }}
-                className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
-              >
-                Complete night routine
-              </button>
-            </div>
-          )}
-
-        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-          <h2 className={`text-[15px] font-semibold ${t.text}`}>
-            Skin diary log
-          </h2>
-
-          <p className={`mt-1 text-[13px] ${t.muted}`}>
-            How are you feeling today?
-          </p>
-
-          <button
-            onClick={() => setScreen('progressPhotos')}
-            className={`mt-4 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-[14px] font-bold ${t.btn}`}
-          >
-            Log skin diary
-          </button>
-        </div>
-
-        {monthlyReport && (
-          <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-            <div className="flex items-center justify-between">
-              <h2 className={`text-[15px] font-semibold ${t.text}`}>
-                {monthlyReport.monthLabel} report
-              </h2>
-              <button
-                onClick={() => setScreen('skinTrends')}
-                className={`text-[12px] font-semibold ${t.mark}`}
-              >
-                View full report
-              </button>
-            </div>
-
-            <div className="mt-4 flex gap-5">
-              <div>
-                <p className="font-display text-[26px] font-light">
-                  {monthlyReport.routineCompletionPct}%
-                </p>
-                <p className={`text-[11px] ${t.faint}`}>Routine completion</p>
-              </div>
-              <div>
-                <p className="font-display text-[26px] font-light">
-                  {monthlyReport.currentStreak}
-                </p>
-                <p className={`text-[11px] ${t.faint}`}>Current streak</p>
-              </div>
-              <div>
-                <p className="font-display text-[26px] font-light">
-                  {monthlyReport.photosAdded}
-                </p>
-                <p className={`text-[11px] ${t.faint}`}>Photos added</p>
-              </div>
-            </div>
-
-            <button
-              disabled={reportSharing}
-              onClick={shareSkinReport}
-              className={`mt-4 w-full rounded-2xl border py-3 text-[14px] font-semibold ${t.hair} ${t.muted} disabled:opacity-60`}
-            >
-              {reportSharing ? 'Preparing…' : 'Save report'}
-            </button>
-          </div>
-        )}
-
-        {(() => {
-          const activeChallenges = myChallenges.filter(isLiveParticipation)
-
-          return (
-            <div className={`mt-8 mb-4 rounded-3xl border ${t.hair} p-4`}>
-              <button
-                type="button"
-                onClick={() => setScreen('challenges')}
-                className="flex w-full items-center justify-between gap-3 text-left"
-              >
-                <span className="flex items-center gap-2.5">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
-                    strokeLinejoin="round" className={t.mark}>
-                    <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z" />
-                    <path d="M17 5h2.5a1.5 1.5 0 0 1 0 3H17M7 5H4.5a1.5 1.5 0 0 0 0 3H7" />
-                  </svg>
-                  <span className="text-[16px] font-semibold">Active Challenges</span>
-                </span>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="1.8"
-                  strokeLinecap="round" strokeLinejoin="round" className={t.muted}>
-                  <path d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-
-              {challengesLoading && myChallenges.length === 0 ? null : activeChallenges.length === 0 ? (
-                <div className="mt-3">
-                  <p className={`text-[14px] leading-relaxed ${t.muted}`}>
-                    You're not participating in any challenges yet. Explore challenges and find one that fits your routine.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setScreen('challenges')}
-                    className={`mt-3 text-[14px] font-semibold ${t.mark}`}
-                  >
-                    Explore challenges →
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-3.5 flex flex-col gap-3">
-                  {missingAmSunscreen &&
-                    activeChallenges.some((p) => p.challenges?.rule === 'am_sunscreen') &&
-                    renderSunscreenMissingNotice()}
-                  {activeChallenges.slice(0, 2).map((p) => renderChallengeProgressCard(p, 'today'))}
-                  {activeChallenges.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => setScreen('challenges')}
-                      className={`text-left text-[13px] font-semibold ${t.mark}`}
-                    >
-                      View all ({activeChallenges.length})
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })()}
-
-      </div>
-      </div>
-
-      {renderBottomTabs('today', t)}
-    </main>
+    <TodayScreen
+      amPlan={amPlan}
+      careRelationships={careRelationships}
+      challengesLoading={challengesLoading}
+      userId={user?.id}
+      dailySkinTip={dailySkinTip}
+      displayName={displayName}
+      finishRoutine={finishRoutine}
+      getInstallEnv={getInstallEnv}
+      hideHomeAd={hideHomeAd}
+      homeAd={homeAd}
+      isLiveParticipation={isLiveParticipation}
+      isNight={isNight}
+      loadSkinProfile={loadSkinProfile}
+      menuOpen={menuOpen}
+      missingAmSunscreen={missingAmSunscreen}
+      monthlyReport={monthlyReport}
+      myChallenges={myChallenges}
+      nightPlan={nightPlan}
+      notify={notify}
+      onboardingCompleted={onboardingCompleted}
+      openAd={openAd}
+      openProduct={openProduct}
+      openSetupGuide={openSetupGuide}
+      pendingRecommendations={pendingRecommendations}
+      productImageFor={productImageFor}
+      renderBottomTabs={renderBottomTabs}
+      renderChallengeProgressCard={renderChallengeProgressCard}
+      renderProductArt={renderProductArt}
+      renderProfileAvatar={renderProfileAvatar}
+      renderSunscreenMissingNotice={renderSunscreenMissingNotice}
+      reportSharing={reportSharing}
+      routinesLoading={routinesLoading}
+      setMenuOpen={setMenuOpen}
+      setScreen={setScreen}
+      shareSkinReport={shareSkinReport}
+      showLocalNotification={showLocalNotification}
+      t={t}
+      todayAmRoutine={todayAmRoutine}
+      todayPmRoutine={todayPmRoutine}
+      todayString={todayString}
+      toggleStepCompletion={toggleStepCompletion}
+    />
   )
 }
 
 
 if (screen === 'routinePlanner') {
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
-
-        <div className="flex items-center justify-between">
-          <button
-            onClick={() => setScreen('today')}
-            className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round">
-              <path d="M15 5l-7 7 7 7" />
-            </svg>
-            Today
-          </button>
-
-          <button
-            disabled={busyAction === 'routineHistory'}
-            onClick={() =>
-              runBusy('routineHistory', async () => {
-                await loadRoutineHistory()
-                setScreen('routineHistory')
-              })
-            }
-            className={`rounded-2xl border px-4 py-2.5 text-[13px] font-semibold ${t.hair} ${t.muted} disabled:opacity-50`}
-          >
-            {busyAction === 'routineHistory' ? 'Loading…' : 'History'}
-          </button>
-        </div>
-
-        <div className="mt-5">
-          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            {routineEditMode ? 'Routine settings' : 'Step 3 of 3'}
-          </p>
-
-          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            {routineEditMode ? 'Edit your routine' : 'Build your routine'}
-          </h1>
-
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Choose which products belong in your morning and night routines.
-          </p>
-        </div>
-
-        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-
-          <h2 className="text-[17px] font-semibold">
-            Your products
-          </h2>
-
-          <div className="mt-5 flex flex-col gap-3">
-
-            {products.length === 0 ? (
-              <div className={`rounded-2xl border ${t.hair} p-5 text-center`}>
-                <p className={`text-[15px] ${t.muted}`}>
-                  You haven't added any products yet.
-                </p>
-
-                <button
-                  onClick={() => {
-                    setAddProductReturnScreen('routinePlanner')
-                    setScreen('addProduct')
-                  }}
-                  className={`mt-4 rounded-xl px-5 py-3 text-[13px] font-semibold ${t.btn}`}
-                >
-                  + Add a product
-                </button>
-
-              </div>
-            ) : (
-              products.map((item) => (
-                <div
-                  key={item.id}
-                  className={`rounded-2xl border ${t.hair} p-4`}
-                >
-                  <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>
-                    {item.products?.brand}
-                  </p>
-
-                  <p className="mt-1 text-[15px] font-medium">
-                    {item.products?.name}
-                  </p>
-
-                  <p className={`mt-1 text-[12px] ${t.muted}`}>
-                    {item.products?.category}
-                  </p>
-
-                  <div className="mt-4">
-                    <label className={`text-[12px] font-semibold ${t.faint}`}>
-                      When do you want to use this?
-                    </label>
-
-                    <select
-                      className={`mt-2 w-full rounded-xl ${t.surface} border ${t.hair} px-4 py-3 text-[14px] outline-none`}
-                      value={productTimes[item.id] || ''}
-                      onChange={(e) =>
-                        setProductTimes({
-                          ...productTimes,
-                          [item.id]: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="" disabled>
-                        Choose time
-                      </option>
-
-                      <option value="NONE">
-                        Not in routine
-                      </option>
-
-                      <option value="AM">
-                        Morning (AM)
-                      </option>
-
-                      <option value="PM">
-                        Night (PM)
-                      </option>
-
-                      <option value="BOTH">
-                        Morning & Night (AM & PM)
-                      </option>
-                    </select>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className={`text-[12px] font-semibold ${t.faint}`}>
-                      How often? <span className="font-normal">(choose the days you want to use this product)</span>
-                    </label>
-
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {[
-                        ['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4],
-                        ['Fri', 5], ['Sat', 6], ['Sun', 0],
-                      ].map(([label, day]) => {
-                        const selectedDays = productDays[item.id] || []
-                        const selected = selectedDays.includes(day)
-
-                        return (
-                          <button
-                            key={day}
-                            type="button"
-                            onClick={() =>
-                              setProductDays((current) => {
-                                const currentDays = current[item.id] || []
-                                return {
-                                  ...current,
-                                  [item.id]: currentDays.includes(day)
-                                    ? currentDays.filter((d) => d !== day)
-                                    : [...currentDays, day],
-                                }
-                              })
-                            }
-                            className={`flex h-9 w-9 items-center justify-center rounded-full text-[12px] font-semibold transition ${
-                              selected
-                                ? `${t.chip} border border-transparent`
-                                : `border ${t.hair} ${t.muted}`
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              setAddProductReturnScreen('routinePlanner')
-              setScreen('addProduct')
-            }}
-            className={`mt-5 w-full rounded-xl border px-4 py-3 text-[14px] font-semibold ${t.hair} ${t.muted}`}
-          >
-            + Add a product
-          </button>
-        </div>
-
-        <button
-  disabled={routineSaving || routinesLoading}
-  onClick={async () => {
-    // Same double-tap guard as Add product — without it, a second tap
-    // while routines/routine_steps were still being inserted created a
-    // second full set, which then doubled up in routine history views.
-    if (routineSaving) return
-
-    if (products.length === 0) {
-      notify('Please add at least one product.')
-      return
-    }
-
-    const selectedProducts = products.filter((item) => productTimes[item.id] !== 'NONE')
-
-    if (selectedProducts.length === 0) {
-      notify('Choose at least one product for your routine.')
-      return
-    }
-
-    const missingTime = selectedProducts.find(
-  (item) => !productTimes[item.id]
-)
-
-if (missingTime) {
-  notify('Please choose a time for every product.')
-  return
-}
-
-const missingDays = selectedProducts.find(
-  (item) => !productDays[item.id] || productDays[item.id].length === 0
-)
-
-if (missingDays) {
-  notify('Please choose at least one day for every product.')
-  return
-}
-
-    if (!user) {
-      notify('Please log in first.')
-      return
-    }
-
-    setRoutineSaving(true)
-
-    const routineCode = `TRK-${Date.now().toString().slice(-6)}`
-
-    const buildSteps = (time) =>
-      selectedProducts
-        .filter((item) => {
-          const selectedTime = productTimes[item.id]
-          return selectedTime === time || selectedTime === 'BOTH'
-        })
-        .map((item, index) => ({
-          user_product_id: item.id,
-          step_order: index + 1,
-          step_name: item.products?.name || 'Skincare product',
-          frequency: 'daily',
-          days_of_week: productDays[item.id] || [0, 1, 2, 3, 4, 5, 6],
-        }))
-
-    // A dropped connection surfaces here as a raw fetch error ("TypeError:
-    // Load failed" on Safari/WebKit, "Failed to fetch" on Chrome) rather
-    // than a structured Postgrest error — not something to show verbatim,
-    // and on a weak mobile connection often clears up in a couple of
-    // seconds. One silent retry before bothering the user with anything.
-    const isNetworkError = (err) =>
-      err instanceof TypeError || /load failed|failed to fetch|network/i.test(err.message || '')
-
-    // One DB function doing deactivate-old + insert-new in a single
-    // transaction, instead of two separate requests from the client — a
-    // dropped connection between them used to leave someone with no
-    // active routine at all despite their products still being there.
-    // Safe to retry even if the first attempt actually landed server-side
-    // before the response was lost: create_routine always deactivates
-    // whatever's currently active first, so re-running it with the same
-    // steps just re-creates the same end state.
-    let { error } = await supabase.rpc('create_routine', {
-      p_routine_code: routineCode,
-      p_am_steps: buildSteps('AM'),
-      p_pm_steps: buildSteps('PM'),
-    })
-
-    if (error && isNetworkError(error)) {
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-      ;({ error } = await supabase.rpc('create_routine', {
-        p_routine_code: routineCode,
-        p_am_steps: buildSteps('AM'),
-        p_pm_steps: buildSteps('PM'),
-      }))
-    }
-
-    setRoutineSaving(false)
-
-    if (error) {
-      notify(
-        isNetworkError(error)
-          ? "Couldn't save your routine — check your connection and try again."
-          : 'Could not save your routine: ' + error.message
-      )
-      return
-    }
-
-    notify(routineEditMode ? 'Routine updated.' : 'Your routine is ready.', 'success')
-    showLocalNotification(
-      routineEditMode ? 'Routine updated' : `Your routine is ready, ${displayName}`,
-      'Time to stay consistent.'
-    )
-    setRoutineEditMode(true)
-
-    if (!onboardingCompleted) {
-      setOnboardingCompleted(true)
-      if (user) {
-        await supabase
-          .from('profiles')
-          .update({ onboarding_completed: true })
-          .eq('id', user.id)
-      }
-    }
-
-    setScreen('today')
-    loadRoutines()
-  }}
-  className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
->
-  {routineSaving ? 'Saving…' : routinesLoading ? 'Loading routine…' : routineEditMode ? 'Save routine changes' : 'Create my routine'}
-</button>
-
-        <button
-          onClick={() => setScreen('products')}
-          className={`mt-3 w-full rounded-2xl border px-5 py-3.5 text-[15px] font-semibold ${t.hair} ${t.muted}`}
-        >
-          Back to my products
-        </button>
-
-      </div>
-      {onboardingCompleted && renderBottomTabs('routinePlanner', t)}
-    </main>
+    <RoutinePlannerScreen
+      busyAction={busyAction}
+      displayName={displayName}
+      loadRoutineHistory={loadRoutineHistory}
+      loadRoutines={loadRoutines}
+      notify={notify}
+      onboardingCompleted={onboardingCompleted}
+      products={products}
+      renderBottomTabs={renderBottomTabs}
+      routinesLoading={routinesLoading}
+      runBusy={runBusy}
+      setAddProductReturnScreen={setAddProductReturnScreen}
+      setOnboardingCompleted={setOnboardingCompleted}
+      setScreen={setScreen}
+      showLocalNotification={showLocalNotification}
+      t={t}
+      user={user}
+    />
   )
 }
 if (screen === 'routineHistory') {
@@ -11750,6 +6358,7 @@ if (screen === 'routineDetails') {
 if (screen === 'completed') {
   const isPm = lastCompletedSlot === 'PM'
   const milestone = isPm && isMilestoneStreak(currentStreak)
+  const completedSteps = getCompletedSteps(user?.id)
   const tonightSteps = nightPlan.steps.filter((step) => completedSteps.includes(step.id))
   const morningSteps = amPlan.steps.filter((step) => completedSteps.includes(step.id))
   const slotSteps = isPm ? tonightSteps : morningSteps
@@ -12010,7 +6619,7 @@ if (screen === 'progress') {
               onClick={() =>
                 shareStreak(
                   currentStreak,
-                  nightPlan.steps.filter((step) => completedSteps.includes(step.id))
+                  nightPlan.steps.filter((step) => getCompletedSteps(user?.id).includes(step.id))
                 )
               }
               className={`mt-4 w-full rounded-2xl py-3.5 text-[14px] font-bold ${t.btn} disabled:opacity-60`}
@@ -12741,7 +7350,9 @@ if (screen === 'progressPhotos') {
 
   return (
     <>
-      {screenContent}
+      <Suspense fallback={<main className={`min-h-screen ${t.page}`} />}>
+        {screenContent}
+      </Suspense>
 
       {invitePreview && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/45 px-6">
