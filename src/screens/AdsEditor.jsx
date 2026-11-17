@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import SponsoredCard from '../ads/SponsoredCard'
+import { Overlay as FullscreenPreview } from '../ads/FullscreenAd'
 import { BackButton, Shell } from './ReferralConsole'
 
 // Slots a brand can buy. (The Today banner stays for Tracka+'s own
@@ -12,6 +13,10 @@ import { BackButton, Shell } from './ReferralConsole'
 const BRAND_SLOTS = {
   sponsored_challenge: { label: 'Sponsored challenge', hint: 'A "Sponsored by" card on the challenge page. Joins from that page count for the campaign.' },
   product_card: { label: 'Product card', hint: 'A sponsored card on My products, below the person\'s own products.' },
+  discover_card: { label: 'Discover card', hint: 'A sponsored card at the front of the first row on the Discover tab.' },
+  // Can be set up while switched off; it only reaches people once the
+  // Full-screen ads switch on the console is on.
+  fullscreen: { label: 'Full-screen', hint: 'Fills the screen a moment after the app opens on Today. At most once a day per person, always with a close button. Only shows while Full-screen ads is turned on in the admin panel.' },
 }
 
 const todayIso = () => new Date().toLocaleDateString('en-CA')
@@ -216,7 +221,7 @@ export function AdForm({ supabase, t, isNight, notify, brand, campaign, ad, onDo
         </select>
       </Field>
       <Field t={t} label="Headline"><input value={form.headline} onChange={set('headline')} maxLength={70} placeholder="e.g. Daily SPF that doesn't leave a cast" className={inputClass(t)} /></Field>
-      {form.slot === 'product_card' && (
+      {form.slot !== 'sponsored_challenge' && (
         <Field t={t} label="Short text" hint="One or two lines. Optional.">
           <input value={form.body} onChange={set('body')} maxLength={120} placeholder="e.g. 20% off for Tracka+ members this month" className={inputClass(t)} />
         </Field>
@@ -233,7 +238,7 @@ export function AdForm({ supabase, t, isNight, notify, brand, campaign, ad, onDo
       <Field t={t} label="Button link" hint={campaign.landing_url ? `Leave empty to use the campaign's landing page (${campaign.landing_url}).` : 'The campaign has no landing page, so add a link here.'}>
         <input value={form.action_target} onChange={set('action_target')} placeholder="https://" inputMode="url" className={inputClass(t)} />
       </Field>
-      <Field t={t} label="Image" hint="Square works best. Under 2 MB.">
+      <Field t={t} label="Image" hint={form.slot === 'fullscreen' ? 'Tall (portrait, 9:16) works best. Under 2 MB.' : 'Square works best. Under 2 MB.'}>
         <div className="flex items-center gap-3">
           {form.image_url && <img src={form.image_url} alt="" className="h-14 w-14 rounded-xl bg-white object-contain p-0.5" />}
           <label className={`cursor-pointer rounded-xl border ${t.hair} px-4 py-2.5 text-[13px] font-semibold ${t.mark}`}>
@@ -249,7 +254,13 @@ export function AdForm({ supabase, t, isNight, notify, brand, campaign, ad, onDo
 
       <div>
         <p className={`mb-2 text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>Preview</p>
-        <SponsoredCard ad={preview} supabase={supabase} t={t} isNight={isNight} onOpen={() => {}} compact={form.slot === 'sponsored_challenge'} />
+        {form.slot === 'fullscreen' ? (
+          <div className="mx-auto max-w-[260px]">
+            <FullscreenPreview ad={preview} preview onClose={() => {}} onOpen={() => {}} />
+          </div>
+        ) : (
+          <SponsoredCard ad={preview} supabase={supabase} t={t} isNight={isNight} onOpen={() => {}} compact={form.slot === 'sponsored_challenge'} />
+        )}
       </div>
     </FormShell>
   )

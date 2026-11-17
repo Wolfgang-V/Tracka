@@ -592,3 +592,146 @@ export async function generateAwardImage({ award, challengeTitle, dateLabel, isN
 
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
 }
+
+// Shortens a line to fit, with an ellipsis — product names can be long.
+function fitText(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text
+  let s = text
+  while (s.length > 1 && ctx.measureText(`${s}…`).width > maxWidth) s = s.slice(0, -1)
+  return `${s.trimEnd()}…`
+}
+
+/**
+ * The Strava-style version: the person's own photo, full bleed, with the
+ * streak and the routine they just finished laid over it. Same 9:16 size
+ * as the plain card so it drops straight into a Story.
+ *
+ * @param photo        a File/Blob from the camera or photo library
+ * @param streak, routineLabel, dateLabel, products — as generateStreakImage
+ * @returns Promise<Blob> JPEG (photos are far smaller as JPEG than PNG)
+ */
+export async function generatePhotoStreakImage({ photo, streak, routineLabel, dateLabel, products }) {
+  await document.fonts.load('600 64px Inter')
+  await document.fonts.load('500 96px "Cormorant Garamond"')
+  await document.fonts.ready
+
+  const canvas = document.createElement('canvas')
+  canvas.width = WIDTH
+  canvas.height = HEIGHT
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#0C1116'
+  ctx.fillRect(0, 0, WIDTH, HEIGHT)
+
+  // --- photo, cover-fit (crop to fill, centred) ---
+  const url = URL.createObjectURL(photo)
+  try {
+    const img = await loadImage(url)
+    const scale = Math.max(WIDTH / img.naturalWidth, HEIGHT / img.naturalHeight)
+    const w = img.naturalWidth * scale
+    const h = img.naturalHeight * scale
+    ctx.drawImage(img, (WIDTH - w) / 2, (HEIGHT - h) / 2, w, h)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+
+  // Shade top and bottom so white text reads on any photo.
+  const top = ctx.createLinearGradient(0, 0, 0, 420)
+  top.addColorStop(0, 'rgba(0,0,0,0.55)')
+  top.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = top
+  ctx.fillRect(0, 0, WIDTH, 420)
+
+  const shown = products.slice(0, 5)
+  const extra = products.length - shown.length
+  const panelH = 600 + (shown.length + (extra > 0 ? 1 : 0)) * 64
+  const bottom = ctx.createLinearGradient(0, HEIGHT - panelH - 260, 0, HEIGHT)
+  bottom.addColorStop(0, 'rgba(0,0,0,0)')
+  bottom.addColorStop(0.35, 'rgba(0,0,0,0.55)')
+  bottom.addColorStop(1, 'rgba(0,0,0,0.88)')
+  ctx.fillStyle = bottom
+  ctx.fillRect(0, HEIGHT - panelH - 260, WIDTH, panelH + 260)
+
+  // --- wordmark, top ---
+  try {
+    const icon = await loadImage('/icons/icon-192.png')
+    ctx.save()
+    roundRect(ctx, 72, 96, 56, 56, 14)
+    ctx.clip()
+    ctx.drawImage(icon, 72, 96, 56, 56)
+    ctx.restore()
+  } catch {
+    // The wordmark text alone still identifies the app.
+  }
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = '600 34px Inter'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText('TRACKA+', 148, 124)
+
+  // --- stats, bottom-left (Strava-style) ---
+  const x = 80
+  let y = HEIGHT - panelH
+
+  ctx.fillStyle = 'rgba(255,255,255,0.8)'
+  ctx.font = '600 28px Inter'
+  ctx.letterSpacing = '4px'
+  ctx.fillText(`${routineLabel.toUpperCase()} · DONE`, x, y)
+  ctx.letterSpacing = '0px'
+
+  y += 150
+  drawFlame(ctx, x + 60, y, 120, flameColorForStreak(streak))
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = '600 170px "Cormorant Garamond"'
+  ctx.fillText(String(streak), x + 140, y + 6)
+  const numW = ctx.measureText(String(streak)).width
+  ctx.font = '600 34px Inter'
+  ctx.letterSpacing = '3px'
+  ctx.fillStyle = 'rgba(255,255,255,0.85)'
+  ctx.fillText('DAY STREAK', x + 160 + numW, y + 34)
+  ctx.letterSpacing = '0px'
+
+  y += 130
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'
+  ctx.font = '500 32px Inter'
+  ctx.fillText(dateLabel, x, y)
+
+  y += 56
+  ctx.fillStyle = 'rgba(255,255,255,0.3)'
+  ctx.fillRect(x, y, WIDTH - x * 2, 2)
+  y += 70
+
+  for (const product of shown) {
+    ctx.fillStyle = '#8FB8E8'
+    ctx.beginPath()
+    ctx.arc(x + 12, y, 9, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = '500 40px "Cormorant Garamond"'
+    ctx.fillText(fitText(ctx, product.name, WIDTH - x * 2 - 260), x + 44, y)
+    if (product.category) {
+      ctx.textAlign = 'right'
+      ctx.fillStyle = 'rgba(255,255,255,0.6)'
+      ctx.font = '500 24px Inter'
+      ctx.letterSpacing = '1.5px'
+      ctx.fillText(product.category.toUpperCase(), WIDTH - x, y)
+      ctx.letterSpacing = '0px'
+      ctx.textAlign = 'left'
+    }
+    y += 64
+  }
+  if (extra > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,0.65)'
+    ctx.font = '500 30px Inter'
+    ctx.fillText(`+ ${extra} more ${extra === 1 ? 'step' : 'steps'}`, x + 44, y)
+  }
+
+  // --- footer ---
+  ctx.textAlign = 'center'
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'
+  ctx.font = '500 28px Inter'
+  ctx.letterSpacing = '2px'
+  ctx.fillText('TRACKAPLUS.APP', WIDTH / 2, HEIGHT - 90)
+  ctx.letterSpacing = '0px'
+
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9))
+}

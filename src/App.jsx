@@ -14,6 +14,7 @@ const IngredientCheckerScreen = lazy(() => import('./screens/IngredientCheckerSc
 const FindProfessionalScreen = lazy(() => import('./screens/practitioner/FindProfessionalScreen'))
 const CareTeamScreen = lazy(() => import('./screens/practitioner/CareTeamScreen'))
 const ChallengeDetailScreen = lazy(() => import('./screens/ChallengeDetailScreen'))
+const DiscoverScreen = lazy(() => import('./screens/DiscoverScreen'))
 const RecommendationHistoryScreen = lazy(() => import('./screens/practitioner/RecommendationHistoryScreen'))
 const ApplyPractitionerScreen = lazy(() => import('./screens/practitioner/ApplyPractitionerScreen'))
 const PractitionerDashboardScreen = lazy(() => import('./screens/practitioner/PractitionerDashboardScreen'))
@@ -23,6 +24,8 @@ const ComposeRecommendationScreen = lazy(() => import('./screens/practitioner/Co
 const PractitionerRoutinesScreen = lazy(() => import('./screens/practitioner/PractitionerRoutinesScreen'))
 import RoutinePlannerScreen from './screens/RoutinePlannerScreen'
 import ProductsScreen from './screens/ProductsScreen'
+import FullscreenAd from './ads/FullscreenAd'
+import PhotoStreakShare from './share/PhotoStreakShare'
 import { fetchAds, recordAdEvent, withUtm, isAdHidden, hideAd } from './lib/ads'
 import { useProducts, useEmpties, PRODUCT_FIELDS } from './data/products'
 import { useRoutines, getCompletedSteps, updateCompletedSteps } from './data/routine'
@@ -43,7 +46,9 @@ const VAPID_PUBLIC_KEY =
 // Fixed rather than window.location.origin — the old vercel.app URL still
 // resolves alongside the custom domain, so a signup or password reset
 // started from there would otherwise bake that domain into the email link.
-const SITE_URL = 'https://www.trackaplus.app'
+// The one canonical host. www redirects here (Vercel), and auth links must
+// land on this origin: the login session lives in its localStorage only.
+const SITE_URL = 'https://trackaplus.app'
 const DAILY_SKIN_TIPS = [
   ['Did you know?', 'SPF mainly measures protection against UVB, while broad-spectrum sunscreens also protect against UVA.'],
   ['Skin tip of the day', 'Broad-spectrum sunscreen protects against both UVA and UVB radiation.'],
@@ -567,6 +572,7 @@ setRoutineHistory(groupedRoutines)
   // Home-screen + reminders setup guide (most users never found either,
   // and stopped coming back).
   const [setupGuideOpen, setSetupGuideOpen] = useState(false)
+  const [fullscreenAdsOn, setFullscreenAdsOn] = useState(false)
   const [installPromptEvent, setInstallPromptEvent] = useState(null)
   const [setupGuideStatus, setSetupGuideStatus] = useState(null)
   const setupGuideShownRef = useRef(false)
@@ -755,11 +761,13 @@ setRoutineHistory(groupedRoutines)
     // not any actual access, so there's no reason to wait for login.
     supabase
       .from('feature_flags')
-      .select('enabled')
-      .eq('key', 'practitioners_launch')
-      .maybeSingle()
+      .select('key, enabled')
+      .in('key', ['practitioners_launch', 'fullscreen_ads'])
       .then(({ data }) => {
-        if (data?.enabled) setPractitionersLaunched(true)
+        const on = new Set((data || []).filter((f) => f.enabled).map((f) => f.key))
+        if (on.has('practitioners_launch')) setPractitionersLaunched(true)
+        // Switched from the admin panel (off by default).
+        if (on.has('fullscreen_ads')) setFullscreenAdsOn(true)
       })
 
     const inviteMatch = window.location.search.match(/[?&]invite=([0-9a-fA-F-]{36})/)
@@ -1560,6 +1568,19 @@ const TAB_ITEMS = [
         ),
       },
       {
+        key: 'discover',
+        label: 'Discover',
+        screens: ['discover', 'challenges'],
+        icon: (active) => (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth={active ? 2.2 : 1.8}
+            strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="m15.5 8.5-2 5-5 2 2-5 5-2Z" />
+          </svg>
+        ),
+      },
+      {
         key: 'products',
         label: 'My products',
         screens: ['products', 'addProduct', 'productDetail', 'ingredientChecker'],
@@ -1974,7 +1995,7 @@ useEffect(() => {
     loadChallenges()
   }
 
-  if (screen === 'challenges' || screen === 'challengeDetail') {
+  if (screen === 'challenges' || screen === 'challengeDetail' || screen === 'discover') {
     loadChallenges()
     loadRoutines()
     setChallengeMenuOpen(false)
@@ -4533,35 +4554,42 @@ if (screen === 'resetPassword') {
                 setConfirmNewPassword('')
                 setUser(data.user)
 
-                const { data: profile, error: profileError } = await supabase
-                  .from('profiles')
-                  .select('username')
-                  .eq('id', data.user.id)
-                  .maybeSingle()
+                const [{ data: profile, error: profileError }, { data: practitionerRow }] = await Promise.all([
+                  supabase
+                    .from('profiles')
+                    .select('username, onboarding_completed, avatar_path')
+                    .eq('id', data.user.id)
+                    .maybeSingle(),
+                  supabase.from('practitioners').select('verified_at').eq('user_id', data.user.id).maybeSingle(),
+                ])
 
                 setDisplayName(
                   profileError || !profile?.username
                     ? data.user.email?.split('@')[0] || 'there'
                     : profile.username
                 )
+                // The recovery link skips the normal start-up load, so fill in
+                // what it would have (setup-guide state, photo, restrictions).
+                if (!profileError && profile) {
+                  setOnboardingCompleted(profile.onboarding_completed !== false)
+                  loadProfileAvatar(profile.avatar_path)
+                }
+                loadRestrictions(data.user.id)
 
                 recoveryActiveRef.current = false
                 window.history.replaceState({}, '', window.location.pathname)
                 notify('Your password has been updated.', 'success')
 
-                // Same destination a normal login would pick.
-                const [{ data: existingSkinProfile }, { data: practitionerRow }] = await Promise.all([
-                  supabase.from('skin_profiles').select('id').eq('user_id', data.user.id).limit(1).maybeSingle(),
-                  supabase.from('practitioners').select('verified_at').eq('user_id', data.user.id).maybeSingle(),
-                ])
+                // Resetting a password always lands on Today, even for someone
+                // who hasn't finished their skin profile: Today's setup guide
+                // picks that up, and sending them to the profile form read as
+                // "it took me back to onboarding".
                 setScreen(
                   data.user.email === ADMIN_EMAIL
                     ? 'admin'
                     : practitionerRow?.verified_at
                     ? 'practitionerDashboard'
-                    : existingSkinProfile
-                    ? 'today'
-                    : 'skinProfile'
+                    : 'today'
                 )
               })
             }
@@ -5729,6 +5757,24 @@ if (screen === 'challenges') {
   )
 }
 
+if (screen === 'discover') {
+  return (
+    <DiscoverScreen
+      challenges={challenges}
+      isNight={isNight}
+      myChallenges={myChallenges}
+      onboardingCompleted={onboardingCompleted}
+      openAd={openAd}
+      openChallenge={openChallenge}
+      renderBottomTabs={renderBottomTabs}
+      renderChallengeImage={renderChallengeImage}
+      setScreen={setScreen}
+      t={t}
+      userId={user?.id}
+    />
+  )
+}
+
 if (screen === 'challengeDetail') {
   return (
     <ChallengeDetailScreen
@@ -6496,6 +6542,15 @@ if (screen === 'completed') {
           </svg>
           {shareStreakBusy ? 'Preparing…' : 'Share my streak'}
         </button>
+
+        <PhotoStreakShare
+          streak={currentStreak}
+          steps={slotSteps}
+          routineLabel={slotLabel}
+          t={t}
+          notify={notify}
+          shareUrl={SITE_URL}
+        />
 
         <div className="mt-3 grid w-full grid-cols-2 gap-3">
           <button
@@ -7441,6 +7496,10 @@ if (screen === 'progressPhotos') {
             </button>
           </div>
         </div>
+      )}
+
+      {fullscreenAdsOn && screen === 'today' && user && onboardingCompleted && (
+        <FullscreenAd userId={user.id} supabase={supabase} blocked={setupGuideOpen || Boolean(celebration)} onOpen={openAd} />
       )}
 
       {setupGuideOpen && (() => {

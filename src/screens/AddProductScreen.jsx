@@ -54,7 +54,7 @@ export default function AddProductScreen({
             strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 5l-7 7 7 7" />
           </svg>
-          {addProductReturnScreen === 'routinePlanner' ? 'Edit routine' : 'Products'}
+          {addProductReturnScreen === 'routinePlanner' ? 'Edit routine' : addProductReturnScreen === 'discover' ? 'Discover' : 'Products'}
         </button>
 
         <div className="mt-5">

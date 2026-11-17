@@ -15,6 +15,8 @@ const SLOT_LABELS = {
   home_banner: 'Home banner',
   sponsored_challenge: 'Sponsored challenge',
   product_card: 'Product card',
+  discover_card: 'Discover card',
+  fullscreen: 'Full-screen',
 }
 
 const STATUS_STYLES = {

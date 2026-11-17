@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { localDateString } from '../lib/core/planNight'
+import FullscreenSwitch from '../ads/FullscreenSwitch'
 
 export default function AdminScreen({
   t, isNight, notify, confirmAction, busyAction, runBusy, setScreen,
@@ -416,6 +417,8 @@ export default function AdminScreen({
               {busyAction === 'togglePractitionersLaunch' ? '…' : practitionersLaunched ? 'Park it' : 'Launch'}
             </button>
           </div>
+
+          <FullscreenSwitch supabase={supabase} t={t} notify={notify} confirmAction={confirmAction} />
 
           <div className="mt-4">
             <label htmlFor="admin-section" className="sr-only">Admin section</label>

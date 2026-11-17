@@ -62,7 +62,7 @@ export default function ChallengeDetailScreen({
     <SponsoredCard ad={sponsorAd} supabase={supabase} t={t} isNight={isNight} onOpen={openAd} compact />
   )
 
-  const backLabel = challengeReturnScreen === 'today' ? 'Today' : 'Challenges'
+  const backLabel = ({ today: 'Today', discover: 'Discover' })[challengeReturnScreen] || 'Challenges'
 
   const backButton = (label) => (
     <button
@@ -480,7 +480,7 @@ export default function ChallengeDetailScreen({
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
 
-        {backButton(challengeReturnScreen === 'today' ? 'Today' : 'Discover Challenges')}
+        {backButton(({ today: 'Today', discover: 'Discover' })[challengeReturnScreen] || 'Discover Challenges')}
 
         {renderChallengeImage(challenge, 'mt-4 h-60 w-full rounded-3xl')}
         {sponsorCard}
