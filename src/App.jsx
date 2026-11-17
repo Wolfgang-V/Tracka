@@ -168,11 +168,6 @@ function App() {
   const [screen, setScreen] = useState('welcome')
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
-  // Opening splash: 0 = white drop on blue, 1 = blue drop on white,
-  // 2 = wordmark, 3 = sequence finished. It stays on the wordmark until
-  // the session is ready, then fades out ('leaving') and unmounts ('gone').
-  const [splashStep, setSplashStep] = useState(0)
-  const [splashExit, setSplashExit] = useState(null)
   // True from the moment a password-reset link opens the app until the new
   // password is saved. Startup routing must not send the person anywhere
   // else meanwhile (it used to race and land them on onboarding/Today).
@@ -204,25 +199,26 @@ function App() {
   // entry so back has somewhere to go).
   const isPoppingRef = useRef(false)
 
-  // Step the opening splash along, ~0.9s per frame. Reduced-motion users
-  // skip straight to the wordmark.
+  // The opening splash lives in index.html so it shows the instant the
+  // app opens, before this code has even downloaded. Once its ~3s
+  // animation has finished (index.html sets data-done) and the session is
+  // known, fade it out and remove it.
   useEffect(() => {
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    const times = reduce ? [[3, 600]] : [[1, 900], [2, 1800], [3, 2700]]
-    if (reduce) setSplashStep(2)
-    const timers = times.map(([step, ms]) => window.setTimeout(() => setSplashStep(step), ms))
-    return () => timers.forEach((id) => window.clearTimeout(id))
-  }, [])
-
-  useEffect(() => {
-    if (!splashExit && splashStep >= 3 && authReady) setSplashExit('leaving')
-  }, [splashStep, authReady, splashExit])
-
-  useEffect(() => {
-    if (splashExit !== 'leaving') return
-    const id = window.setTimeout(() => setSplashExit('gone'), 450)
-    return () => window.clearTimeout(id)
-  }, [splashExit])
+    if (!authReady) return
+    const splash = document.getElementById('splash')
+    if (!splash) return
+    let removeTimer
+    const leave = () => {
+      splash.classList.add('splash--leaving')
+      removeTimer = window.setTimeout(() => splash.remove(), 450)
+    }
+    if (splash.dataset.done) leave()
+    else splash.addEventListener('splashdone', leave, { once: true })
+    return () => {
+      splash.removeEventListener('splashdone', leave)
+      window.clearTimeout(removeTimer)
+    }
+  }, [authReady])
 
   useEffect(() => {
     // The browser's own scroll restoration tries to remember and replay a
@@ -3658,7 +3654,7 @@ const loadReminderSettings = async () => {
 const screenContent = (() => {
 
 if (!authReady) {
-  // The opening splash (rendered over everything below) covers this.
+  // The opening splash in index.html covers this until the session is known.
   return <main className="min-h-screen bg-white" />
 }
 
@@ -12743,23 +12739,9 @@ if (screen === 'progressPhotos') {
   )
 })()
 
-  const splashFrame = Math.min(splashStep, 2)
-
   return (
     <>
       {screenContent}
-
-      {splashExit !== 'gone' && (
-        <div
-          role="img"
-          aria-label="Tracka+ is loading"
-          className={`splash ${splashFrame === 0 ? 'splash--blue' : ''} ${splashExit === 'leaving' ? 'splash--leaving' : ''}`}
-        >
-          <img src="/logo%202.jpg" alt="" className={`splash-art splash-art--mark ${splashFrame === 0 ? 'is-on' : ''}`} />
-          <img src="/logo%201.jpg" alt="" className={`splash-art splash-art--mark ${splashFrame === 1 ? 'is-on' : ''}`} />
-          <img src="/logo-wordmark.jpg" alt="" className={`splash-art splash-art--wordmark ${splashFrame === 2 ? 'is-on' : ''}`} />
-        </div>
-      )}
 
       {invitePreview && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/45 px-6">
