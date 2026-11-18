@@ -1,6 +1,8 @@
 // Add product — search the catalogue or add your own, with expiry details.
 // Moved out of App.jsx; shared state comes in as props for now.
 
+import { useRef } from 'react'
+
 import { addMonths, localDateString } from '../lib/core/planNight'
 import { searchNigerianBrands } from '../lib/core/nigerianProducts'
 import { BRANDS } from '../lib/core/brands'
@@ -8,6 +10,9 @@ import { supabase } from '../lib/supabase'
 import { addProductToHeldDraft } from '../lib/core/routineDraft'
 
 export default function AddProductScreen({
+  onProductSaved,
+  // Returns 'sponsored' when the form came from a sponsored product page.
+  getProductSource,
   PRODUCT_SUGGESTIONS_ENABLED,
   addProductReturnScreen,
   brandSuggestionsOpen,
@@ -41,6 +46,13 @@ export default function AddProductScreen({
   setScreen,
   t,
 }) {
+  // Where the product came from, for products.source: set when an Open
+  // Beauty Facts match is picked, cleared as soon as the brand or name is
+  // typed over (then it's the person's own entry).
+  const pickedSourceRef = useRef(null)
+  // The picked match's Open Beauty Facts barcode, cleared with the source.
+  const pickedBarcodeRef = useRef(null)
+
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
@@ -54,7 +66,7 @@ export default function AddProductScreen({
             strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 5l-7 7 7 7" />
           </svg>
-          {addProductReturnScreen === 'routinePlanner' ? 'Edit routine' : addProductReturnScreen === 'discover' ? 'Discover' : 'Products'}
+          {({ routinePlanner: 'Edit routine', discover: 'Discover', adProduct: 'Product' })[addProductReturnScreen] || 'Products'}
         </button>
 
         <div className="mt-5">
@@ -80,6 +92,8 @@ export default function AddProductScreen({
               value={productBrand}
               onChange={(e) => {
                 setProductBrand(e.target.value)
+                pickedSourceRef.current = null
+                pickedBarcodeRef.current = null
                 setBrandSuggestionsOpen(true)
               }}
               onFocus={() => setBrandSuggestionsOpen(true)}
@@ -151,6 +165,8 @@ export default function AddProductScreen({
               value={productName}
               onChange={(e) => {
                 setProductName(e.target.value)
+                pickedSourceRef.current = null
+                pickedBarcodeRef.current = null
                 setProductIngredients('')
                 setProductImageUrl('')
                 setProductSuggestionsOpen(true)
@@ -172,6 +188,8 @@ export default function AddProductScreen({
                       if (guessed) setProductCategory(guessed)
                       setProductIngredients(match.ingredients || '')
                       setProductImageUrl(match.image || '')
+                      pickedSourceRef.current = match.source || null
+                      pickedBarcodeRef.current = (typeof match.code === 'string' && match.code.trim()) || null
                       setProductSuggestionsOpen(false)
                     }}
                     className="flex w-full items-center gap-3 px-3 py-2 text-left"
@@ -334,21 +352,54 @@ export default function AddProductScreen({
                 return
               }
 
-              const {
+              // Barcode only for a plain Open Beauty Facts pick. products.barcode
+              // is unique, so a second save of the same barcode reuses the
+              // existing row (rows are insert-only, so sharing is safe).
+              // Sponsored saves never carry one: their 'sponsored' tag means
+              // "this person added it from an ad" only while the row isn't
+              // shared (see migration 20261118060000).
+              const barcode =
+                !getProductSource?.() && pickedSourceRef.current === 'openbeautyfacts'
+                  ? pickedBarcodeRef.current
+                  : null
+
+              let {
                 data: product,
                 error: productError,
               } = await supabase
                 .from('products')
                 .insert({
+                  ...(barcode ? { barcode } : {}),
                   brand: productBrand,
                   name: productName,
                   category: productCategory,
                   ingredients: productIngredients || null,
-                  // Only Open Beauty Facts' own image host is accepted.
-                  image_url: productImageUrl.startsWith('https://images.openbeautyfacts.org/') ? productImageUrl : null,
+                  // 'sponsored' (from an ad's product page) wins; otherwise
+                  // 'openbeautyfacts' if a match was picked; else the
+                  // database default, 'manual'.
+                  ...((getProductSource?.() || pickedSourceRef.current)
+                    ? { source: getProductSource?.() || pickedSourceRef.current }
+                    : {}),
+                  // Only Open Beauty Facts' image host, or our own ad-images
+                  // bucket (a sponsored product's photo), is accepted.
+                  image_url: productImageUrl.startsWith('https://images.openbeautyfacts.org/') ||
+                    productImageUrl.startsWith(`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/ad-images/`)
+                    ? productImageUrl : null,
                 })
                 .select()
                 .single()
+
+              if (productError?.code === '23505' && barcode) {
+                const { data: existing } = await supabase
+                  .from('products')
+                  .select()
+                  .eq('barcode', barcode)
+                  .maybeSingle()
+                if (existing) {
+                  product = existing
+                  productError = null
+                }
+              }
 
               if (productError) {
                 notify(productError.message)
@@ -369,7 +420,10 @@ export default function AddProductScreen({
                   })
 
               if (userProductError) {
-                notify(userProductError.message)
+                // Reusing a barcode row can land on one this person already has.
+                notify(userProductError.code === '23505'
+                  ? 'This product is already in your products.'
+                  : userProductError.message)
                 setProductSaving(false)
                 return
               }
@@ -392,6 +446,9 @@ export default function AddProductScreen({
                 }
               }
 
+              onProductSaved?.()
+              pickedSourceRef.current = null
+              pickedBarcodeRef.current = null
               setProductBrand('')
               setProductName('')
               setProductCategory('')

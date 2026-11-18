@@ -15,6 +15,7 @@ const FindProfessionalScreen = lazy(() => import('./screens/practitioner/FindPro
 const CareTeamScreen = lazy(() => import('./screens/practitioner/CareTeamScreen'))
 const ChallengeDetailScreen = lazy(() => import('./screens/ChallengeDetailScreen'))
 const DiscoverScreen = lazy(() => import('./screens/DiscoverScreen'))
+const SponsoredProductScreen = lazy(() => import('./screens/SponsoredProductScreen'))
 const RecommendationHistoryScreen = lazy(() => import('./screens/practitioner/RecommendationHistoryScreen'))
 const ApplyPractitionerScreen = lazy(() => import('./screens/practitioner/ApplyPractitionerScreen'))
 const PractitionerDashboardScreen = lazy(() => import('./screens/practitioner/PractitionerDashboardScreen'))
@@ -476,6 +477,12 @@ function App() {
   } = useRoutines(user?.id)
   const [routineHistory, setRoutineHistory] = useState([])
   const [addProductReturnScreen, setAddProductReturnScreen] = useState('products')
+  // Sponsored product page: the ad being viewed and where Back goes.
+  const [adProduct, setAdProduct] = useState(null)
+  const [adProductReturn, setAdProductReturn] = useState('discover')
+  // Set while the add form was opened from a sponsored product, so saving
+  // it counts as that ad's "added to My products".
+  const adProductAddRef = useRef(null)
   const [selectedRoutine, setSelectedRoutine] = useState(null)
   const loadRoutineHistory = async () => {
   if (!user) return
@@ -1975,6 +1982,9 @@ const guessCategory = (text) => {
 
 
 useEffect(() => {
+  // Leaving the add form without saving drops the sponsored-product credit.
+  if (screen !== 'addProduct') adProductAddRef.current = null
+
   if (screen === 'today') {
     loadRoutines()
     loadStepHistory()
@@ -3121,6 +3131,11 @@ const openAd = (ad) => {
     openChallenge(ad.action_target || ad.challenge_id, 'today')
   } else if (ad.action === 'screen' && ad.action_target) {
     setScreen(ad.action_target)
+  } else if (ad.action === 'product' && ad.product) {
+    setAdProduct(ad)
+    setAdProductReturn(screen === 'adProduct' ? adProductReturn : screen)
+    setScreen('adProduct')
+    window.scrollTo(0, 0)
   } else {
     const url = ad.action_target || ad.landing_url
     if (url) window.open(withUtm(url, ad.headline), '_blank', 'noopener')
@@ -3788,6 +3803,13 @@ const submitRecommendation = async () => {
   if (screen === 'addProduct') {
     return (
       <AddProductScreen
+        getProductSource={() => (adProductAddRef.current ? 'sponsored' : undefined)}
+        onProductSaved={() => {
+          if (adProductAddRef.current) {
+            recordAdEvent(supabase, adProductAddRef.current, 'product_add')
+            adProductAddRef.current = null
+          }
+        }}
         PRODUCT_SUGGESTIONS_ENABLED={PRODUCT_SUGGESTIONS_ENABLED}
         addProductReturnScreen={addProductReturnScreen}
         brandSuggestionsOpen={brandSuggestionsOpen}
@@ -5754,6 +5776,34 @@ if (screen === 'challenges') {
 
       </div>
     </main>
+  )
+}
+
+if (screen === 'adProduct' && adProduct) {
+  const product = adProduct.product || {}
+  return (
+    <SponsoredProductScreen
+      ad={adProduct}
+      t={t}
+      isNight={isNight}
+      backLabel={({ discover: 'Discover', products: 'My products', today: 'Today' })[adProductReturn] || 'Back'}
+      onBack={() => setScreen(adProductReturn)}
+      onShop={() => {
+        recordAdEvent(supabase, adProduct.placement_id, 'shop_click')
+        window.open(withUtm(product.shop_url, adProduct.headline), '_blank', 'noopener')
+      }}
+      onAddProduct={() => {
+        // Pre-filled from the brand's details; the person adds dates and saves.
+        setProductBrand(adProduct.brand || '')
+        setProductName(product.name || '')
+        setProductIngredients(product.ingredients || '')
+        setProductImageUrl(adProduct.image_url || '')
+        setProductCategory(guessCategory(product.category || '') || guessCategory(product.name || ''))
+        setAddProductReturnScreen('adProduct')
+        setScreen('addProduct')
+        adProductAddRef.current = adProduct.placement_id
+      }}
+    />
   )
 }
 

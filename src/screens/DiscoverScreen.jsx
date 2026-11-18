@@ -77,7 +77,7 @@ export default function DiscoverScreen({
           </div>
           <Carousel isNight={isNight}>
           {ads.map((ad) => (
-            <SponsoredDiscoverCard wide key={ad.placement_id} ad={ad} t={t} isNight={isNight} tagClass={tag.sponsored} onOpen={openAd} />
+            <SponsoredDiscoverCard key={ad.placement_id} ad={ad} isNight={isNight} onOpen={openAd} />
           ))}
           {openChallenges.map((c) => {
             const mine = joined.get(c.id)
@@ -300,33 +300,53 @@ function Card({ t, isNight, onClick, art, pill, tag, tagClass, title, body, cta,
   )
 }
 
-function SponsoredDiscoverCard({ ad, t, isNight, tagClass, onOpen, wide = false }) {
+// Sponsored card, in the carousel: clearly labelled, with the brand's
+// image and one clear button ("Explore product" opens the product page).
+export function SponsoredDiscoverCard({ ad, isNight, onOpen }) {
   const ref = useRef(null)
   useViewableImpression(ref, supabase, ad.placement_id)
+  let host = ''
+  try { host = new URL(ad.product?.shop_url || ad.action_target || ad.landing_url).hostname.replace(/^www./, '') } catch { /* no link */ }
+  const open = () => {
+    recordAdClick(supabase, ad.placement_id)
+    onOpen(ad)
+  }
   return (
-    <Card
-      wide={wide}
-      cardRef={ref}
-      t={t}
-      isNight={isNight}
-      onClick={() => {
-        recordAdClick(supabase, ad.placement_id)
-        onOpen(ad)
-      }}
-      art={
-        ad.image_url ? (
-          <img src={ad.image_url} alt="" className="h-full w-full bg-white object-cover" />
-        ) : (
-          <div className="h-full w-full bg-gradient-to-br from-violet-100 to-violet-300" />
-        )
-      }
-      pill={ad.brand}
-      tag="Sponsored"
-      tagClass={tagClass}
-      title={ad.headline}
-      body={ad.body}
-      cta={ad.cta_label || 'Learn more'}
-    />
+    <div
+      ref={ref}
+      className={`flex h-full w-full flex-col rounded-3xl border p-4 ${
+        isNight ? 'border-white/10 bg-[#13203A]' : 'border-[#1463F4]/10 bg-[#EAF1FF] shadow-[0_10px_28px_-20px_rgba(20,99,244,0.6)]'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${
+          isNight ? 'bg-[#1463F4]/30 text-[#8DB4FF]' : 'bg-[#CFE0FF] text-[#1463F4]'
+        }`}>
+          Sponsored
+        </span>
+        <span className={`truncate text-[14px] font-medium ${isNight ? 'text-white/75' : 'text-[#2B4A7A]'}`}>{ad.brand}</span>
+      </div>
+      <button type="button" onClick={open} className="relative mt-3 block h-48 w-full overflow-hidden rounded-2xl bg-[#1E2530]">
+        {ad.image_url && <img src={ad.image_url} alt="" className="h-full w-full object-cover" />}
+        {host && (
+          <span className="absolute bottom-2.5 left-2.5 rounded-full bg-black/55 px-3 py-1 text-[12px] font-medium text-white backdrop-blur">
+            {host}
+          </span>
+        )}
+      </button>
+      <p className={`mt-4 text-[19px] font-bold leading-snug ${isNight ? 'text-white' : 'text-[#14306B]'}`}>{ad.headline}</p>
+      {ad.body && (
+        <p className={`mt-2 line-clamp-3 text-[14px] leading-relaxed ${isNight ? 'text-white/70' : 'text-[#3D5578]'}`}>{ad.body}</p>
+      )}
+      <div className="min-h-4 flex-1" aria-hidden="true" />
+      <button
+        type="button"
+        onClick={open}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#0B4FD6] py-3.5 text-[15px] font-bold text-white"
+      >
+        {ad.cta_label || (ad.action === 'product' ? 'Explore product' : 'Learn more')} →
+      </button>
+    </div>
   )
 }
 

@@ -159,6 +159,8 @@ export default function AdsConsole({ supabase, t, isNight, notify, confirmAction
       ['Challenge sign-ups (from ads)', tt.challenge_joins_from_ads],
       ['Challenge sign-ups (all)', tt.challenge_joins_total],
       ['Guide completions', tt.guide_completes],
+      ['People who tapped Shop now', tt.shop_clickers ?? 0],
+      ['Added to My products', tt.product_adds ?? 0],
       [],
       ['Placement', 'Impressions', 'Reach', 'Clicks', 'CTR', 'Conversions'],
       ...report.by_slot.map((s) => [SLOT_LABELS[s.slot] || s.slot, s.impressions, s.reach, s.clicks, ctr(s), s.conversions]),
@@ -334,6 +336,13 @@ export default function AdsConsole({ supabase, t, isNight, notify, confirmAction
             {tt.guide_completes > 0 || brand?.is_house ? (
               <Tile t={t} value={tt.guide_completes.toLocaleString()} label="Finished the tour" hint="Feature guide" />
             ) : null}
+            {/* Product-page ads: what people did on the brand's page. */}
+            {(tt.shop_clickers > 0 || tt.product_adds > 0 || !brand?.is_house) && (
+              <>
+                <Tile t={t} value={(tt.shop_clickers ?? 0).toLocaleString()} label="Went to the shop" hint="People who tapped Shop now" />
+                <Tile t={t} value={(tt.product_adds ?? 0).toLocaleString()} label="Added to My products" hint="Saved it in Tracka+" />
+              </>
+            )}
           </div>
 
           {report.by_day.length > 0 && (

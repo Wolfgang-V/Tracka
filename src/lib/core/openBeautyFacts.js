@@ -59,5 +59,7 @@ export async function searchProducts(brand, query) {
       ingredients: p.ingredients_text_en || p.ingredients_text || '',
       // Product shot from Open Beauty Facts, when one has been uploaded.
       image: p.image_front_small_url || p.image_small_url || p.image_front_url || p.image_url || '',
+      // Saved as products.source when this match is picked.
+      source: 'openbeautyfacts',
     }))
 }

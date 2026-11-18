@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react'
 import SponsoredCard from '../ads/SponsoredCard'
 import { Overlay as FullscreenPreview } from '../ads/FullscreenAd'
+import { SponsoredDiscoverCard } from './DiscoverScreen'
 import { BackButton, Shell } from './ReferralConsole'
 
 // Slots a brand can buy. (The Today banner stays for Tracka+'s own
@@ -35,6 +36,10 @@ function Field({ t, label, hint, children }) {
     </label>
   )
 }
+
+// Slots whose ad can open a sponsored product page.
+const PRODUCT_PAGE_SLOTS = ['discover_card', 'product_card']
+const PRODUCT_CATEGORIES = ['Cleanser', 'Toner', 'Serum', 'Moisturiser', 'Sunscreen', 'Treatment', 'Mask', 'Other']
 
 const inputClass = (t) => `w-full rounded-xl border ${t.hair} ${t.surface} px-3 py-3 text-[14px] outline-none`
 
@@ -162,11 +167,21 @@ export function AdForm({ supabase, t, isNight, notify, brand, campaign, ad, onDo
     slot: ad?.slot || (campaign.challenge_id ? 'sponsored_challenge' : 'product_card'),
     headline: ad?.headline || '',
     body: ad?.body || '',
-    cta_label: ad?.cta_label || 'Shop now',
+    cta_label: ad?.cta_label || (ad ? '' : 'Explore product'),
     image_url: ad?.image_url || '',
     action_target: ad?.action_target || '',
     is_active: ad?.is_active ?? true,
+    // What the button opens: the brand's product page, or a plain link.
+    opens: ad ? (ad.action === 'product' ? 'product' : 'link') : 'product',
+    p_name: ad?.product?.name || '',
+    p_category: ad?.product?.category || '',
+    p_about: ad?.product?.about || '',
+    p_how: ad?.product?.how_to_use || '',
+    p_cautions: (ad?.product?.cautions || []).join('\n'),
+    p_ingredients: ad?.product?.ingredients || '',
+    p_shop: ad?.product?.shop_url || '',
   })
+  const productPage = PRODUCT_PAGE_SLOTS.includes(form.slot) && form.opens === 'product'
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
@@ -187,6 +202,8 @@ export function AdForm({ supabase, t, isNight, notify, brand, campaign, ad, onDo
 
   const save = async () => {
     if (!form.headline.trim()) return notify('Add a headline.')
+    if (productPage && !form.p_name.trim()) return notify('Add the product name.')
+    if (productPage && form.p_shop.trim() && !/^https:\/\//i.test(form.p_shop.trim())) return notify('The shop link must start with https://')
     setSaving(true)
     const { data, error } = await supabase.rpc('admin_upsert_ad_placement', {
       p_id: ad?.id || null,
@@ -196,9 +213,20 @@ export function AdForm({ supabase, t, isNight, notify, brand, campaign, ad, onDo
       p_body: form.body,
       p_cta_label: form.cta_label,
       p_image_url: form.image_url,
-      p_action: 'url',
-      p_action_target: form.action_target,
+      p_action: productPage ? 'product' : 'url',
+      p_action_target: productPage ? '' : form.action_target,
       p_is_active: form.is_active,
+      p_product: productPage
+        ? {
+            name: form.p_name,
+            category: form.p_category,
+            about: form.p_about,
+            how_to_use: form.p_how,
+            cautions: form.p_cautions.split('\n'),
+            ingredients: form.p_ingredients,
+            shop_url: form.p_shop,
+          }
+        : null,
     })
     setSaving(false)
     if (error) return notify(error.message)
@@ -207,7 +235,11 @@ export function AdForm({ supabase, t, isNight, notify, brand, campaign, ad, onDo
   }
 
   // What it will look like — no placement id, so the preview records nothing.
-  const preview = { brand: brand.name, headline: form.headline || 'Your headline', body: form.body, cta_label: form.cta_label, image_url: form.image_url }
+  const preview = {
+    brand: brand.name, headline: form.headline || 'Your headline', body: form.body, cta_label: form.cta_label, image_url: form.image_url,
+    action: productPage ? 'product' : 'url', action_target: form.action_target, landing_url: campaign.landing_url,
+    product: productPage ? { shop_url: form.p_shop } : null,
+  }
 
   return (
     <FormShell t={t} eyebrow={`${brand.name} · ${campaign.name}`} title={ad ? 'Edit ad' : 'New ad'} onBack={onBack} saving={saving || uploading} onSave={save} saveLabel={ad ? 'Save ad' : 'Add ad'}>
@@ -235,9 +267,39 @@ export function AdForm({ supabase, t, isNight, notify, brand, campaign, ad, onDo
           </select>
         </Field>
       </div>
-      <Field t={t} label="Button link" hint={campaign.landing_url ? `Leave empty to use the campaign's landing page (${campaign.landing_url}).` : 'The campaign has no landing page, so add a link here.'}>
-        <input value={form.action_target} onChange={set('action_target')} placeholder="https://" inputMode="url" className={inputClass(t)} />
-      </Field>
+      {PRODUCT_PAGE_SLOTS.includes(form.slot) && (
+        <Field t={t} label="The button opens" hint={form.opens === 'product' ? 'A product page in Tracka+ with Shop now and Add to My Products.' : "The brand's website."}>
+          <select value={form.opens} onChange={set('opens')} className={inputClass(t)}>
+            <option value="product">A product page</option>
+            <option value="link">A link</option>
+          </select>
+        </Field>
+      )}
+      {productPage ? (
+        <div className={`flex flex-col gap-4 rounded-2xl border ${t.hair} p-4`}>
+          <p className="text-[14px] font-semibold">Product page</p>
+          <div className="grid grid-cols-2 gap-3">
+            <Field t={t} label="Product name"><input value={form.p_name} onChange={set('p_name')} maxLength={80} placeholder="e.g. SPF 50 Daily Skin Protector" className={inputClass(t)} /></Field>
+            <Field t={t} label="Category">
+              <select value={form.p_category} onChange={set('p_category')} className={inputClass(t)}>
+                <option value="">Choose…</option>
+                {PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Field t={t} label="About this product"><textarea value={form.p_about} onChange={set('p_about')} rows={3} maxLength={600} className={inputClass(t)} /></Field>
+          <Field t={t} label="How to use"><textarea value={form.p_how} onChange={set('p_how')} rows={3} maxLength={600} className={inputClass(t)} /></Field>
+          <Field t={t} label="Caution" hint="One per line."><textarea value={form.p_cautions} onChange={set('p_cautions')} rows={4} maxLength={600} className={inputClass(t)} /></Field>
+          <Field t={t} label="Ingredients" hint="Paste the full list, comma separated."><textarea value={form.p_ingredients} onChange={set('p_ingredients')} rows={4} maxLength={4000} className={inputClass(t)} /></Field>
+          <Field t={t} label="Shop link" hint="Where Shop now goes: the product on the brand's own site.">
+            <input value={form.p_shop} onChange={set('p_shop')} placeholder="https://" inputMode="url" className={inputClass(t)} />
+          </Field>
+        </div>
+      ) : (
+        <Field t={t} label="Button link" hint={campaign.landing_url ? `Leave empty to use the campaign's landing page (${campaign.landing_url}).` : 'The campaign has no landing page, so add a link here.'}>
+          <input value={form.action_target} onChange={set('action_target')} placeholder="https://" inputMode="url" className={inputClass(t)} />
+        </Field>
+      )}
       <Field t={t} label="Image" hint={form.slot === 'fullscreen' ? 'Tall (portrait, 9:16) works best. Under 2 MB.' : 'Square works best. Under 2 MB.'}>
         <div className="flex items-center gap-3">
           {form.image_url && <img src={form.image_url} alt="" className="h-14 w-14 rounded-xl bg-white object-contain p-0.5" />}
@@ -258,6 +320,8 @@ export function AdForm({ supabase, t, isNight, notify, brand, campaign, ad, onDo
           <div className="mx-auto max-w-[260px]">
             <FullscreenPreview ad={preview} preview onClose={() => {}} onOpen={() => {}} />
           </div>
+        ) : form.slot === 'discover_card' ? (
+          <SponsoredDiscoverCard ad={preview} isNight={isNight} onOpen={() => {}} />
         ) : (
           <SponsoredCard ad={preview} supabase={supabase} t={t} isNight={isNight} onOpen={() => {}} compact={form.slot === 'sponsored_challenge'} />
         )}
