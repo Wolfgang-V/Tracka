@@ -1,5 +1,5 @@
 // Discover: a sliding featured carousel (sponsored picks when a campaign is
-// live, challenges, the lesson of the day, the tour), ingredient lessons
+// live, one challenge, the lesson of the day, the tour), ingredient lessons
 // from our own ingredient guide, and a first look at Tracka AI (coming soon).
 
 import { Children, useEffect, useMemo, useRef, useState } from 'react'
@@ -50,6 +50,15 @@ export default function DiscoverScreen({
     if (!c.ends_on) return true
     return new Date(`${c.ends_on}T23:59:59`) >= new Date()
   })
+  // One challenge slide: the one you're in, else the first open one. The
+  // rest are a tap away on the challenges screen. Between rounds (nothing
+  // open), the most recent one stays up as "Ended", so the slide never
+  // disappears.
+  const latestEnded = (challenges || [])
+    .filter((c) => !openChallenges.includes(c))
+    .sort((a, b) => (b.ends_on || '').localeCompare(a.ends_on || ''))[0]
+  const featuredChallenge = openChallenges.find((c) => joined.has(c.id)) || openChallenges[0] || latestEnded
+  const featuredEnded = !!featuredChallenge && featuredChallenge === latestEnded
 
   const tag = {
     neutral: isNight ? 'bg-white/10 text-white/80' : 'bg-[#101B2D]/[0.06] text-[#101B2D]/75',
@@ -66,38 +75,37 @@ export default function DiscoverScreen({
         </p>
 
         {/* Featured: one card at a time, sliding by itself (or swiped).
-            Sponsored picks first (labelled), then challenges, the lesson
+            Sponsored picks first (labelled), then one challenge, the lesson
             of the day and the tour. */}
         <section className="mt-8">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-[19px] font-semibold">Discover on Tracka+</h2>
-            <button type="button" onClick={() => setScreen('challenges')} className={`shrink-0 text-[13px] font-semibold ${t.mark}`}>
-              All challenges →
-            </button>
-          </div>
+          <h2 className="text-[19px] font-semibold">Discover on Tracka+</h2>
           <Carousel isNight={isNight}>
           {ads.map((ad) => (
             <SponsoredDiscoverCard key={ad.placement_id} ad={ad} isNight={isNight} onOpen={openAd} />
           ))}
-          {openChallenges.map((c) => {
+          {featuredChallenge && (() => {
+            const c = featuredChallenge
             const mine = joined.get(c.id)
             return (
               <Card
                 wide
-                key={c.id}
+                key="challenge"
                 t={t}
                 isNight={isNight}
                 onClick={() => openChallenge(c.id, 'discover')}
                 art={renderChallengeImage(c, 'h-full w-full')}
-                pill={c.sponsor_name || `${c.duration_days} days`}
+                pill={featuredEnded ? 'Ended' : c.sponsor_name || `${c.duration_days} days`}
                 tag="Challenge"
-                tagClass={tag.blue}
+                tagClass={featuredEnded ? tag.neutral : tag.blue}
                 title={c.title}
-                body={c.tagline}
-                cta={mine ? `Continue · day ${Math.min((mine.days_completed || 0) + 1, c.duration_days)}` : 'View challenge'}
+                body={featuredEnded ? 'This round has ended. New challenges are coming soon.' : c.tagline}
+                cta={featuredEnded
+                  ? 'See results'
+                  : mine ? `Continue · day ${Math.min((mine.days_completed || 0) + 1, c.duration_days)}` : 'View challenge'}
+                more={{ label: 'More challenges', onClick: () => setScreen('challenges') }}
               />
             )
-          })}
+          })()}
           {lessons[0] && (
             <Card
               wide
@@ -268,16 +276,36 @@ function Row({ title, t, action, children }) {
   )
 }
 
-function Card({ t, isNight, onClick, art, pill, tag, tagClass, title, body, cta, cardRef, wide = false }) {
+// `more` adds a second link beside the CTA (e.g. "More challenges"). A
+// button can't hold another button, so then the card is a plain box with
+// two buttons in it.
+function Card({ t, isNight, onClick, art, pill, tag, tagClass, title, body, cta, cardRef, wide = false, more = null }) {
+  const shell = `flex ${wide ? 'h-full w-full' : 'w-[80%] max-w-[300px] shrink-0 snap-start'} flex-col rounded-3xl border p-3 text-left ${
+    isNight ? 'border-white/10' : 'border-[#101B2D]/[0.08] shadow-[0_8px_24px_-18px_rgba(16,27,45,0.35)]'
+  } ${t.surface}`
+  if (more) {
+    return (
+      <div ref={cardRef} className={shell}>
+        <button type="button" onClick={onClick} className="flex flex-1 flex-col text-left">
+          <CardBody t={t} art={art} pill={pill} tag={tag} tagClass={tagClass} title={title} body={body} />
+        </button>
+        <div className="flex items-center justify-between gap-3 px-1.5 pb-1.5 pt-3">
+          <button type="button" onClick={onClick} className={`text-[14px] font-semibold ${t.mark}`}>{cta} →</button>
+          <button type="button" onClick={more.onClick} className={`shrink-0 text-[13px] font-semibold ${t.muted}`}>{more.label} →</button>
+        </div>
+      </div>
+    )
+  }
   return (
-    <button
-      ref={cardRef}
-      type="button"
-      onClick={onClick}
-      className={`flex ${wide ? 'h-full w-full' : 'w-[80%] max-w-[300px] shrink-0 snap-start'} flex-col rounded-3xl border p-3 text-left ${
-        isNight ? 'border-white/10' : 'border-[#101B2D]/[0.08] shadow-[0_8px_24px_-18px_rgba(16,27,45,0.35)]'
-      } ${t.surface}`}
-    >
+    <button ref={cardRef} type="button" onClick={onClick} className={shell}>
+      <CardBody t={t} art={art} pill={pill} tag={tag} tagClass={tagClass} title={title} body={body} cta={cta} />
+    </button>
+  )
+}
+
+function CardBody({ t, art, pill, tag, tagClass, title, body, cta }) {
+  return (
+    <>
       <span className="relative block h-44 w-full overflow-hidden rounded-2xl">
         {art}
         {pill && (
@@ -296,7 +324,7 @@ function Card({ t, isNight, onClick, art, pill, tag, tagClass, title, body, cta,
         {body && <span className={`mt-1.5 line-clamp-2 text-[13.5px] leading-relaxed ${t.muted}`}>{body}</span>}
         {cta && <span className={`mt-auto pt-3 text-[14px] font-semibold ${t.mark}`}>{cta} →</span>}
       </span>
-    </button>
+    </>
   )
 }
 
