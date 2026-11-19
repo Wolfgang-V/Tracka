@@ -17,6 +17,7 @@ const ChallengeDetailScreen = lazy(() => import('./screens/ChallengeDetailScreen
 const DiscoverScreen = lazy(() => import('./screens/DiscoverScreen'))
 const ReferFriendScreen = lazy(() => import('./screens/ReferFriendScreen'))
 const RemindersScreen = lazy(() => import('./screens/RemindersScreen'))
+const ChallengesScreen = lazy(() => import('./screens/ChallengesScreen'))
 const SponsoredProductScreen = lazy(() => import('./screens/SponsoredProductScreen'))
 const RecommendationHistoryScreen = lazy(() => import('./screens/practitioner/RecommendationHistoryScreen'))
 const ApplyPractitionerScreen = lazy(() => import('./screens/practitioner/ApplyPractitionerScreen'))
@@ -53,13 +54,44 @@ const VAPID_PUBLIC_KEY =
 // land on this origin: the login session lives in its localStorage only.
 const SITE_URL = 'https://trackaplus.app'
 const DAILY_SKIN_TIPS = [
-  ['Did you know?', 'SPF mainly measures protection against UVB, while broad-spectrum sunscreens also protect against UVA.'],
+  ['Did you know?', 'SPF (Sun Protection Factor) measures how well a sunscreen protects your skin against UVB rays, which are primarily responsible for sunburn.'],
   ['Skin tip of the day', 'Broad-spectrum sunscreen protects against both UVA and UVB radiation.'],
   ['Did you know?', "A product's PAO symbol tells you how long it's intended to be used after opening."],
   ['Skin tip of the day', 'Leave active cleansers on your skin for 1-2 minutes before rinsing.'],
   ['Did you know?', "The order of your skincare can affect how products are layered, but you don't need a complicated 10-step routine."],
   ['Did you know?', 'Higher concentration does not automatically mean better results.'],
   ['Skin tip of the day', 'Wash your face for 30-60 seconds before rinsing.'],
+  // From "Skin tips for Tracka" (30 days), 2026-11-20.
+  ['Skin tip of the day', "Your skin doesn't need 10 products. It needs the right products used consistently."],
+  ['Skin tip of the day', 'Apply your skincare from the thinnest to the thickest texture, generally.'],
+  ['Did you know?', 'Washing your face too often can strip your skin and leave it feeling tight or irritated.'],
+  ['Skin tip of the day', 'Introduce new active ingredients one at a time so you can identify what your skin tolerates.'],
+  ['Did you know?', 'Your skin can become irritated even from products labelled gentle. Pay attention to how it responds.'],
+  ['Skin tip of the day', 'Cleanse your face at night to remove sunscreen, makeup, sweat and daily buildup.'],
+  ['Skin tip of the day', 'A consistent routine is more useful than constantly switching products.'],
+  ['Skin tip of the day', 'Sunscreen is the last step of your morning skincare routine, before makeup.'],
+  ['Did you know?', 'SPF 30 or higher is generally recommended for daily sun protection.'],
+  ['Skin tip of the day', 'Apply enough sunscreen to cover all exposed skin, including your ears and neck.'],
+  ['Skin tip of the day', 'Reapply sunscreen every two hours when outdoors, and after swimming or sweating.'],
+  ['Did you know?', "Cloudy weather doesn't mean UV rays disappear. Keep wearing your sunscreen."],
+  ['Skin tip of the day', 'Your lips need sun protection too. Look for a lip balm with SPF.'],
+  ['Did you know?', 'Sunscreen helps prevent existing dark spots from becoming darker with sun exposure.'],
+  ['Did you know?', 'Niacinamide can help support your skin barrier and improve the appearance of uneven skin tone.'],
+  ['Did you know?', 'Salicylic acid is oil-soluble, making it useful for targeting clogged pores.'],
+  ['Skin tip of the day', 'Retinoids can help with acne and signs of skin ageing, but introduce them gradually.'],
+  ['Did you know?', 'Hyaluronic acid is a humectant that helps attract and retain water in the skin.'],
+  ['Did you know?', 'Vitamin C is an antioxidant that can help protect skin from oxidative stress.'],
+  ['Skin tip of the day', 'Using multiple exfoliating products in one routine can increase irritation.'],
+  ['Skin tip of the day', "Check your product's PAO symbol to know how long it should be used after opening."],
+  ['Skin tip of the day', 'Your pillowcase collects oil, sweat and product residue. Wash it regularly.'],
+  ['Skin tip of the day', "Don't pick at pimples. It can increase inflammation and the risk of post-acne marks."],
+  ['Did you know?', "Moisturiser isn't just for dry skin. Oily skin needs hydration too."],
+  ['Did you know?', 'Your skin may need different products depending on the season and environment.'],
+  ['Did you know?', 'A damaged skin barrier can show up as dryness, stinging, redness or increased sensitivity.'],
+  ['Skin tip of the day', 'Give skincare products time to work. Many acne treatments take several weeks to show results.'],
+  ['Skin tip of the day', "More product doesn't automatically mean better results. Follow the recommended amount."],
+  ['Skin tip of the day', 'Take progress photos in similar lighting to track changes in your skin more accurately.'],
+  ['Skin tip of the day', "Your skincare routine should work for your skin, not someone else's skin."],
 ]
 
 // This is a UX shortcut, not the security boundary — the real enforcement
@@ -573,7 +605,6 @@ setRoutineHistory(groupedRoutines)
   const [selectedChallengeId, setSelectedChallengeId] = useState(null)
   const [challengeReturnScreen, setChallengeReturnScreen] = useState('challenges')
   const [challengeMenuOpen, setChallengeMenuOpen] = useState(false)
-  const [showCompletedChallenges, setShowCompletedChallenges] = useState(false)
   // The completed participation being celebrated (full-screen cup), or null.
   const [celebration, setCelebration] = useState(null)
   const [awardSaving, setAwardSaving] = useState(null)
@@ -5380,178 +5411,21 @@ if (screen === 'notifications') {
   )
 }
 if (screen === 'challenges') {
-  const active = myChallenges.filter(isLiveParticipation)
-  const activeIds = new Set(active.map((p) => p.challenge_id))
-  const discoverable = challenges.filter((c) => !activeIds.has(c.id) && !challengeWindow(c).ended)
-  // Completed ones, plus ones that were still going when the window closed.
-  const completed = myChallenges.filter(
-    (p) => !isLiveParticipation(p) && (p.status === 'completed' || p.status === 'ended' || (p.status === 'active' && challengeWindow(p.challenges).ended))
-  )
-  const joinedIds = new Set(myChallenges.map((p) => p.challenge_id))
-  // Ended challenges this person never joined — still worth seeing the results.
-  const pastChallenges = challenges.filter((c) => challengeWindow(c).ended && !joinedIds.has(c.id))
-
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-7">
-
-        <button
-          onClick={() => setScreen('today')}
-          className={`-ml-2 flex items-center gap-1 self-start py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Today
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[34px] font-light leading-[1.05] tracking-tight">
-            Challenges
-          </h1>
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Small habits, built one day at a time.
-          </p>
-        </div>
-
-        {challengesLoading && challenges.length === 0 ? (
-          <p className={`mt-8 text-[13px] ${t.muted}`}>Loading…</p>
-        ) : (
-          <>
-            {active.length > 0 && (
-              <section className="mt-8">
-                <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-                  Your active challenges
-                </p>
-                <div className="mt-3 flex flex-col gap-3">
-                  {active.map((p) => renderChallengeProgressCard(p, 'challenges'))}
-                </div>
-              </section>
-            )}
-
-            <section className="mt-9">
-              <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-                Discover challenges
-              </p>
-
-              {discoverable.length === 0 ? (
-                <p className={`mt-3 text-[14px] leading-relaxed ${t.muted}`}>
-                  You've joined every challenge available right now. New ones are on the way.
-                </p>
-              ) : (
-                <div className="mt-3 flex flex-col gap-5">
-                  {discoverable.map((c) => (
-                    <div key={c.id} className={`overflow-hidden rounded-3xl ${t.surface}`}>
-                      {renderChallengeImage(c, 'h-48 w-full')}
-                      <div className="p-5">
-                        <p className={`text-[12px] font-semibold uppercase tracking-wide ${t.faint}`}>
-                          {(() => {
-                            const w = challengeWindow(c)
-                            if (!w.hasWindow) return `${c.duration_days} days`
-                            if (w.notStarted) return `Starts ${formatChallengeDate(c.starts_on)}`
-                            return `${formatChallengeDate(c.starts_on)} – ${formatChallengeDate(c.ends_on)} · ${w.daysLeft} ${w.daysLeft === 1 ? 'day' : 'days'} left`
-                          })()}
-                        </p>
-                        <h2 className="mt-1 text-[20px] font-semibold">{c.title}</h2>
-                        {c.tagline && (
-                          <p className={`mt-1.5 text-[14px] leading-relaxed ${t.muted}`}>{c.tagline}</p>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => openChallenge(c.id, 'challenges')}
-                          className={`mt-4 w-full rounded-2xl py-3.5 text-[15px] font-bold ${t.btn}`}
-                        >
-                          View challenge
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {completed.length + pastChallenges.length > 0 && (
-              <section className="mt-9">
-                <button
-                  type="button"
-                  onClick={() => setShowCompletedChallenges(!showCompletedChallenges)}
-                  className={`flex w-full items-center justify-between rounded-2xl border ${t.hair} px-4 py-3.5 text-left`}
-                >
-                  <span className="text-[14px] font-semibold">
-                    Finished challenges ({completed.length + pastChallenges.length})
-                  </span>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="1.8"
-                    strokeLinecap="round" strokeLinejoin="round"
-                    className={`transition ${showCompletedChallenges ? 'rotate-90' : ''}`}>
-                    <path d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
-
-                {showCompletedChallenges && (
-                  <div className="mt-3 flex flex-col gap-2.5">
-                    {completed.map((p) => {
-                      const finishedAll = p.status === 'completed'
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => openChallenge(p.challenge_id, 'challenges')}
-                          className={`flex items-center gap-3 rounded-2xl ${t.surface} p-3.5 text-left`}
-                        >
-                          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${
-                            finishedAll || (challengeWindow(p.challenges).ended && p.days_completed > 0)
-                              ? 'bg-amber-400/15'
-                              : isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'
-                          }`}>
-                            {renderAwardIcon(
-                              { key: 'complete', kind: 'cup', metal: 'gold' },
-                              30,
-                              !(finishedAll || (challengeWindow(p.challenges).ended && p.days_completed > 0))
-                            )}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[15px] font-semibold">{p.challenges?.title}</span>
-                            <span className={`block text-[12px] ${t.faint}`}>
-                              {finishedAll
-                                ? `Completed ${new Date(p.completed_at).toLocaleDateString('en-GB', {
-                                    day: 'numeric', month: 'short', year: 'numeric',
-                                  })}`
-                                : `Ended ${formatChallengeDate(p.challenges.ends_on, true)} · ${p.days_completed}/${p.challenges.duration_days} days`}
-                            </span>
-                          </span>
-                        </button>
-                      )
-                    })}
-                    {pastChallenges.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => openChallenge(c.id, 'challenges')}
-                        className={`flex items-center gap-3 rounded-2xl border ${t.hair} p-3.5 text-left`}
-                      >
-                        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${isNight ? 'bg-white/5' : 'bg-[#101B2D]/5'}`}>
-                          {renderAwardIcon({ key: 'complete', kind: 'cup', metal: 'gold' }, 30, true)}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[15px] font-semibold">{c.title}</span>
-                          <span className={`block text-[12px] ${t.faint}`}>
-                            Ended {formatChallengeDate(c.ends_on, true)} · See results
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </section>
-            )}
-          </>
-        )}
-
-      </div>
-    </main>
+    <ChallengesScreen
+      challenges={challenges}
+      challengesLoading={challengesLoading}
+      challengeStats={challengeStats}
+      challengeWindow={challengeWindow}
+      formatChallengeDate={formatChallengeDate}
+      isLiveParticipation={isLiveParticipation}
+      isNight={isNight}
+      myChallenges={myChallenges}
+      openChallenge={openChallenge}
+      renderChallengeImage={renderChallengeImage}
+      setScreen={setScreen}
+      t={t}
+    />
   )
 }
 
@@ -7377,10 +7251,10 @@ if (screen === 'progressPhotos') {
           installBody = (
             <>
               <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                You're inside another app's browser, which can't install Tracka+. Open it in {env.isIOS ? 'Safari' : 'Chrome'} first:
+                You're inside another app's browser, which can't install Tracka+. Open it in {env.isIOS ? 'your browser' : 'Chrome'} first:
               </p>
               {instruction([
-                <>Tap the <b>⋯</b> menu and choose <b>Open in {env.isIOS ? 'Safari' : 'browser'}</b>, or copy the link below.</>,
+                <>Tap the <b>⋯</b> menu and choose <b>Open in browser</b>, or copy the link below.</>,
                 'Then come back to this guide there.',
               ])}
             </>
@@ -7388,9 +7262,9 @@ if (screen === 'progressPhotos') {
         } else if (env.isIOS && !env.iosSafari) {
           installBody = (
             <>
-              <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>On iPhone this works best in Safari:</p>
+              <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>On iPhone:</p>
               {instruction([
-                <>Open <b>trackaplus.app</b> in <b>Safari</b>.</>,
+                <>Open <b>trackaplus.app</b> in your <b>browser</b>.</>,
                 <>Tap the Share button {ShareIcon} at the bottom.</>,
                 <>Tap <b>Add to Home Screen</b>, then <b>Add</b>.</>,
               ])}
@@ -7398,7 +7272,7 @@ if (screen === 'progressPhotos') {
           )
         } else if (env.isIOS) {
           installBody = instruction([
-            <><b>iPhone (Safari):</b> Tap the Share icon {ShareIcon} (or <b>•••</b> → <b>Share</b>) → <b>Add to Home Screen</b> → <b>Add</b>.</>,
+            <><b>iPhone (browser):</b> Tap the Share icon {ShareIcon} (or <b>•••</b> → <b>Share</b>) → <b>Add to Home Screen</b> → <b>Add</b>.</>,
           ])
         } else if (env.isAndroid) {
           installBody = (

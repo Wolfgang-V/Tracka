@@ -431,12 +431,12 @@ function LessonSheet({ item, t, isNight, onClose }) {
 const AI_FEATURES = [
   {
     title: 'Analyse a product',
-    body: 'Is it right for your skin, what works well, what to watch for.',
+    body: 'Check how compatible a product is for your skin concerns.',
     icon: <><path d="M10 3h4v3l1.5 2.5V20a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V8.5L10 6V3Z" /><path d="M8.5 12h7" /></>,
   },
   {
     title: 'Analyse my routine',
-    body: 'Morning and evening, checked as a whole, with what to change.',
+    body: 'Get advice on how to use your products in the correct order.',
     icon: <><path d="M9 6h11M9 12h11M9 18h11" /><path d="m3.5 6 1.2 1.2L7 4.8M3.5 12l1.2 1.2L7 10.8M3.5 18l1.2 1.2L7 16.8" /></>,
   },
   {
@@ -482,9 +482,9 @@ function TrackaAiTeaser({ isNight, t }) {
           <Sparkle size={14} />
           <span className="text-[11px] font-semibold uppercase tracking-[0.2em]">Tracka AI</span>
         </div>
-        <p className="relative mt-3 font-display text-[34px] font-light leading-[1.02]">Your skincare,<br />understood.</p>
+        <p className="relative mt-3 font-display text-[34px] font-light leading-[1.02]">Your skincare<br />companion</p>
         <p className="relative mt-3 max-w-[30ch] text-[14px] leading-relaxed text-white/75">
-          Personal answers from your own products, routine and progress, not generic advice.
+          Analyze your products and routines.
         </p>
 
         <div className="relative mt-6 space-y-2.5">
@@ -496,7 +496,7 @@ function TrackaAiTeaser({ isNight, t }) {
               <Sparkle size={13} />
             </span>
             <div className="max-w-[82%] rounded-2xl rounded-bl-md border border-white/15 bg-white/10 px-4 py-2.5 text-[13.5px] leading-relaxed text-white/90 backdrop-blur">
-              Yes, they work well together. Try vitamin C in the morning and niacinamide at night
+              Yes, you can use both ingredients in different routines. Use Vitamin C in the morning and Niacinamide at night.
               <span className="ml-1 inline-flex translate-y-[-2px] gap-0.5 align-middle" aria-hidden="true">
                 <span className="h-1 w-1 animate-pulse rounded-full bg-white/70" />
                 <span className="h-1 w-1 animate-pulse rounded-full bg-white/70 [animation-delay:150ms]" />
