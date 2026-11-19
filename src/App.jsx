@@ -16,6 +16,7 @@ const CareTeamScreen = lazy(() => import('./screens/practitioner/CareTeamScreen'
 const ChallengeDetailScreen = lazy(() => import('./screens/ChallengeDetailScreen'))
 const DiscoverScreen = lazy(() => import('./screens/DiscoverScreen'))
 const ReferFriendScreen = lazy(() => import('./screens/ReferFriendScreen'))
+const RemindersScreen = lazy(() => import('./screens/RemindersScreen'))
 const SponsoredProductScreen = lazy(() => import('./screens/SponsoredProductScreen'))
 const RecommendationHistoryScreen = lazy(() => import('./screens/practitioner/RecommendationHistoryScreen'))
 const ApplyPractitionerScreen = lazy(() => import('./screens/practitioner/ApplyPractitionerScreen'))
@@ -5152,295 +5153,32 @@ if (screen === 'settingsPassword') {
 
 if (screen === 'reminders') {
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-28 pt-7">
-
-        <button
-          onClick={() => setScreen('settings')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Settings
-        </button>
-
-        <div className="mt-5">
-          <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>
-            Reminders
-          </p>
-
-          <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Stay on track
-          </h1>
-
-          <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Choose when Tracka+ should remind you about your skincare routine.
-          </p>
-        </div>
-
-        <div className="mt-8 flex flex-col gap-4">
-
-          {/* MORNING REMINDER */}
-          <div className={`rounded-3xl ${t.surface} p-5`}>
-            <div className="flex items-center justify-between gap-4">
-
-              <div>
-                <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.mark}`}>
-                  Morning
-                </p>
-
-                <h2 className="mt-1 text-[17px] font-semibold">
-                  Morning routine
-                </h2>
-
-                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                  Get a reminder when it's time for your morning routine.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setMorningReminderEnabled(
-                    !morningReminderEnabled
-                  )
-                }
-                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                  morningReminderEnabled ? t.btn : t.rail
-                }`}
-              >
-                <span
-                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
-                    morningReminderEnabled
-                      ? 'left-6'
-                      : 'left-1'
-                  }`}
-                />
-              </button>
-
-            </div>
-
-            {morningReminderEnabled && (
-              <div className="mt-5">
-                <label className={`text-[13px] font-semibold ${t.faint}`}>
-                  Reminder time
-                </label>
-
-                <input
-                  type="time"
-                  value={morningReminderTime}
-                  onChange={(e) =>
-                    setMorningReminderTime(e.target.value)
-                  }
-                  className={`mt-2 w-full rounded-2xl border ${t.hair} px-4 py-3 text-[15px] outline-none`}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* NIGHT REMINDER */}
-          <div className={`rounded-3xl ${t.surface} p-5`}>
-            <div className="flex items-center justify-between gap-4">
-
-              <div>
-                <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.mark}`}>
-                  Night
-                </p>
-
-                <h2 className="mt-1 text-[17px] font-semibold">
-                  Night routine
-                </h2>
-
-                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                  Get a reminder when it's time for your night routine.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setNightReminderEnabled(
-                    !nightReminderEnabled
-                  )
-                }
-                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                  nightReminderEnabled ? t.btn : t.rail
-                }`}
-              >
-                <span
-                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
-                    nightReminderEnabled
-                      ? 'left-6'
-                      : 'left-1'
-                  }`}
-                />
-              </button>
-
-            </div>
-
-            {nightReminderEnabled && (
-              <div className="mt-5">
-                <label className={`text-[13px] font-semibold ${t.faint}`}>
-                  Reminder time
-                </label>
-
-                <input
-                  type="time"
-                  value={nightReminderTime}
-                  onChange={(e) =>
-                    setNightReminderTime(e.target.value)
-                  }
-                  className={`mt-2 w-full rounded-2xl border ${t.hair} px-4 py-3 text-[15px] outline-none`}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* SPF REAPPLY */}
-          <div className={`rounded-3xl ${t.surface} p-5`}>
-            <div className="flex items-center justify-between gap-4">
-
-              <div>
-                <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.mark}`}>
-                  Sunscreen
-                </p>
-
-                <h2 className="mt-1 text-[17px] font-semibold">
-                  Stay consistent with your sunscreen
-                </h2>
-
-                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                  Get timely reminders to reapply your sunscreen during the day.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setSpfReapplyEnabled(
-                    !spfReapplyEnabled
-                  )
-                }
-                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                  spfReapplyEnabled ? t.btn : t.rail
-                }`}
-              >
-                <span
-                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
-                    spfReapplyEnabled
-                      ? 'left-6'
-                      : 'left-1'
-                  }`}
-                />
-              </button>
-
-            </div>
-          </div>
-
-          {/* DIARY NUDGE */}
-          <div className={`rounded-3xl ${t.surface} p-5`}>
-            <div className="flex items-center justify-between gap-4">
-
-              <div>
-                <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.mark}`}>
-                  Skin diary
-                </p>
-
-                <h2 className="mt-1 text-[17px] font-semibold">
-                  Diary reminders
-                </h2>
-
-                <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
-                  A nudge around midday if you haven't logged a note yet. Off by default.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setDiaryNudgeEnabled(
-                    !diaryNudgeEnabled
-                  )
-                }
-                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                  diaryNudgeEnabled ? t.btn : t.rail
-                }`}
-              >
-                <span
-                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
-                    diaryNudgeEnabled
-                      ? 'left-6'
-                      : 'left-1'
-                  }`}
-                />
-              </button>
-
-            </div>
-          </div>
-
-        </div>
-
-        <div className={`mt-4 rounded-3xl ${t.surface} p-5`}>
-          <h2 className="text-[17px] font-semibold">
-            Notifications
-          </h2>
-
-          <p className={`mt-2 text-[13px] leading-relaxed ${t.muted}`}>
-            Enable notifications to get your Tracka+ reminders.
-          </p>
-
-          <button
-            disabled={busyAction === 'pushSubscribe'}
-            onClick={() =>
-              runBusy('pushSubscribe', async () => {
-                const result = await subscribeToPushNotifications()
-
-                setPushStatus(
-                  result.ok
-                    ? "You're all set!"
-                    : result.reason === 'needs_install'
-                      ? 'Add Tracka+ to your home screen first, then open it from there.'
-                      : result.reason === 'denied'
-                        ? 'Notifications are blocked. Turn them on in your browser settings for this site.'
-                        : result.reason === 'unsupported'
-                          ? "This browser can't do notifications. Try Chrome or Safari."
-                          : "That didn't work. Try again in a moment."
-                )
-              })
-            }
-            className={`mt-5 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn} disabled:opacity-60`}
-          >
-            {busyAction === 'pushSubscribe' ? 'Turning on…' : 'Turn on notifications'}
-          </button>
-
-          {pushStatus && (
-            <p className={`mt-4 text-[13px] ${t.muted}`}>{pushStatus}</p>
-          )}
-
-          {!getInstallEnv().standalone && (
-            <button
-              type="button"
-              onClick={openSetupGuide}
-              className={`mt-3 text-[13px] font-semibold ${t.mark}`}
-            >
-              How to Add Tracka+ to Your Home Screen →
-            </button>
-          )}
-        </div>
-
-        <button
-          onClick={saveReminderSettings}
-          className={`mt-6 w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
-        >
-          Save reminder settings
-        </button>
-
-      </div>
-      {renderBottomTabs('reminders', t)}
-    </main>
+    <RemindersScreen
+      busyAction={busyAction}
+      diaryNudgeEnabled={diaryNudgeEnabled}
+      getInstallEnv={getInstallEnv}
+      isNight={isNight}
+      morningReminderEnabled={morningReminderEnabled}
+      morningReminderTime={morningReminderTime}
+      nightReminderEnabled={nightReminderEnabled}
+      nightReminderTime={nightReminderTime}
+      onBack={() => setScreen('settings')}
+      onSave={saveReminderSettings}
+      openSetupGuide={openSetupGuide}
+      pushStatus={pushStatus}
+      renderBottomTabs={renderBottomTabs}
+      runBusy={runBusy}
+      setDiaryNudgeEnabled={setDiaryNudgeEnabled}
+      setMorningReminderEnabled={setMorningReminderEnabled}
+      setMorningReminderTime={setMorningReminderTime}
+      setNightReminderEnabled={setNightReminderEnabled}
+      setNightReminderTime={setNightReminderTime}
+      setPushStatus={setPushStatus}
+      setSpfReapplyEnabled={setSpfReapplyEnabled}
+      spfReapplyEnabled={spfReapplyEnabled}
+      subscribeToPushNotifications={subscribeToPushNotifications}
+      t={t}
+    />
   )
 }
 if (screen === 'careTeam') {
@@ -6299,6 +6037,9 @@ if (screen === 'routinePlanner') {
       notify={notify}
       onboardingCompleted={onboardingCompleted}
       products={products}
+      isNight={isNight}
+      productImageFor={productImageFor}
+      renderProductArt={renderProductArt}
       renderBottomTabs={renderBottomTabs}
       routinesLoading={routinesLoading}
       runBusy={runBusy}

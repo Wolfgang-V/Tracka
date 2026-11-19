@@ -5,7 +5,36 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useRoutines } from '../data/routine'
-import { draftFromRoutines, withDefaultTimes, holdRoutineDraft, takeHeldRoutineDraft } from '../lib/core/routineDraft'
+import { ALL_DAYS, draftFromRoutines, withDefaultTimes, holdRoutineDraft, takeHeldRoutineDraft } from '../lib/core/routineDraft'
+
+const DAYS = [['M', 'Mon', 1], ['T', 'Tue', 2], ['W', 'Wed', 3], ['T', 'Thu', 4], ['F', 'Fri', 5], ['S', 'Sat', 6], ['S', 'Sun', 0]]
+
+const SLOTS = [
+  ['NONE', 'Off'],
+  ['AM', 'Morning'],
+  ['PM', 'Night'],
+  ['BOTH', 'Both'],
+]
+
+const SUN = <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>
+const MOON = <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />
+
+const Glyph = ({ children, size = 14, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`shrink-0 ${className}`}>
+    {children}
+  </svg>
+)
+
+// "Every day" / "Weekdays" / "Weekends" / "Mon, Wed, Fri" / "No days yet".
+function daysSummary(days = []) {
+  const set = new Set(days)
+  if (set.size === 7) return 'Every day'
+  if (set.size === 0) return 'No days chosen'
+  if (set.size === 5 && [1, 2, 3, 4, 5].every((d) => set.has(d))) return 'Weekdays'
+  if (set.size === 2 && set.has(0) && set.has(6)) return 'Weekends'
+  return DAYS.filter(([, , d]) => set.has(d)).map(([, name]) => name).join(', ')
+}
 
 export default function RoutinePlannerScreen({
   busyAction,
@@ -15,6 +44,9 @@ export default function RoutinePlannerScreen({
   notify,
   onboardingCompleted,
   products,
+  isNight,
+  productImageFor,
+  renderProductArt,
   renderBottomTabs,
   routinesLoading,
   runBusy,
@@ -35,17 +67,31 @@ export default function RoutinePlannerScreen({
   const base = draft ?? (routinesReady ? draftFromRoutines(amRoutine, pmRoutine) : { times: {}, days: {} })
   const productTimes = withDefaultTimes(base.times, products, routineEditMode)
   const productDays = base.days
-  const setProductTimes = (valueOrFn) =>
-    setDraft((d) => {
-      const cur = d ?? base
-      const times = typeof valueOrFn === 'function' ? valueOrFn(withDefaultTimes(cur.times, products, routineEditMode)) : valueOrFn
-      return { ...cur, times }
-    })
   const setProductDays = (valueOrFn) =>
     setDraft((d) => {
       const cur = d ?? base
       return { ...cur, days: typeof valueOrFn === 'function' ? valueOrFn(cur.days) : valueOrFn }
     })
+  // Picking a slot for a product with no days yet starts it on every day,
+  // so a new product doesn't need seven taps before the routine can save.
+  const setSlot = (id, slot) => {
+    setDraft((d) => {
+      const cur = d ?? base
+      const times = { ...withDefaultTimes(cur.times, products, routineEditMode), [id]: slot }
+      const days = slot !== 'NONE' && !(cur.days[id] || []).length ? { ...cur.days, [id]: [...ALL_DAYS] } : cur.days
+      return { ...cur, times, days }
+    })
+  }
+  const toggleDay = (id, day) =>
+    setProductDays((current) => {
+      const currentDays = current[id] || []
+      return { ...current, [id]: currentDays.includes(day) ? currentDays.filter((x) => x !== day) : [...currentDays, day] }
+    })
+  const everyDay = (id) => setProductDays((current) => ({ ...current, [id]: [...ALL_DAYS] }))
+
+  const amCount = products.filter((p) => productTimes[p.id] === 'AM' || productTimes[p.id] === 'BOTH').length
+  const pmCount = products.filter((p) => productTimes[p.id] === 'PM' || productTimes[p.id] === 'BOTH').length
+
   // Leaving to add a product: set the unsaved choices aside for the return.
   const goAddProduct = () => {
     holdRoutineDraft({ times: productTimes, days: productDays })
@@ -98,136 +144,150 @@ export default function RoutinePlannerScreen({
           </p>
         </div>
 
-        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-
-          <h2 className="text-[17px] font-semibold">
-            Your products
-          </h2>
-
-          <div className="mt-5 flex flex-col gap-3">
-
-            {products.length === 0 ? (
-              <div className={`rounded-2xl border ${t.hair} p-5 text-center`}>
-                <p className={`text-[15px] ${t.muted}`}>
-                  You haven't added any products yet.
-                </p>
-
-                <button
-                  onClick={goAddProduct}
-                  className={`mt-4 rounded-xl px-5 py-3 text-[13px] font-semibold ${t.btn}`}
-                >
-                  + Add a product
-                </button>
-
+        {/* Overview: what's in each routine right now (updates as you edit). */}
+        {products.length > 0 && (
+          <div className="mt-7 grid grid-cols-2 gap-3">
+            {[
+              ['Morning', amCount, SUN, isNight ? 'bg-amber-400/15 text-amber-300' : 'bg-amber-400/15 text-amber-600'],
+              ['Night', pmCount, MOON, isNight ? 'bg-[#1463F4]/25 text-[#8DB4FF]' : 'bg-[#1463F4]/10 text-[#1463F4]'],
+            ].map(([label, count, icon, tint]) => (
+              <div key={label} className={`flex items-center gap-3 rounded-2xl ${t.surface} p-3.5`}>
+                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tint}`}>
+                  <Glyph size={20}>{icon}</Glyph>
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[16px] font-semibold leading-tight">{label}</span>
+                  <span className={`block text-[12px] ${t.faint}`}>
+                    <span className="tabular-nums">{count}</span> {count === 1 ? 'product' : 'products'}
+                  </span>
+                </span>
               </div>
-            ) : (
-              products.map((item) => (
-                <div
-                  key={item.id}
-                  className={`rounded-2xl border ${t.hair} p-4`}
-                >
-                  <p className={`text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>
-                    {item.products?.brand}
-                  </p>
+            ))}
+          </div>
+        )}
 
-                  <p className="mt-1 text-[15px] font-medium">
-                    {item.products?.name}
-                  </p>
+        <div className="mt-8 flex items-end justify-between px-1">
+          <h2 className="text-[18px] font-semibold">Your products</h2>
+          {products.length > 0 && (
+            <span className={`text-[12.5px] ${t.faint}`}>
+              <span className="tabular-nums">{products.filter((p) => productTimes[p.id] !== 'NONE').length}</span> of{' '}
+              <span className="tabular-nums">{products.length}</span> in use
+            </span>
+          )}
+        </div>
 
-                  <p className={`mt-1 text-[12px] ${t.muted}`}>
-                    {item.products?.category}
-                  </p>
-
-                  <div className="mt-4">
-                    <label className={`text-[12px] font-semibold ${t.faint}`}>
-                      When do you want to use this?
-                    </label>
-
-                    <select
-                      className={`mt-2 w-full rounded-xl ${t.surface} border ${t.hair} px-4 py-3 text-[14px] outline-none`}
-                      value={productTimes[item.id] || ''}
-                      onChange={(e) =>
-                        setProductTimes({
-                          ...productTimes,
-                          [item.id]: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="" disabled>
-                        Choose time
-                      </option>
-
-                      <option value="NONE">
-                        Not in routine
-                      </option>
-
-                      <option value="AM">
-                        Morning (AM)
-                      </option>
-
-                      <option value="PM">
-                        Night (PM)
-                      </option>
-
-                      <option value="BOTH">
-                        Morning & Night (AM & PM)
-                      </option>
-                    </select>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className={`text-[12px] font-semibold ${t.faint}`}>
-                      How often? <span className="font-normal">(choose the days you want to use this product)</span>
-                    </label>
-
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {[
-                        ['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4],
-                        ['Fri', 5], ['Sat', 6], ['Sun', 0],
-                      ].map(([label, day]) => {
-                        const selectedDays = productDays[item.id] || []
-                        const selected = selectedDays.includes(day)
-
-                        return (
-                          <button
-                            key={day}
-                            type="button"
-                            onClick={() =>
-                              setProductDays((current) => {
-                                const currentDays = current[item.id] || []
-                                return {
-                                  ...current,
-                                  [item.id]: currentDays.includes(day)
-                                    ? currentDays.filter((d) => d !== day)
-                                    : [...currentDays, day],
-                                }
-                              })
-                            }
-                            className={`flex h-9 w-9 items-center justify-center rounded-full text-[12px] font-semibold transition ${
-                              selected
-                                ? `${t.chip} border border-transparent`
-                                : `border ${t.hair} ${t.muted}`
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        )
-                      })}
+        <div className="mt-3 flex flex-col gap-3">
+          {products.length === 0 ? (
+            <div className={`rounded-3xl ${t.surface} p-6 text-center`}>
+              <p className="text-[16px] font-semibold">No products yet</p>
+              <p className={`mt-1.5 text-[14px] leading-relaxed ${t.muted}`}>
+                Add the products you use, then choose when each one goes in your routine.
+              </p>
+              <button onClick={goAddProduct} className={`mt-4 rounded-xl px-5 py-3 text-[13px] font-semibold ${t.btn}`}>
+                + Add a product
+              </button>
+            </div>
+          ) : (
+            products.map((item) => {
+              const slot = productTimes[item.id] || ''
+              const off = slot === 'NONE'
+              const days = productDays[item.id] || []
+              const image = productImageFor?.(item)
+              return (
+                <div key={item.id} className={`rounded-3xl ${t.surface} p-4 transition ${off ? 'opacity-70' : ''}`}>
+                  <div className="flex items-center gap-3">
+                    {image ? (
+                      <img src={image} alt="" loading="lazy"
+                        className={`h-14 w-14 shrink-0 rounded-xl bg-white object-contain p-1 ${off ? 'grayscale' : ''}`} />
+                    ) : (
+                      renderProductArt?.(item.products?.category, `h-14 w-14 shrink-0 rounded-xl ${off ? 'grayscale' : ''}`, 'h-[82%] w-[82%]')
+                    )}
+                    <div className="min-w-0 flex-1">
+                      {item.products?.brand && (
+                        <p className={`truncate text-[11px] font-semibold uppercase tracking-wide ${t.faint}`}>{item.products.brand}</p>
+                      )}
+                      <p className="line-clamp-2 text-[15px] font-semibold leading-snug">{item.products?.name}</p>
+                      {item.products?.category && (
+                        <p className={`mt-0.5 truncate text-[12px] capitalize ${t.muted}`}>{item.products.category}</p>
+                      )}
                     </div>
                   </div>
+
+                  {/* When: Off / Morning / Night / Both */}
+                  <div
+                    role="radiogroup"
+                    aria-label={`When to use ${item.products?.name || 'this product'}`}
+                    className={`mt-4 grid grid-cols-4 gap-1 rounded-2xl p-1 ${isNight ? 'bg-white/5' : 'bg-[#101B2D]/[0.04]'}`}
+                  >
+                    {SLOTS.map(([value, label]) => {
+                      const on = slot === value
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          role="radio"
+                          aria-checked={on}
+                          onClick={() => setSlot(item.id, value)}
+                          className={`flex items-center justify-center gap-1 rounded-xl py-2.5 text-[12.5px] font-semibold transition ${
+                            on ? (value === 'NONE' ? `${t.surface} shadow-sm` : t.chip) : t.muted
+                          }`}
+                        >
+                          {value === 'AM' && <Glyph size={13}>{SUN}</Glyph>}
+                          {value === 'PM' && <Glyph size={13}>{MOON}</Glyph>}
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  {/* Which days — hidden while the product is off. */}
+                  {!off && slot && (
+                    <div className="mt-4">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className={`truncate text-[12.5px] font-semibold ${days.length ? t.muted : 'text-amber-600'}`}>
+                          {daysSummary(days)}
+                        </p>
+                        {days.length < 7 && (
+                          <button type="button" onClick={() => everyDay(item.id)} className={`shrink-0 text-[12.5px] font-semibold ${t.mark}`}>
+                            Every day
+                          </button>
+                        )}
+                      </div>
+                      <div className="mt-2 grid grid-cols-7 gap-1.5">
+                        {DAYS.map(([short, name, day]) => {
+                          const on = days.includes(day)
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              aria-label={name}
+                              aria-pressed={on}
+                              onClick={() => toggleDay(item.id, day)}
+                              className={`flex h-10 items-center justify-center rounded-xl text-[13px] font-semibold transition ${
+                                on ? `${t.chip} border border-transparent` : `border ${t.hair} ${t.faint}`
+                              }`}
+                            >
+                              {short}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))
-            )}
+              )
+            })
+          )}
 
-          </div>
-
-          <button
-            type="button"
-            onClick={goAddProduct}
-            className={`mt-5 w-full rounded-xl border px-4 py-3 text-[14px] font-semibold ${t.hair} ${t.muted}`}
-          >
-            + Add a product
-          </button>
+          {products.length > 0 && (
+            <button
+              type="button"
+              onClick={goAddProduct}
+              className={`w-full rounded-2xl border border-dashed px-4 py-3.5 text-[14px] font-semibold ${t.hair} ${t.muted}`}
+            >
+              + Add a product
+            </button>
+          )}
         </div>
 
         <button
