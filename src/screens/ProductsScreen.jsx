@@ -63,6 +63,9 @@ export default function ProductsScreen({
   const inRoutineIds = new Set([...amSteps, ...pmSteps].map((s) => s.user_product_id))
   const withStatus = products.map((item) => ({ item, status: getPaoStatus(item) }))
   const inRoutine = withStatus.filter(({ item }) => inRoutineIds.has(item.id))
+  // Everything ever tracked: on the shelf (expired and in-routine included)
+  // plus Empties. Products removed as "added by mistake" aren't counted.
+  const allTracked = [...withStatus, ...empties.map((item) => ({ item, status: null }))]
   const opened = withStatus
     .filter(({ item }) => item.opened_date)
     .sort((a, b) => (b.item.opened_date || '').localeCompare(a.item.opened_date || ''))
@@ -150,7 +153,7 @@ export default function ProductsScreen({
       onClick={() => openProduct(item.id)}
       className={`${wide ? 'w-full' : 'w-[148px] shrink-0 snap-start'} rounded-2xl ${t.surface} p-3 text-left`}
     >
-      {thumb(item, 'aspect-square w-full', !!status?.marked)}
+      {thumb(item, 'aspect-square w-full', !!status?.marked || !!item.finished_at)}
       <p className={`mt-2.5 truncate text-[10px] font-semibold uppercase tracking-wide ${t.faint}`}>{item.products?.brand}</p>
       <p className="line-clamp-2 min-h-[2.4em] text-[13px] font-semibold leading-snug">{item.products?.name}</p>
       {meta}
@@ -237,7 +240,7 @@ export default function ProductsScreen({
   // ---------------------------------------------------------- full lists
   if (view) {
     const LISTS = {
-      all: ['All tracked', withStatus],
+      all: ['All tracked', allTracked],
       routine: ['In current routine', inRoutine],
       opened: ['Opened', opened],
       expiring: ['Closest expiry', upcoming],
@@ -289,7 +292,9 @@ export default function ProductsScreen({
                 <div className="mt-5 grid grid-cols-2 gap-3">
                   {LISTS[view][1].map((entry) => card(
                     entry,
-                    entry.status && entry.status.daysLeft <= 30
+                    entry.item.finished_at
+                      ? metaLine(ICONS.empty, `Finished ${fmtDate(entry.item.finished_at)}`)
+                      : entry.status && entry.status.daysLeft <= 30
                       ? metaLine(ICONS.clock, expiryText(entry.status), `font-semibold ${tone(entry.status)}`)
                       : inRoutineIds.has(entry.item.id)
                       ? metaLine(ICONS.check, 'In routine')
@@ -343,7 +348,7 @@ export default function ProductsScreen({
             <div className="mt-6">
               {scrollRow(
                 <>
-                  {statCard('All', 'tracked', products.length, ICONS.bottles, 'all', isNight ? 'bg-white/10' : 'bg-[#1463F4]/10 text-[#1463F4]')}
+                  {statCard('All', 'tracked', allTracked.length, ICONS.bottles, 'all', isNight ? 'bg-white/10' : 'bg-[#1463F4]/10 text-[#1463F4]')}
                   {statCard('In routine', 'current', inRoutine.length, ICONS.calendar, 'routine', isNight ? 'bg-white/10' : 'bg-violet-500/10 text-violet-600')}
                   {statCard('Empties', 'used up', empties.length, ICONS.empty, 'empties', isNight ? 'bg-white/10' : 'bg-emerald-500/10 text-emerald-600')}
                 </>

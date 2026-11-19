@@ -11,6 +11,8 @@ import { useCompletedSteps } from '../data/routine'
 
 export default function TodayScreen({
   amPlan,
+  amFinished,
+  pmFinished,
   careRelationships,
   challengesLoading,
   userId,
@@ -96,7 +98,8 @@ export default function TodayScreen({
     )
   }
 
-  const renderSteps = (steps, palette) => (
+  // `locked`: the routine is complete for today, so its ticks stay as they are.
+  const renderSteps = (steps, palette, locked = false) => (
     <div className="flex flex-col gap-3">
       {steps.map((step, index) => {
         const done = completedSteps.includes(step.id)
@@ -105,7 +108,8 @@ export default function TodayScreen({
         return (
           <button
             key={step.id}
-            onClick={() => toggleStepCompletion(step.id)}
+            disabled={locked}
+            onClick={() => { if (!locked) toggleStepCompletion(step.id) }}
             className={`relative flex min-h-[88px] w-full items-center gap-4 overflow-hidden rounded-2xl p-4 pr-28 text-left transition ${
               done ? palette.chip : `border ${palette.hair}`
             }`}
@@ -391,7 +395,7 @@ export default function TodayScreen({
               </div>
             ) : (
               <>
-                {renderSteps(amSteps, t)}
+                {renderSteps(amSteps, t, amFinished)}
                 {renderExpiredNotice(amPlan)}
               </>
             )}
@@ -419,18 +423,22 @@ export default function TodayScreen({
                 {amDone} of {amSteps.length} done
               </p>
 
-              <button
-                onClick={() => {
-                  if (amSteps.length === 0 || amDone < amSteps.length) {
-                    notify(amSteps.length === 0 ? 'Nothing is scheduled for this routine today.' : 'Complete every scheduled step first.')
-                    return
-                  }
-                  finishRoutine('AM')
-                }}
-                className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
-              >
-                Complete morning routine
-              </button>
+              {amFinished ? (
+                <RoutineDoneBadge t={t} label="Morning routine complete" />
+              ) : (
+                <button
+                  onClick={() => {
+                    if (amSteps.length === 0 || amDone < amSteps.length) {
+                      notify(amSteps.length === 0 ? 'Nothing is scheduled for this routine today.' : 'Complete every scheduled step first.')
+                      return
+                    }
+                    finishRoutine('AM')
+                  }}
+                  className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+                >
+                  Complete morning routine
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -486,7 +494,7 @@ export default function TodayScreen({
               </div>
             ) : (
               <>
-                {renderSteps(pmSteps, t)}
+                {renderSteps(pmSteps, t, pmFinished)}
                 {renderExpiredNotice(nightPlan)}
               </>
             )}
@@ -514,18 +522,22 @@ export default function TodayScreen({
                 {pmDone} of {pmSteps.length} done
               </p>
 
-              <button
-                onClick={() => {
-                  if (pmSteps.length === 0 || pmDone < pmSteps.length) {
-                    notify(pmSteps.length === 0 ? 'Nothing is scheduled for this routine today.' : 'Complete every scheduled step first.')
-                    return
-                  }
-                  finishRoutine('PM')
-                }}
-                className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
-              >
-                Complete night routine
-              </button>
+              {pmFinished ? (
+                <RoutineDoneBadge t={t} label="Night routine complete" />
+              ) : (
+                <button
+                  onClick={() => {
+                    if (pmSteps.length === 0 || pmDone < pmSteps.length) {
+                      notify(pmSteps.length === 0 ? 'Nothing is scheduled for this routine today.' : 'Complete every scheduled step first.')
+                      return
+                    }
+                    finishRoutine('PM')
+                  }}
+                  className={`w-full rounded-2xl py-[18px] text-base font-bold ${t.btn}`}
+                >
+                  Complete night routine
+                </button>
+              )}
             </div>
           )}
 
@@ -656,5 +668,22 @@ export default function TodayScreen({
 
       {renderBottomTabs('today', t)}
     </main>
+  )
+}
+
+// Shown in place of the "Complete … routine" button once it's done for the
+// day: a routine can only be completed once a day.
+function RoutineDoneBadge({ t, label }) {
+  return (
+    <div
+      role="status"
+      className={`flex w-full items-center justify-center gap-2 rounded-2xl py-[18px] text-base font-bold ${t.chip}`}
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+        strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M4 12.5l5.2 5.2L20 7" />
+      </svg>
+      {label}
+    </div>
   )
 }

@@ -14,8 +14,10 @@ const store = {
   del: (k) => { try { localStorage.removeItem(k) } catch { /* private mode */ } },
 }
 
-// Call once on app load. Returns the partner name so you can greet them
-// ("Referred by Beauty Hut"), or null for a normal visit / retired code.
+// Call once on app load. Returns who to credit in the greeting, or null for
+// a normal visit / retired code:
+//   { partner: 'Beauty Hut' }                — a store/clinic code
+//   { friend: true, inviter: 'Deeyah'|null } — a friend's invite link
 export async function captureReferral() {
   const url = new URL(location.href)
   const code = url.searchParams.get('ref')
@@ -35,8 +37,9 @@ export async function captureReferral() {
     p_code: code, p_visitor: visitor, p_user_agent: navigator.userAgent,
   })
 
-  if (data?.ok) store.set(PENDING, '1')
-  return data?.partner ?? null
+  if (!data?.ok) return null
+  store.set(PENDING, '1')
+  return { partner: data.partner ?? null, friend: !!data.friend, inviter: data.inviter ?? null }
 }
 
 // Call whenever a session exists (after signup/login, or on app open).

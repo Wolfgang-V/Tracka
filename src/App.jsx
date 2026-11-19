@@ -15,6 +15,7 @@ const FindProfessionalScreen = lazy(() => import('./screens/practitioner/FindPro
 const CareTeamScreen = lazy(() => import('./screens/practitioner/CareTeamScreen'))
 const ChallengeDetailScreen = lazy(() => import('./screens/ChallengeDetailScreen'))
 const DiscoverScreen = lazy(() => import('./screens/DiscoverScreen'))
+const ReferFriendScreen = lazy(() => import('./screens/ReferFriendScreen'))
 const SponsoredProductScreen = lazy(() => import('./screens/SponsoredProductScreen'))
 const RecommendationHistoryScreen = lazy(() => import('./screens/practitioner/RecommendationHistoryScreen'))
 const ApplyPractitionerScreen = lazy(() => import('./screens/practitioner/ApplyPractitionerScreen'))
@@ -677,8 +678,12 @@ setRoutineHistory(groupedRoutines)
     // signs in. Claiming waits for that to finish, so an already-signed-in
     // person who scans a flyer is attributed in the same visit.
     const referralCapture = captureReferral()
-      .then((partner) => {
-        if (partner && partner !== 'Tracka+') notify(`Welcome! You were referred by ${partner}.`, 'success')
+      .then((ref) => {
+        if (ref?.friend) {
+          notify(`Welcome! ${ref.inviter || 'A friend'} invited you to Tracka+.`, 'success')
+        } else if (ref?.partner && ref.partner !== 'Tracka+') {
+          notify(`Welcome! You were referred by ${ref.partner}.`, 'success')
+        }
       })
       .catch((err) => console.error('REFERRAL SCAN ERROR:', err))
     const claimReferralWhenReady = () =>
@@ -1192,6 +1197,8 @@ const saveNoteForDate = async (date, note) => {
 // skincare "day" isn't done until the night steps are actually done.
 const finishRoutine = async (slot) => {
   const today = localDateString()
+  // Once a routine is complete for the day it stays complete.
+  if (isRoutineFinished(slot, today)) return
 
   const { error } = await supabase
     .from('routine_completions')
@@ -1919,6 +1926,14 @@ const completedDates = new Set(
 )
 
 const currentStreak = calculateStreaks([...completedDates], todayString, '', '').current
+
+// Rows from before morning/night were split have no time_of_day; they
+// count as night, same as the streak above.
+function isRoutineFinished(slot, date = todayString) {
+  return progressCompletions.some((item) =>
+    item.completed_date === date && (item.time_of_day === slot || (slot === 'PM' && !item.time_of_day))
+  )
+}
 
 const getPaoStatus = (item) => {
   // Same rules the Today planner uses (core/expiry.js) — printed date,
@@ -3875,6 +3890,17 @@ const submitRecommendation = async () => {
     )
   }
 
+  if (screen === 'referFriend') {
+    return (
+      <ReferFriendScreen
+        t={t}
+        isNight={isNight}
+        notify={notify}
+        onBack={() => setScreen('settings')}
+      />
+    )
+  }
+
   if (screen === 'referralConsole') {
     return (
       <ReferralConsole
@@ -4754,6 +4780,18 @@ if (screen === 'settings') {
             className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
           >
             Home screen & reminders
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
+          <button
+            onClick={() => setScreen('referFriend')}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            Refer a friend
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="1.8"
               strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
@@ -6204,6 +6242,8 @@ if (screen === 'today') {
   return (
     <TodayScreen
       amPlan={amPlan}
+      amFinished={isRoutineFinished('AM')}
+      pmFinished={isRoutineFinished('PM')}
       careRelationships={careRelationships}
       challengesLoading={challengesLoading}
       userId={user?.id}
