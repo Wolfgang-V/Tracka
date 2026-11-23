@@ -74,10 +74,10 @@ export default function ReferFriendScreen({ t, isNight, notify, onBack }) {
         <div className="mt-5">
           <p className={`text-[13px] font-semibold uppercase tracking-wide ${t.mark}`}>Refer a friend</p>
           <h1 className="mt-2 font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Better skin is easier together
+            Build better skin habits together.
           </h1>
           <p className={`mt-3 text-[15px] leading-relaxed ${t.muted}`}>
-            Share your link with friends. When they join Tracka+ through it, they&apos;ll show up here.
+            Invite your friends to join Tracka+. The more friends you bring on board, the more chances you have to win exciting skincare rewards!
           </p>
         </div>
 
@@ -137,7 +137,7 @@ export default function ReferFriendScreen({ t, isNight, notify, onBack }) {
             </div>
 
             <p className={`mt-5 px-1 text-[12.5px] leading-relaxed ${t.faint}`}>
-              Friends count once they create a new account after opening your link. For it to count, they should sign up on the same phone and browser they opened the link in.
+              Your friends will be counted once they create a new Tracka+ account using your invite link. To make sure your referral is tracked, they should sign up on the same device and browser they used to open your link.
             </p>
           </>
         )}

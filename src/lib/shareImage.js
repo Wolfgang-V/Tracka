@@ -735,3 +735,125 @@ export async function generatePhotoStreakImage({ photo, streak, routineLabel, da
 
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9))
 }
+
+/**
+ * A digital certificate for a finished challenge. Landscape, A4 ratio
+ * (2000x1414), always light so it prints well, whatever the app theme.
+ *
+ * @param name           the person's full name (or username if no name set)
+ * @param challengeTitle e.g. "30 Days of SPF"
+ * @param achieved       reached the goal → "of Achievement", else "of Participation"
+ * @param detail         e.g. "27 of 30 days checked in · 10 Oct – 8 Nov 2026"
+ * @param sponsor        optional sponsor name
+ * @param issuedLabel    e.g. "8 November 2026"
+ * @param certificateId  short reference printed in the corner
+ * @returns Promise<Blob> PNG
+ */
+export async function generateCertificateImage({ name, challengeTitle, achieved, detail, sponsor, issuedLabel, certificateId }) {
+  await document.fonts.load('600 40px Inter')
+  await document.fonts.load('500 120px "Cormorant Garamond"')
+  await document.fonts.load('italic 500 60px "Cormorant Garamond"')
+  await document.fonts.ready
+
+  const W = 2000
+  const H = 1414
+  const INK = '#101B2D'
+  const MUTED = '#51637E'
+  const GOLD = '#B98A1B'
+  const GOLD_SOFT = 'rgba(185,138,27,0.35)'
+
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')
+
+  ctx.fillStyle = '#FBF8F2'
+  ctx.fillRect(0, 0, W, H)
+
+  // Soft gold glow from the top so it doesn't look flat.
+  const glow = ctx.createRadialGradient(W / 2, 0, 60, W / 2, 0, 1100)
+  glow.addColorStop(0, 'rgba(232,185,49,0.14)')
+  glow.addColorStop(1, 'rgba(232,185,49,0)')
+  ctx.fillStyle = glow
+  ctx.fillRect(0, 0, W, H)
+
+  // Double frame.
+  ctx.strokeStyle = GOLD
+  ctx.lineWidth = 6
+  ctx.strokeRect(60, 60, W - 120, H - 120)
+  ctx.strokeStyle = GOLD_SOFT
+  ctx.lineWidth = 2
+  ctx.strokeRect(84, 84, W - 168, H - 168)
+
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+
+  // Mark: cup for achievement, medal for participation.
+  drawAward(ctx, achieved
+    ? { kind: 'cup', metal: 'gold', badge: '' }
+    : { kind: 'medal', metal: 'gold', badge: '★' }, W / 2, 250, 190)
+
+  ctx.fillStyle = INK
+  ctx.font = '600 34px Inter'
+  ctx.letterSpacing = '10px'
+  ctx.fillText('TRACKA+', W / 2, 400)
+
+  ctx.fillStyle = GOLD
+  ctx.font = '600 30px Inter'
+  ctx.letterSpacing = '8px'
+  ctx.fillText(achieved ? 'CERTIFICATE OF ACHIEVEMENT' : 'CERTIFICATE OF PARTICIPATION', W / 2, 470)
+  ctx.letterSpacing = '0px'
+
+  ctx.fillStyle = MUTED
+  ctx.font = 'italic 500 50px "Cormorant Garamond"'
+  ctx.fillText('This certifies that', W / 2, 575)
+
+  ctx.fillStyle = INK
+  let size = 130
+  do {
+    ctx.font = `500 ${size}px "Cormorant Garamond"`
+    size -= 6
+  } while (ctx.measureText(name).width > 1550 && size > 60)
+  ctx.fillText(name, W / 2, 690)
+  hairline(ctx, W / 2, 770, 900, GOLD_SOFT)
+
+  ctx.fillStyle = MUTED
+  ctx.font = 'italic 500 50px "Cormorant Garamond"'
+  ctx.fillText(achieved ? 'successfully completed' : 'took part in', W / 2, 845)
+
+  ctx.fillStyle = INK
+  ctx.font = '500 84px "Cormorant Garamond"'
+  let y = 945
+  const titleLines = wrapText(ctx, challengeTitle, 1500).slice(0, 2)
+  for (const line of titleLines) {
+    ctx.fillText(line, W / 2, y)
+    y += 90
+  }
+
+  ctx.fillStyle = MUTED
+  ctx.font = '500 34px Inter'
+  if (detail) ctx.fillText(detail, W / 2, y + 5)
+  if (sponsor) {
+    ctx.font = '500 28px Inter'
+    ctx.fillText(`In partnership with ${sponsor}`, W / 2, y + 62)
+  }
+
+  // Footer: issued date (left), signature (right), reference (centre).
+  const footY = H - 210
+  ctx.fillStyle = INK
+  ctx.font = '600 32px Inter'
+  ctx.fillText(issuedLabel || '', 470, footY)
+  ctx.fillText('The Tracka+ Team', W - 470, footY)
+  hairline(ctx, 470, footY + 40, 380, GOLD_SOFT)
+  hairline(ctx, W - 470, footY + 40, 380, GOLD_SOFT)
+  ctx.fillStyle = MUTED
+  ctx.font = '500 24px Inter'
+  ctx.letterSpacing = '3px'
+  ctx.fillText('DATE', 470, footY + 78)
+  ctx.fillText('ISSUED BY', W - 470, footY + 78)
+  if (certificateId) ctx.fillText(`REF ${certificateId}`, W / 2, footY + 78)
+  ctx.fillText('TRACKAPLUS.APP', W / 2, footY + 2)
+  ctx.letterSpacing = '0px'
+
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+}

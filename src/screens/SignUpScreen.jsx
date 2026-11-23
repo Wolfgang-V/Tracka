@@ -1,6 +1,7 @@
 // Sign up — create an account (first screen after "Get started").
 // Moved out of App.jsx; shared state comes in as props for now.
 
+import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 export default function SignUpScreen({
@@ -24,6 +25,11 @@ export default function SignUpScreen({
   t,
   username,
 }) {
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [marketingOptIn, setMarketingOptIn] = useState(false)
+  const inputClass = `w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`
+
   return (
     <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
@@ -51,6 +57,35 @@ export default function SignUpScreen({
         </div>
 
         <div className="mt-8 flex flex-col gap-5">
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+                First name
+              </label>
+              <input
+                type="text"
+                autoComplete="given-name"
+                placeholder="Ada"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
+                Last name
+              </label>
+              <input
+                type="text"
+                autoComplete="family-name"
+                placeholder="Okafor"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+          </div>
 
           <div>
             <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
@@ -138,27 +173,60 @@ export default function SignUpScreen({
 
           <div>
             <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-              What should we call you?
+              Username
             </label>
 
             <input
               type="text"
-              placeholder="e.g. Deeyah"
+              autoComplete="username"
+              autoCapitalize="none"
+              placeholder="e.g. deeyah"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className={`w-full rounded-2xl ${t.surface} border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
+              className={inputClass}
             />
+            <p className={`mt-1.5 px-1 text-[12px] ${t.faint}`}>
+              Shown on challenge leaderboards. You can change it later in Settings.
+            </p>
           </div>
+
+          <label className="flex cursor-pointer items-start gap-3 px-1">
+            <input
+              type="checkbox"
+              checked={marketingOptIn}
+              onChange={(e) => setMarketingOptIn(e.target.checked)}
+              className="mt-0.5 h-5 w-5 shrink-0 accent-[#2554EB]"
+            />
+            <span className={`text-[13.5px] leading-relaxed ${t.muted}`}>
+              Email me skincare tips, challenges and offers from Tracka+. You can turn this off anytime in Settings.
+            </span>
+          </label>
 
           <button
             disabled={busyAction === 'signup'}
             onClick={() =>
               runBusy('signup', async () => {
-                const email = loginEmail
+                const email = loginEmail.trim()
                 const password = loginPassword
+                const first = firstName.trim()
+                const last = lastName.trim()
+                const handle = username.trim()
 
-                if (!username || !email || !password) {
-                  notify('Please enter your email, password and name.')
+                if (!first || !last || !handle || !email || !password) {
+                  notify('Please fill in your first name, last name, email, password and username.')
+                  return
+                }
+
+                if (handle.length < 2 || handle.length > 30) {
+                  notify('Your username needs to be 2 to 30 characters.')
+                  return
+                }
+
+                // If the check itself fails (offline, older server), carry on:
+                // the sign-up trigger still guards against duplicates.
+                const { data: available, error: availableError } = await supabase.rpc('is_username_available', { p_username: handle })
+                if (!availableError && available === false) {
+                  notify('That username is already taken. Try another one.')
                   return
                 }
 
@@ -167,7 +235,10 @@ export default function SignUpScreen({
                   password,
                   options: {
                     data: {
-                      username,
+                      username: handle,
+                      first_name: first.slice(0, 50),
+                      last_name: last.slice(0, 50),
+                      marketing_opt_in: marketingOptIn,
                     },
                     emailRedirectTo: `${SITE_URL}/?confirmed=true`,
                   },
@@ -185,7 +256,7 @@ export default function SignUpScreen({
 
                 setProducts([])
                 setUser(data.user)
-                setDisplayName(username)
+                setDisplayName(handle)
                 setOnboardingCompleted(false)
 
                 if (data.user.email === ADMIN_EMAIL) {

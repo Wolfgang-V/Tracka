@@ -166,6 +166,12 @@ export default function ChallengesScreen({
         <div className="mt-5">
           <h1 className="font-display text-[34px] font-light leading-[1.05] tracking-tight">My challenges</h1>
           <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>Small habits, built one day at a time.</p>
+          {myChallenges.length > 0 && (
+            <button type="button" onClick={() => setScreen('rewards')}
+              className={`mt-3 inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-[13px] font-semibold ${t.hair}`}>
+              🏆 My rewards
+            </button>
+          )}
         </div>
 
         {/* Tabs */}

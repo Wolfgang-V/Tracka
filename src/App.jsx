@@ -16,6 +16,8 @@ const CareTeamScreen = lazy(() => import('./screens/practitioner/CareTeamScreen'
 const ChallengeDetailScreen = lazy(() => import('./screens/ChallengeDetailScreen'))
 const DiscoverScreen = lazy(() => import('./screens/DiscoverScreen'))
 const ReferFriendScreen = lazy(() => import('./screens/ReferFriendScreen'))
+const ProfileDetailsScreen = lazy(() => import('./screens/ProfileDetailsScreen'))
+const RewardsScreen = lazy(() => import('./screens/RewardsScreen'))
 const RemindersScreen = lazy(() => import('./screens/RemindersScreen'))
 const ChallengesScreen = lazy(() => import('./screens/ChallengesScreen'))
 const SponsoredProductScreen = lazy(() => import('./screens/SponsoredProductScreen'))
@@ -398,7 +400,6 @@ function App() {
   const [resetStatus, setResetStatus] = useState(null)
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
-  const [settingsUsername, setSettingsUsername] = useState('')
   const [brandSuggestionsOpen, setBrandSuggestionsOpen] = useState(false)
   const [liveBrandMatches, setLiveBrandMatches] = useState([])
   const [productSuggestionsOpen, setProductSuggestionsOpen] = useState(false)
@@ -2052,7 +2053,7 @@ useEffect(() => {
     loadChallenges()
   }
 
-  if (screen === 'challenges' || screen === 'challengeDetail' || screen === 'discover') {
+  if (screen === 'challenges' || screen === 'challengeDetail' || screen === 'discover' || screen === 'rewards') {
     loadChallenges()
     loadRoutines()
     setChallengeMenuOpen(false)
@@ -4757,14 +4758,10 @@ if (screen === 'settings') {
         </p>
         <div className={`flex flex-col divide-y overflow-hidden rounded-3xl ${t.surface} ${t.hair}`}>
           <button
-            onClick={() => {
-              setSettingsUsername(displayName)
-              setSettingsStatus(null)
-              setScreen('settingsUsername')
-            }}
+            onClick={() => setScreen('settingsUsername')}
             className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
           >
-            Update your username
+            Your details
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="1.8"
               strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
@@ -4812,6 +4809,18 @@ if (screen === 'settings') {
             className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
           >
             Home screen & reminders
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
+          <button
+            onClick={() => setScreen('rewards')}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            My rewards
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="1.8"
               strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
@@ -4985,101 +4994,13 @@ if (screen === 'findProfessional') {
 
 if (screen === 'settingsUsername') {
   return (
-    <main className={`min-h-screen ${t.page} transition-colors duration-500`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-6 pt-7">
-
-        <button
-          onClick={() => setScreen('settings')}
-          className={`-ml-2 flex items-center gap-1 py-2 text-[15px] ${t.muted}`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-          Settings
-        </button>
-
-        <div className="mt-5">
-          <h1 className="font-display text-[36px] font-light leading-[1.05] tracking-tight">
-            Update your username
-          </h1>
-
-          {user?.email && (
-            <p className={`mt-3 text-[15px] ${t.muted}`}>{user.email}</p>
-          )}
-        </div>
-
-        <div className={`mt-8 rounded-3xl ${t.surface} p-5`}>
-          <label className={`mb-2 block text-[13px] font-semibold ${t.faint}`}>
-            Username
-          </label>
-
-          <input
-            type="text"
-            placeholder="e.g. Deeyah"
-            value={settingsUsername}
-            onChange={(e) => setSettingsUsername(e.target.value)}
-            className={`w-full rounded-2xl border ${t.hair} px-4 py-3.5 text-[15px] outline-none`}
-          />
-
-          <button
-            disabled={busyAction === 'settingsUsername'}
-            onClick={() =>
-              runBusy('settingsUsername', async () => {
-                if (!settingsUsername.trim()) {
-                  notify('Please enter a username.')
-                  return
-                }
-
-                const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-
-                if (sessionError) {
-                  notify("Couldn't reach the server. Check your connection and try again.")
-                  return
-                }
-
-                if (!session?.user) {
-                  notify('Your session ended. Please log in again.')
-                  setScreen('login')
-                  return
-                }
-
-                const { error } = await supabase
-                  .from('profiles')
-                  .upsert(
-                    { id: session.user.id, username: settingsUsername.trim() },
-                    { onConflict: 'id' }
-                  )
-
-                if (error) {
-                  console.error('PROFILE UPDATE ERROR:', error)
-                  setSettingsStatus(
-                    error.code === '23505'
-                      ? 'That username is already taken. Try another one.'
-                      : 'Could not save your username: ' + error.message
-                  )
-                  return
-                }
-
-                setDisplayName(settingsUsername.trim())
-                setSettingsStatus('Username updated.')
-              })
-            }
-            className={`mt-5 w-full rounded-2xl py-[16px] text-base font-bold ${t.btn} disabled:opacity-60`}
-          >
-            {busyAction === 'settingsUsername' ? 'Saving…' : 'Save username'}
-          </button>
-
-          {settingsStatus && (
-            <p className={`mt-4 text-center text-[14px] leading-relaxed ${t.muted}`}>
-              {settingsStatus}
-            </p>
-          )}
-        </div>
-
-      </div>
-    </main>
+    <ProfileDetailsScreen
+      t={t}
+      user={user}
+      notify={notify}
+      setDisplayName={setDisplayName}
+      onBack={() => setScreen('settings')}
+    />
   )
 }
 
@@ -5410,6 +5331,30 @@ if (screen === 'notifications') {
     </main>
   )
 }
+if (screen === 'rewards') {
+  return (
+    <RewardsScreen
+      t={t}
+      isNight={isNight}
+      user={user}
+      myChallenges={myChallenges}
+      challengesLoading={challengesLoading}
+      challengeTarget={challengeTarget}
+      challengeWindow={challengeWindow}
+      challengeInProgress={challengeInProgress}
+      formatChallengeDate={formatChallengeDate}
+      renderAwardIcon={renderAwardIcon}
+      saveAward={saveAward}
+      awardSaving={awardSaving}
+      openChallenge={openChallenge}
+      notify={notify}
+      onBack={() => window.history.back()}
+      onEditDetails={() => setScreen('settingsUsername')}
+      onFindChallenges={() => setScreen('challenges')}
+    />
+  )
+}
+
 if (screen === 'challenges') {
   return (
     <ChallengesScreen
