@@ -32,3 +32,5 @@ supabase/.branches
 
 # Supabase CLI cache
 supabase/.temp
+# Email dry-run output: contains real user emails + unsubscribe tokens
+dry*.json

@@ -10,6 +10,15 @@ import UnsubscribeScreen from './screens/UnsubscribeScreen.jsx'
 // of the app: no sign-in, no onboarding redirects in the way.
 const unsubscribeToken = new URLSearchParams(window.location.search).get('unsubscribe')
 
+// The launch splash in index.html is normally dismissed by App once auth
+// is ready. App never runs here, so drop the splash straight away, or the
+// page stays a blue screen with the unsubscribe button hidden behind it.
+if (unsubscribeToken !== null) {
+  document.getElementById('splash')?.remove()
+  document.documentElement.classList.remove('splashing')
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#FFFFFF')
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     {unsubscribeToken !== null ? (
