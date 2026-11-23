@@ -857,3 +857,115 @@ export async function generateCertificateImage({ name, challengeTitle, achieved,
 
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
 }
+
+/**
+ * The shareable Wrapped card: 9:16 for Stories, always the bold navy/blue
+ * Wrapped look (not the app theme) so it's recognisable when people post it.
+ *
+ * @param data         my_year_in_review() result
+ * @param personality  personality(data) from core/wrapped
+ * @returns Promise<Blob> PNG
+ */
+export async function generateWrappedImage({ data, personality }) {
+  await document.fonts.load('600 64px Inter')
+  await document.fonts.load('500 120px "Cormorant Garamond"')
+  await document.fonts.ready
+
+  const canvas = document.createElement('canvas')
+  canvas.width = WIDTH
+  canvas.height = HEIGHT
+  const ctx = canvas.getContext('2d')
+
+  const bg = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT)
+  bg.addColorStop(0, '#0B1E5B')
+  bg.addColorStop(0.55, '#1B3FD0')
+  bg.addColorStop(1, '#2C6BFF')
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, WIDTH, HEIGHT)
+
+  // Soft glows.
+  for (const [x, y, r, c] of [[880, 260, 520, 'rgba(255,196,87,0.30)'], [140, 1500, 620, 'rgba(120,220,255,0.22)']]) {
+    const g = ctx.createRadialGradient(x, y, 10, x, y, r)
+    g.addColorStop(0, c)
+    g.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, WIDTH, HEIGHT)
+  }
+
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = '600 34px Inter'
+  ctx.letterSpacing = '8px'
+  ctx.fillText('TRACKA+', 90, 150)
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'
+  ctx.font = '600 30px Inter'
+  ctx.letterSpacing = '6px'
+  ctx.fillText(`WRAPPED ${data.year}`, 90, 200)
+  ctx.letterSpacing = '0px'
+
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = '500 104px "Cormorant Garamond"'
+  let y = 400
+  for (const line of wrapText(ctx, `${data.first_name ? `${data.first_name}'s` : 'My'} ${data.year} in skincare`, 900).slice(0, 3)) {
+    ctx.fillText(line, 90, y)
+    y += 108
+  }
+
+  // Personality pill.
+  y += 30
+  ctx.font = '600 40px Inter'
+  const pillText = `${personality.emoji}  ${personality.title}`
+  const pillW = ctx.measureText(pillText).width + 80
+  ctx.fillStyle = 'rgba(255,255,255,0.14)'
+  roundRect(ctx, 90, y, pillW, 92, 46)
+  ctx.fill()
+  ctx.fillStyle = '#FFFFFF'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(pillText, 130, y + 48)
+  ctx.textBaseline = 'alphabetic'
+
+  // 2x2 stats.
+  const stats = [
+    [data.days_showed_up, data.days_showed_up === 1 ? 'day showed up' : 'days showed up'],
+    [data.best_streak, 'day best streak'],
+    [data.am, data.am === 1 ? 'morning routine' : 'morning routines'],
+    [data.pm, data.pm === 1 ? 'night routine' : 'night routines'],
+  ]
+  const top = y + 170
+  stats.forEach(([value, label], i) => {
+    const x = 90 + (i % 2) * 460
+    const sy = top + Math.floor(i / 2) * 300
+    ctx.fillStyle = 'rgba(255,255,255,0.10)'
+    roundRect(ctx, x, sy, 430, 260, 36)
+    ctx.fill()
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = '600 110px Inter'
+    ctx.fillText(String(value ?? 0), x + 40, sy + 150)
+    ctx.fillStyle = 'rgba(255,255,255,0.75)'
+    ctx.font = '500 34px Inter'
+    ctx.fillText(label, x + 40, sy + 210)
+  })
+
+  const first = data.top_products?.[0]
+  if (first) {
+    const py = top + 640
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'
+    ctx.font = '600 28px Inter'
+    ctx.letterSpacing = '5px'
+    ctx.fillText('MOST-USED PRODUCT', 90, py)
+    ctx.letterSpacing = '0px'
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = '600 44px Inter'
+    ctx.fillText(fitText(ctx, [first.brand, first.name].filter(Boolean).join(' '), 900), 90, py + 64)
+  }
+
+  ctx.textAlign = 'center'
+  ctx.fillStyle = 'rgba(255,255,255,0.75)'
+  ctx.font = '500 30px Inter'
+  ctx.letterSpacing = '3px'
+  ctx.fillText('TRACKAPLUS.APP', WIDTH / 2, HEIGHT - 90)
+  ctx.letterSpacing = '0px'
+
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+}

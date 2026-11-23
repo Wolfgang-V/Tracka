@@ -18,6 +18,8 @@ const DiscoverScreen = lazy(() => import('./screens/DiscoverScreen'))
 const ReferFriendScreen = lazy(() => import('./screens/ReferFriendScreen'))
 const ProfileDetailsScreen = lazy(() => import('./screens/ProfileDetailsScreen'))
 const RewardsScreen = lazy(() => import('./screens/RewardsScreen'))
+const WrappedScreen = lazy(() => import('./screens/WrappedScreen'))
+import { WRAPPED_YEAR, wrappedAvailable, rememberWrappedPreview } from './lib/core/wrapped'
 const RemindersScreen = lazy(() => import('./screens/RemindersScreen'))
 const ChallengesScreen = lazy(() => import('./screens/ChallengesScreen'))
 const SponsoredProductScreen = lazy(() => import('./screens/SponsoredProductScreen'))
@@ -29,6 +31,7 @@ const AddClientScreen = lazy(() => import('./screens/practitioner/AddClientScree
 const ComposeRecommendationScreen = lazy(() => import('./screens/practitioner/ComposeRecommendationScreen'))
 const PractitionerRoutinesScreen = lazy(() => import('./screens/practitioner/PractitionerRoutinesScreen'))
 import RoutinePlannerScreen from './screens/RoutinePlannerScreen'
+import EmailOptInCard from './screens/EmailOptInCard'
 import ProductsScreen from './screens/ProductsScreen'
 import FullscreenAd from './ads/FullscreenAd'
 import PhotoStreakShare from './share/PhotoStreakShare'
@@ -601,6 +604,8 @@ setRoutineHistory(groupedRoutines)
   const [reportSharing, setReportSharing] = useState(false)
   const { stepHistory, loadStepHistory } = useStepHistory(user?.id)
   const [menuOpen, setMenuOpen] = useState(false)
+  // Wrapped (10 Dec – 31 Jan, or ?wrapped=preview once on this device).
+  const [wrappedOn] = useState(() => { rememberWrappedPreview(); return wrappedAvailable() })
   // Challenges and leaderboards live in the shared data cache (src/data/challenges).
   const { challenges, myChallenges, challengesLoading, reloadChallenges } = useChallenges(user?.id)
   const [selectedChallengeId, setSelectedChallengeId] = useState(null)
@@ -4816,6 +4821,20 @@ if (screen === 'settings') {
             </svg>
           </button>
 
+          {wrappedOn && (
+          <button
+            onClick={() => setScreen('wrapped')}
+            className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
+          >
+            ✨ Your {WRAPPED_YEAR} Wrapped
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className={t.faint}>
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          )}
+
           <button
             onClick={() => setScreen('rewards')}
             className="flex items-center justify-between px-5 py-4 text-left text-[15px] font-semibold"
@@ -5331,6 +5350,16 @@ if (screen === 'notifications') {
     </main>
   )
 }
+if (screen === 'wrapped') {
+  return (
+    <WrappedScreen
+      notify={notify}
+      onClose={() => setScreen('today')}
+      onOpenRewards={() => setScreen('rewards')}
+    />
+  )
+}
+
 if (screen === 'rewards') {
   return (
     <RewardsScreen
@@ -5798,6 +5827,22 @@ if (screen === 'practitionerRoutines') {
 if (screen === 'today') {
   return (
     <TodayScreen
+      emailOptInCard={<EmailOptInCard userId={user?.id} t={t} isNight={isNight} notify={notify} />}
+      wrappedBanner={wrappedOn ? (
+        <button
+          type="button"
+          onClick={() => setScreen('wrapped')}
+          className="mt-8 flex w-full items-center gap-4 rounded-3xl p-5 text-left text-white"
+          style={{ background: 'linear-gradient(135deg, #0B1E5B 0%, #1B3FD0 55%, #2C6BFF 100%)' }}
+        >
+          <span className="text-[34px] leading-none">✨</span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[16px] font-semibold">Your {WRAPPED_YEAR} Wrapped is here</span>
+            <span className="mt-0.5 block text-[13px] text-white/80">See your year in skincare</span>
+          </span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+        </button>
+      ) : null}
       amPlan={amPlan}
       amFinished={isRoutineFinished('AM')}
       pmFinished={isRoutineFinished('PM')}

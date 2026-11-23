@@ -10,6 +10,8 @@ import { supabase } from '../lib/supabase'
 import { useCompletedSteps } from '../data/routine'
 
 export default function TodayScreen({
+  emailOptInCard,
+  wrappedBanner,
   amPlan,
   amFinished,
   pmFinished,
@@ -602,6 +604,10 @@ export default function TodayScreen({
             </button>
           </div>
         )}
+
+        {wrappedBanner}
+
+        {emailOptInCard}
 
         {(() => {
           const activeChallenges = myChallenges.filter(isLiveParticipation)
