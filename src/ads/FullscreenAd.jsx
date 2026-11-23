@@ -29,8 +29,16 @@ function markShown() {
   }
 }
 
+// Several live pop-ups (e.g. one per campaign photo) take turns: a different
+// one each day, the same one all day. Day count since epoch, local date.
+function dayNumber() {
+  return Math.floor(Date.parse(`${today()}T00:00:00Z`) / 86400000)
+}
+
 export default function FullscreenAd({ userId, supabase, blocked, onOpen }) {
-  const ad = useAds(userId, 'fullscreen')[0] || null
+  // Sorted so the order (and so today's pick) is stable between fetches.
+  const ads = [...useAds(userId, 'fullscreen')].sort((a, b) => a.placement_id.localeCompare(b.placement_id))
+  const ad = ads.length ? ads[dayNumber() % ads.length] : null
   const [visible, setVisible] = useState(false)
 
   // A short pause so it doesn't land on top of the app's first paint.
