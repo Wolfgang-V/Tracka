@@ -57,6 +57,9 @@ export default function ProfileDetailsScreen({ t, user, notify, onBack, setDispl
         last_name: last || null,
         username: handle,
         marketing_opt_in: marketingOptIn,
+        // Ticking this is explicit consent, so it lifts an earlier
+        // "Don't email me again" (unsubscribe_email sets email_suppressed).
+        ...(marketingOptIn ? { email_suppressed: false } : {}),
       })
       .eq('id', user.id)
     setSaving(false)

@@ -4,10 +4,12 @@
 // re-renders for everyone else. Server-side, every admin RPC checks the
 // caller itself; this screen is only the UI.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { supabase } from '../lib/supabase'
 import { localDateString } from '../lib/core/planNight'
 import FullscreenSwitch from '../ads/FullscreenSwitch'
+
+const RoutineEngagement = lazy(() => import('./admin/RoutineEngagement'))
 
 export default function AdminScreen({
   t, isNight, notify, confirmAction, busyAction, runBusy, setScreen,
@@ -362,6 +364,8 @@ export default function AdminScreen({
                   ? 'Referrals'
                   : adminTab === 'ads'
                   ? 'Ads'
+                  : adminTab === 'routines'
+                  ? 'Routines'
                   : 'Verified practitioners'}
               </h1>
             </div>
@@ -429,6 +433,7 @@ export default function AdminScreen({
               className={`w-full appearance-none rounded-2xl border ${t.hair} ${t.surface} px-4 py-3 text-[14px] font-semibold outline-none`}
             >
               <option value="signups">Signups</option>
+              <option value="routines">Routines (AM / PM)</option>
               <option value="practitioners">
                 {`Revoked${pendingPractitioners.length > 0 ? ` (${pendingPractitioners.length})` : ''}`}
               </option>
@@ -438,6 +443,12 @@ export default function AdminScreen({
               <option value="ads">Ads</option>
             </select>
           </div>
+
+          {adminTab === 'routines' && (
+            <Suspense fallback={<p className={`mt-8 text-[15px] ${t.muted}`}>Loading…</p>}>
+              <RoutineEngagement t={t} notify={notify} />
+            </Suspense>
+          )}
 
           {adminTab === 'signups' && !adminLoading && !adminError && (
             <>
