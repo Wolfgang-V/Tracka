@@ -19,6 +19,7 @@ const ReferFriendScreen = lazy(() => import('./screens/ReferFriendScreen'))
 const ProfileDetailsScreen = lazy(() => import('./screens/ProfileDetailsScreen'))
 const RewardsScreen = lazy(() => import('./screens/RewardsScreen'))
 const WrappedScreen = lazy(() => import('./screens/WrappedScreen'))
+const ChallengeSunscreenScreen = lazy(() => import('./screens/ChallengeSunscreenScreen'))
 import { WRAPPED_YEAR, wrappedAvailable, rememberWrappedPreview } from './lib/core/wrapped'
 const RemindersScreen = lazy(() => import('./screens/RemindersScreen'))
 const ChallengesScreen = lazy(() => import('./screens/ChallengesScreen'))
@@ -521,6 +522,13 @@ function App() {
   // Set while the add form was opened from a sponsored product, so saving
   // it counts as that ad's "added to My products".
   const adProductAddRef = useRef(null)
+  // "One step before you join" (no sunscreen in the morning routine):
+  // { challenge, sponsorPlacementId, sponsorAd } while that screen is up.
+  const [sunscreenSetup, setSunscreenSetup] = useState(null)
+  const [sunscreenBusy, setSunscreenBusy] = useState(false)
+  // Set while the add-product form was opened from that screen, so saving a
+  // sunscreen there finishes the join.
+  const sunscreenJoinPendingRef = useRef(false)
   const [selectedRoutine, setSelectedRoutine] = useState(null)
   const loadRoutineHistory = async () => {
   if (!user) return
@@ -2037,6 +2045,7 @@ const guessCategory = (text) => {
 useEffect(() => {
   // Leaving the add form without saving drops the sponsored-product credit.
   if (screen !== 'addProduct') adProductAddRef.current = null
+  if (screen !== 'addProduct' && screen !== 'challengeSunscreen') sunscreenJoinPendingRef.current = false
 
   if (screen === 'today') {
     loadRoutines()
@@ -2492,11 +2501,8 @@ const joinChallenge = async (challenge, sponsorPlacementId = null) => {
 
   if (error) {
     if (error.message?.includes('NO_SUNSCREEN_STEP')) {
-      const goAdd = await confirmAction(
-        'Add sunscreen to your morning routine first. This challenge tracks the sunscreen step you tick each morning.',
-        ['Not now', 'Edit my routine']
-      )
-      if (goAdd) setScreen('routinePlanner')
+      // Not a dead end: pick or add a sunscreen, then join in one go.
+      await openSunscreenSetup(challenge, sponsorPlacementId)
       return
     }
     if (error.message?.includes('CHALLENGE_ENDED')) {
@@ -2529,6 +2535,50 @@ const joinChallenge = async (challenge, sponsorPlacementId = null) => {
 
   await loadChallenges()
   notify('Challenge joined!', 'success')
+}
+
+// The sponsor's own sunscreen, when the challenge has a live product ad
+// from the same brand (any slot). Shown first on the setup screen.
+const findSponsorProductAd = async (challenge) => {
+  const norm = (v) => (v || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (!challenge?.sponsor_name) return null
+  const lists = await Promise.all(['fullscreen', 'discover_card', 'product_card'].map((slot) =>
+    fetchAds(supabase, slot).catch(() => [])))
+  return lists.flat().find((ad) => ad.action === 'product' && ad.product && norm(ad.brand) === norm(challenge.sponsor_name)) || null
+}
+
+const openSunscreenSetup = async (challenge, sponsorPlacementId) => {
+  setSunscreenSetup({ challenge, sponsorPlacementId, sponsorAd: null })
+  setScreen('challengeSunscreen')
+  const sponsorAd = await findSponsorProductAd(challenge)
+  setSunscreenSetup((cur) => (cur?.challenge.id === challenge.id ? { ...cur, sponsorAd } : cur))
+}
+
+// Puts the sunscreen in the morning routine (creating one if needed), then
+// joins. joinChallenge reports success or any other error itself.
+const finishSunscreenJoin = async (userProductId) => {
+  const setup = sunscreenSetup
+  if (!setup) return
+  setSunscreenBusy(true)
+  try {
+    const { error } = await supabase.rpc('add_sunscreen_to_morning', { p_user_product_id: userProductId })
+    if (error) {
+      console.error('ADD SUNSCREEN TO MORNING ERROR:', error)
+      notify(error.message?.includes('NOT_A_SUNSCREEN')
+        ? "That product isn't saved as a sunscreen. Pick a sunscreen, or change its category to Sunscreen."
+        : "Couldn't add it to your morning routine. Try again.")
+      setScreen('challengeSunscreen')
+      return
+    }
+    await loadRoutines()
+    setSelectedChallengeId(setup.challenge.id)
+    setScreen('challengeDetail')
+    // Setup state stays: if this join still fails, joinChallenge may reopen
+    // the setup screen, which needs it. Back on that screen clears it.
+    await joinChallenge(setup.challenge, setup.sponsorPlacementId)
+  } finally {
+    setSunscreenBusy(false)
+  }
 }
 
 const leaveChallenge = async (participation) => {
@@ -3857,10 +3907,20 @@ const submitRecommendation = async () => {
     return (
       <AddProductScreen
         getProductSource={() => (adProductAddRef.current ? 'sponsored' : undefined)}
-        onProductSaved={() => {
+        onProductSaved={(addedProduct) => {
           if (adProductAddRef.current) {
             recordAdEvent(supabase, adProductAddRef.current, 'product_add')
             adProductAddRef.current = null
+          }
+          // Opened from "One step before you join": a sunscreen finishes the
+          // join; anything else leaves them on that screen to pick again.
+          if (sunscreenJoinPendingRef.current && addedProduct) {
+            sunscreenJoinPendingRef.current = false
+            if ((addedProduct.products?.category || '').toLowerCase() === 'sunscreen') {
+              finishSunscreenJoin(addedProduct.id)
+            } else {
+              notify("That one wasn't saved as a sunscreen, so it can't count for the challenge. Pick or add a sunscreen.")
+            }
           }
         }}
         PRODUCT_SUGGESTIONS_ENABLED={PRODUCT_SUGGESTIONS_ENABLED}
@@ -5356,6 +5416,55 @@ if (screen === 'wrapped') {
       notify={notify}
       onClose={() => setScreen('today')}
       onOpenRewards={() => setScreen('rewards')}
+    />
+  )
+}
+
+if (screen === 'challengeSunscreen' && sunscreenSetup) {
+  const resetProductForm = () => {
+    setProductBrand('')
+    setProductName('')
+    setProductIngredients('')
+    setProductImageUrl('')
+    setProductOpenedDate('')
+    setProductPaoMonths(0)
+    setProductExpiryDate('')
+  }
+  return (
+    <ChallengeSunscreenScreen
+      t={t}
+      isNight={isNight}
+      challenge={sunscreenSetup.challenge}
+      products={products}
+      sponsorAd={sunscreenSetup.sponsorAd}
+      busy={sunscreenBusy}
+      onUse={(p) => finishSunscreenJoin(p.id)}
+      onAddSponsor={() => {
+        const ad = sunscreenSetup.sponsorAd
+        const product = ad.product || {}
+        resetProductForm()
+        // Same pre-fill as the sponsored product page, and credited the same way.
+        setProductBrand(ad.brand || '')
+        setProductName(product.name || '')
+        setProductIngredients(product.ingredients || '')
+        setProductImageUrl(ad.image_url || '')
+        setProductCategory('sunscreen')
+        setAddProductReturnScreen('challengeSunscreen')
+        sunscreenJoinPendingRef.current = true
+        setScreen('addProduct')
+        adProductAddRef.current = ad.placement_id
+      }}
+      onAddOwn={() => {
+        resetProductForm()
+        setProductCategory('sunscreen')
+        setAddProductReturnScreen('challengeSunscreen')
+        sunscreenJoinPendingRef.current = true
+        setScreen('addProduct')
+      }}
+      onBack={() => {
+        setSunscreenSetup(null)
+        setScreen('challengeDetail')
+      }}
     />
   )
 }

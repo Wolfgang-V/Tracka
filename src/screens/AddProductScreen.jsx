@@ -437,16 +437,17 @@ export default function AddProductScreen({
                 updatedProductsError = err
               }
 
+              let addedProduct = null
               if (updatedProductsError) {
                 console.error(updatedProductsError)
               } else {
-                const addedProduct = (updatedProducts || []).find((item) => item.product_id === product.id)
+                addedProduct = (updatedProducts || []).find((item) => item.product_id === product.id) || null
                 if (addedProduct && addProductReturnScreen === 'routinePlanner') {
                   addProductToHeldDraft(addedProduct)
                 }
               }
 
-              onProductSaved?.()
+              onProductSaved?.(addedProduct)
               pickedSourceRef.current = null
               pickedBarcodeRef.current = null
               setProductBrand('')
