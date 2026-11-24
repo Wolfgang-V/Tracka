@@ -10,13 +10,13 @@ import { supabase } from '../lib/supabase'
 import { useCompletedSteps } from '../data/routine'
 
 export default function TodayScreen({
+  challengeCard,
   emailOptInCard,
   wrappedBanner,
   amPlan,
   amFinished,
   pmFinished,
   careRelationships,
-  challengesLoading,
   userId,
   dailySkinTip,
   displayName,
@@ -24,13 +24,10 @@ export default function TodayScreen({
   getInstallEnv,
   hideHomeAd,
   homeAd,
-  isLiveParticipation,
   isNight,
   loadSkinProfile,
   menuOpen,
-  missingAmSunscreen,
   monthlyReport,
-  myChallenges,
   nightPlan,
   notify,
   onboardingCompleted,
@@ -40,10 +37,8 @@ export default function TodayScreen({
   pendingRecommendations,
   productImageFor,
   renderBottomTabs,
-  renderChallengeProgressCard,
   renderProductArt,
   renderProfileAvatar,
-  renderSunscreenMissingNotice,
   reportSharing,
   routinesLoading,
   setMenuOpen,
@@ -301,17 +296,8 @@ export default function TodayScreen({
           <p className="relative mt-3 pr-10 font-display text-[21px] leading-snug">{dailySkinTip[1]}</p>
         </div>
 
-        {homeAd && (
-          <AdBanner
-            key={homeAd.placement_id}
-            ad={homeAd}
-            supabase={supabase}
-            t={t}
-            isNight={isNight}
-            onOpen={openAd}
-            onHide={hideHomeAd}
-          />
-        )}
+        {/* Current challenge, right under the daily tip (built in App). */}
+        {challengeCard}
 
         {(() => {
           const pendingInvites = careRelationships.filter((r) => r.status === 'invited')
@@ -609,65 +595,17 @@ export default function TodayScreen({
 
         {emailOptInCard}
 
-        {(() => {
-          const activeChallenges = myChallenges.filter(isLiveParticipation)
-
-          return (
-            <div className={`mt-8 mb-4 rounded-3xl border ${t.hair} p-4`}>
-              <button
-                type="button"
-                onClick={() => setScreen('challenges')}
-                className="flex w-full items-center justify-between gap-3 text-left"
-              >
-                <span className="flex items-center gap-2.5">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
-                    strokeLinejoin="round" className={t.mark}>
-                    <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z" />
-                    <path d="M17 5h2.5a1.5 1.5 0 0 1 0 3H17M7 5H4.5a1.5 1.5 0 0 0 0 3H7" />
-                  </svg>
-                  <span className="text-[16px] font-semibold">Active Challenges</span>
-                </span>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="1.8"
-                  strokeLinecap="round" strokeLinejoin="round" className={t.muted}>
-                  <path d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-
-              {challengesLoading && myChallenges.length === 0 ? null : activeChallenges.length === 0 ? (
-                <div className="mt-3">
-                  <p className={`text-[14px] leading-relaxed ${t.muted}`}>
-                    You're not participating in any challenges yet. Explore challenges and find one that fits your routine.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setScreen('challenges')}
-                    className={`mt-3 text-[14px] font-semibold ${t.mark}`}
-                  >
-                    Explore challenges →
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-3.5 flex flex-col gap-3">
-                  {missingAmSunscreen &&
-                    activeChallenges.some((p) => p.challenges?.rule === 'am_sunscreen') &&
-                    renderSunscreenMissingNotice()}
-                  {activeChallenges.slice(0, 2).map((p) => renderChallengeProgressCard(p, 'today'))}
-                  {activeChallenges.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => setScreen('challenges')}
-                      className={`text-left text-[13px] font-semibold ${t.mark}`}
-                    >
-                      View all ({activeChallenges.length})
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })()}
+        {homeAd && (
+          <AdBanner
+            key={homeAd.placement_id}
+            ad={homeAd}
+            supabase={supabase}
+            t={t}
+            isNight={isNight}
+            onOpen={openAd}
+            onHide={hideHomeAd}
+          />
+        )}
 
       </div>
       </div>

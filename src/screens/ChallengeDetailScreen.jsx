@@ -27,6 +27,7 @@ export default function ChallengeDetailScreen({
   joinChallenge,
   leaveChallenge,
   missingAmSunscreen,
+  missingPmRoutine,
   myChallenges,
   renderAchievements,
   renderAwardIcon,
@@ -56,6 +57,9 @@ export default function ChallengeDetailScreen({
     challenges.find((c) => c.id === selectedChallengeId) ||
     mine[0]?.challenges
   const win = challengeWindow(challenge)
+  // 'am_pm_routines': a day counts when both routines are marked complete
+  // (vs 'am_sunscreen': the sunscreen step ticked).
+  const bothRoutines = challenge?.rule === 'am_pm_routines'
   // A live sponsor campaign for this challenge, if any.
   const sponsorAd = challenge ? sponsoredChallengeAds.find((ad) => ad.challenge_id === challenge.id) || null : null
   const sponsorCard = sponsorAd && (
@@ -379,8 +383,24 @@ export default function ChallengeDetailScreen({
                   )}
                 </div>
 
-                {missingAmSunscreen && challenge.rule === 'am_sunscreen' && !doneToday &&
+                {missingAmSunscreen && !doneToday &&
+                  (challenge.rule === 'am_sunscreen' || challenge.rule === 'am_pm_routines') &&
                   renderSunscreenMissingNotice('mt-4')}
+
+                {/* Both-routines challenges only count a day when the night
+                    routine is done too, so having none means no progress. */}
+                {bothRoutines && missingPmRoutine && !doneToday && (
+                  <button
+                    type="button"
+                    onClick={() => setScreen('routinePlanner')}
+                    className="mt-4 w-full rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-left"
+                  >
+                    <span className="block text-[13px] font-semibold text-amber-600">You don&apos;t have a night routine yet</span>
+                    <span className={`mt-0.5 block text-[12px] leading-relaxed ${t.muted}`}>
+                      Days count when you complete both your morning and night routines. Build my night routine →
+                    </span>
+                  </button>
+                )}
 
                 <div className={`mt-4 rounded-3xl border p-5 ${
                   doneToday ? 'border-emerald-400/30 bg-emerald-400/5' : `${t.hair} ${t.surface}`
@@ -403,7 +423,9 @@ export default function ChallengeDetailScreen({
                       )}
                     </span>
                     <div className="min-w-0">
-                      <p className="text-[16px] font-semibold">Today's sunscreen check-in</p>
+                      <p className="text-[16px] font-semibold">
+                        {bothRoutines ? "Today's check-in" : "Today's sunscreen check-in"}
+                      </p>
                       {!doneToday && (
                         <p className={`mt-1 text-[13px] leading-relaxed ${t.muted}`}>
                           {challenge.goal_text || 'Complete the sunscreen step in your morning routine.'}
@@ -420,13 +442,15 @@ export default function ChallengeDetailScreen({
                     <>
                       <button
                         type="button"
-                        onClick={goToMorningRoutine}
+                        onClick={bothRoutines ? () => setScreen('today') : goToMorningRoutine}
                         className={`mt-4 w-full rounded-2xl py-4 text-[15px] font-bold ${t.btn}`}
                       >
-                        Go to morning routine
+                        {bothRoutines ? "Go to today's routines" : 'Go to morning routine'}
                       </button>
                       <p className={`mt-2 text-center text-[12px] ${t.faint}`}>
-                        Progress updates automatically when you tick sunscreen.
+                        {bothRoutines
+                          ? 'Progress updates automatically when you mark both routines complete.'
+                          : 'Progress updates automatically when you tick sunscreen.'}
                       </p>
                     </>
                   )}
@@ -467,7 +491,11 @@ export default function ChallengeDetailScreen({
   }
 
   // Before joining (or after completing / leaving — they can join again).
-  const HOW_IT_WORKS = [
+  // A challenge can carry its own steps (challenges.how_it_works); otherwise
+  // the original sunscreen steps.
+  const HOW_IT_WORKS = Array.isArray(challenge.how_it_works) && challenge.how_it_works.length
+    ? challenge.how_it_works.map((s) => [s.title, s.body])
+    : [
     ['Apply your sunscreen', 'Follow your usual morning skincare routine.'],
     ['Tick it in Tracka+', 'Complete the sunscreen step in your existing morning routine. Your challenge progress updates automatically.'],
     win.hasWindow
@@ -547,7 +575,7 @@ export default function ChallengeDetailScreen({
         {!win.ended && challenge.description && (
           <section className="mt-7">
             <h2 className="text-[17px] font-semibold">What's the challenge?</h2>
-            <p className={`mt-2 text-[15px] leading-relaxed ${t.muted}`}>{challenge.description}</p>
+            <p className={`mt-2 whitespace-pre-line text-[15px] leading-relaxed ${t.muted}`}>{challenge.description}</p>
           </section>
         )}
 
@@ -585,6 +613,20 @@ export default function ChallengeDetailScreen({
                   ? `${1 - win.challengeDay} ${1 - win.challengeDay === 1 ? 'day' : 'days'}`
                   : `${win.daysLeft} of ${challenge.duration_days}`}
               </span>
+            </div>
+          )}
+          <div className={`flex items-start justify-between gap-4 border-t px-4 py-3.5 ${t.hair}`}>
+            <span className={`shrink-0 text-[14px] ${t.muted}`}>Target</span>
+            <span className="text-right text-[15px] font-semibold">
+              {bothRoutines
+                ? `Both routines on at least ${challengeTarget(challenge)} days`
+                : `Sunscreen on at least ${challengeTarget(challenge)} days`}
+            </span>
+          </div>
+          {challenge.rewards && (
+            <div className={`border-t px-4 py-3.5 ${t.hair}`}>
+              <span className={`block text-[14px] ${t.muted}`}>Rewards</span>
+              <span className="mt-1 block text-[15px] font-semibold leading-snug">{challenge.rewards}</span>
             </div>
           )}
         </div>

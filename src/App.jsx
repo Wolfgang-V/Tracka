@@ -1784,6 +1784,9 @@ const missingAmSunscreen =
   !routinesLoading &&
   !todayAmSteps.some((s) => (s.user_products?.products?.category || '').toLowerCase() === 'sunscreen')
 
+// For both-routines challenges: no night routine means no day can count.
+const missingPmRoutine = !routinesLoading && !todayPmRoutine
+
 const renderSunscreenMissingNotice = (className = '') => (
   <button
     type="button"
@@ -1935,6 +1938,96 @@ const renderAchievements = (participation) => {
           </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+// Today's challenge card: colourful, with the challenge's product photo.
+// Shows the challenge you're in (first of them), or else the current open
+// one to join, so a live (sponsored) challenge always has a spot on Today.
+const renderTodayChallengeCard = () => {
+  const active = myChallenges.filter(isLiveParticipation)
+  const participation = active[0] || null
+  const open = challenges.filter((c) => !challengeWindow(c).ended)
+  const challenge = participation?.challenges ||
+    open.find((c) => c.sponsor_name) || open[0] || null
+
+  if (!challenge) {
+    if (challengesLoading) return null
+    return (
+      <div className={`mt-8 rounded-3xl border ${t.hair} p-4`}>
+        <p className="text-[16px] font-semibold">Challenges</p>
+        <p className={`mt-1 text-[14px] leading-relaxed ${t.muted}`}>
+          You're not in a challenge yet. Explore challenges and find one that fits your routine.
+        </p>
+        <button type="button" onClick={() => setScreen('challenges')} className={`mt-3 text-[14px] font-semibold ${t.mark}`}>
+          Explore challenges →
+        </button>
+      </div>
+    )
+  }
+
+  const win = challengeWindow(challenge)
+  const stats = participation ? challengeStats(participation) : null
+  // Sponsored: a warm brown in the Ebun Derma family; otherwise Tracka+ blue.
+  const background = challenge.sponsor_name
+    ? 'linear-gradient(135deg, #2E140D 0%, #6E3324 50%, #B8714A 100%)'
+    : 'linear-gradient(135deg, #0B1E5B 0%, #1B3FD0 55%, #2C6BFF 100%)'
+
+  let status
+  if (participation && win.notStarted) status = `You're in · starts ${formatChallengeDate(challenge.starts_on)}`
+  else if (participation) status = `Day ${stats.day} of ${stats.total} · ${stats.done} of ${stats.target} days`
+  else if (win.notStarted) status = `${formatChallengeDate(challenge.starts_on)} – ${formatChallengeDate(challenge.ends_on)} · starts in ${1 - win.challengeDay} ${1 - win.challengeDay === 1 ? 'day' : 'days'}`
+  else if (win.hasWindow) status = `Open to join · ${win.daysLeft} ${win.daysLeft === 1 ? 'day' : 'days'} left`
+  else status = `${challenge.duration_days}-day challenge`
+
+  return (
+    <div className="mt-8">
+      <button
+        type="button"
+        onClick={() => openChallenge(challenge.id, 'today')}
+        className="relative flex w-full overflow-hidden rounded-3xl text-left text-white shadow-[0_14px_34px_-20px_rgba(46,20,13,0.7)]"
+        style={{ background }}
+      >
+        <span className="relative z-10 flex min-w-0 flex-1 flex-col p-5 pr-3">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/75">
+            {participation ? (active.length > 1 ? `Your challenges · ${active.length}` : 'Your challenge') : 'New challenge'}
+          </span>
+          {challenge.sponsor_name && (
+            <span className="mt-2 self-start rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold">
+              In partnership with {challenge.sponsor_name}
+            </span>
+          )}
+          <span className="mt-2 text-[19px] font-semibold leading-snug">{challenge.title}</span>
+          <span className="mt-1 text-[12.5px] text-white/80">{status}</span>
+          {participation && !win.notStarted && (
+            <span className="mt-2.5 block h-1.5 w-full overflow-hidden rounded-full bg-white/20">
+              <span className="block h-full rounded-full bg-white" style={{ width: `${stats.pct > 0 ? Math.max(stats.pct, 3) : 0}%` }} />
+            </span>
+          )}
+          <span className="mt-4 self-start rounded-full bg-white px-4 py-2 text-[13px] font-bold text-[#2E140D]">
+            {participation ? (win.notStarted ? 'View challenge' : 'Continue challenge') : 'Join the challenge'}
+          </span>
+        </span>
+        {challenge.image_url && (
+          <span className="relative w-[38%] shrink-0">
+            <img src={challenge.image_url} alt={challenge.sponsor_name ? `${challenge.sponsor_name} product` : ''}
+              className="absolute inset-0 h-full w-full object-cover" />
+            {/* Blend the photo's left edge into the card colour. */}
+            <span className="absolute inset-y-0 left-0 w-16" style={{ background: `linear-gradient(90deg, ${challenge.sponsor_name ? '#6E3324' : '#1B3FD0'}, transparent)` }} />
+          </span>
+        )}
+      </button>
+
+      {missingAmSunscreen &&
+        active.some((p) => p.challenges?.rule === 'am_sunscreen' || p.challenges?.rule === 'am_pm_routines') &&
+        renderSunscreenMissingNotice('mt-3')}
+
+      {active.length > 1 && (
+        <button type="button" onClick={() => setScreen('challenges')} className={`mt-2.5 px-1 text-[13px] font-semibold ${t.mark}`}>
+          View all challenges ({active.length}) →
+        </button>
+      )}
     </div>
   )
 }
@@ -5579,6 +5672,7 @@ if (screen === 'challengeDetail') {
       joinChallenge={joinChallenge}
       leaveChallenge={leaveChallenge}
       missingAmSunscreen={missingAmSunscreen}
+      missingPmRoutine={missingPmRoutine}
       myChallenges={myChallenges}
       renderAchievements={renderAchievements}
       renderAwardIcon={renderAwardIcon}
@@ -5936,6 +6030,7 @@ if (screen === 'practitionerRoutines') {
 if (screen === 'today') {
   return (
     <TodayScreen
+      challengeCard={renderTodayChallengeCard()}
       emailOptInCard={<EmailOptInCard userId={user?.id} t={t} isNight={isNight} notify={notify} />}
       wrappedBanner={wrappedOn ? (
         <button
@@ -5969,6 +6064,7 @@ if (screen === 'today') {
       loadSkinProfile={loadSkinProfile}
       menuOpen={menuOpen}
       missingAmSunscreen={missingAmSunscreen}
+      missingPmRoutine={missingPmRoutine}
       monthlyReport={monthlyReport}
       myChallenges={myChallenges}
       nightPlan={nightPlan}
