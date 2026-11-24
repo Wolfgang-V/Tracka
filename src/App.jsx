@@ -21,6 +21,7 @@ const RewardsScreen = lazy(() => import('./screens/RewardsScreen'))
 const WrappedScreen = lazy(() => import('./screens/WrappedScreen'))
 const ChallengeSunscreenScreen = lazy(() => import('./screens/ChallengeSunscreenScreen'))
 import { WRAPPED_YEAR, wrappedAvailable, rememberWrappedPreview } from './lib/core/wrapped'
+import { deviceTimezone } from './lib/core/region'
 const RemindersScreen = lazy(() => import('./screens/RemindersScreen'))
 const ChallengesScreen = lazy(() => import('./screens/ChallengesScreen'))
 const SponsoredProductScreen = lazy(() => import('./screens/SponsoredProductScreen'))
@@ -2590,9 +2591,14 @@ const joinChallenge = async (challenge, sponsorPlacementId = null) => {
   const { error } = await supabase.rpc('join_challenge', {
     p_challenge_id: challenge.id,
     p_local_date: localDateString(),
+    p_timezone: deviceTimezone(),
   })
 
   if (error) {
+    if (error.message?.includes('NOT_IN_REGION')) {
+      notify('This challenge is only open to people in Nigeria.')
+      return
+    }
     if (error.message?.includes('NO_SUNSCREEN_STEP')) {
       // Not a dead end: pick or add a sunscreen, then join in one go.
       await openSunscreenSetup(challenge, sponsorPlacementId)

@@ -10,6 +10,7 @@ import { localDateString } from '../lib/core/planNight'
 import FullscreenSwitch from '../ads/FullscreenSwitch'
 
 const RoutineEngagement = lazy(() => import('./admin/RoutineEngagement'))
+const FriendReferrals = lazy(() => import('./admin/FriendReferrals'))
 
 export default function AdminScreen({
   t, isNight, notify, confirmAction, busyAction, runBusy, setScreen,
@@ -366,6 +367,8 @@ export default function AdminScreen({
                   ? 'Ads'
                   : adminTab === 'routines'
                   ? 'Routines'
+                  : adminTab === 'friendReferrals'
+                  ? 'Friend referrals'
                   : 'Verified practitioners'}
               </h1>
             </div>
@@ -440,6 +443,7 @@ export default function AdminScreen({
               <option value="challenges">Challenges</option>
               <option value="products">Products</option>
               <option value="referrals">Referrals</option>
+              <option value="friendReferrals">Friend referrals</option>
               <option value="ads">Ads</option>
             </select>
           </div>
@@ -447,6 +451,12 @@ export default function AdminScreen({
           {adminTab === 'routines' && (
             <Suspense fallback={<p className={`mt-8 text-[15px] ${t.muted}`}>Loading…</p>}>
               <RoutineEngagement t={t} notify={notify} />
+            </Suspense>
+          )}
+
+          {adminTab === 'friendReferrals' && (
+            <Suspense fallback={<p className={`mt-8 text-[15px] ${t.muted}`}>Loading…</p>}>
+              <FriendReferrals t={t} notify={notify} />
             </Suspense>
           )}
 

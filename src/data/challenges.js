@@ -8,6 +8,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { queryClient } from './queryClient'
+import { availableHere } from '../lib/core/region'
 
 const NONE = []
 
@@ -30,7 +31,12 @@ export async function fetchChallenges(userId) {
       .order('joined_at', { ascending: false }),
   ])
   if (catalogue.error || mine.error) throw catalogue.error || mine.error
-  return { catalogue: catalogue.data || [], mine: mine.data || [] }
+  // Country-limited challenges are hidden elsewhere; ones already joined
+  // still show through `mine`.
+  return {
+    catalogue: (catalogue.data || []).filter((c) => availableHere(c.countries)),
+    mine: mine.data || [],
+  }
 }
 
 export async function fetchLeaderboard(challengeId) {

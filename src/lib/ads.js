@@ -3,13 +3,16 @@
 // server-side in record_ad_event, so the numbers brands see can't be
 // inflated from here.
 
+import { availableHere } from './core/region'
+
 export async function fetchAds(supabase, slot) {
   const { data, error } = await supabase.rpc('active_ads', { p_slot: slot })
   if (error) {
     console.error('ADS ERROR:', error)
     return []
   }
-  return data || []
+  // Ads for a country-limited challenge only show in those countries.
+  return (data || []).filter((ad) => availableHere(ad.countries))
 }
 
 // Fire-and-forget: an analytics hiccup must never break the app.
