@@ -1978,7 +1978,7 @@ const renderTodayChallengeCard = () => {
 
   let status
   if (participation && win.notStarted) status = `You're in · starts ${formatChallengeDate(challenge.starts_on)}`
-  else if (participation) status = `Day ${stats.day} of ${stats.total} · ${stats.done} of ${stats.total} days done`
+  else if (participation) status = `Day ${stats.day} of ${stats.total}`
   else if (win.notStarted) status = `${formatChallengeDate(challenge.starts_on)} – ${formatChallengeDate(challenge.ends_on)} · starts in ${1 - win.challengeDay} ${1 - win.challengeDay === 1 ? 'day' : 'days'}`
   else if (win.hasWindow) status = `Open to join · ${win.daysLeft} ${win.daysLeft === 1 ? 'day' : 'days'} left`
   else status = `${challenge.duration_days}-day challenge`
