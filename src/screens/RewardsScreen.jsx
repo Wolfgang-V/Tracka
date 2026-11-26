@@ -189,7 +189,7 @@ export default function RewardsScreen({
                         ? `Left · ${e.done} ${e.done === 1 ? 'day' : 'days'} checked in`
                         : e.over
                           ? `Finished · ${e.done} of ${e.duration} days`
-                          : `In progress · ${e.done} of ${e.target} days`}
+                          : `In progress · ${e.done} of ${e.duration} days`}
                     </p>
                   </button>
 

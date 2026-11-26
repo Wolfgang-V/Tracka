@@ -103,7 +103,7 @@ export default function ChallengesScreen({
       }
       return card({
         key: p.id, challenge: c, status: 'In progress', sub: c?.sponsor_name || `${s.total}-day challenge`, onOpen: open,
-        line: `Day ${s.day} of ${s.total} · ${s.done} of ${s.target} done${s.hasWindow ? ` · ${daysLeftText(s.daysLeft)}` : ''}`,
+        line: `Day ${s.day} of ${s.total} · ${s.done} of ${s.total} done${s.hasWindow ? ` · ${daysLeftText(s.daysLeft)}` : ''}`,
         action: s.doneToday
           ? { label: 'Done for today!', done: true }
           : { label: 'Go to complete', onClick: () => setScreen('today') },

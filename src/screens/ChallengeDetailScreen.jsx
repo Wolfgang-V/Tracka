@@ -242,12 +242,12 @@ export default function ChallengeDetailScreen({
                         <circle cx="62" cy="62" r={R} fill="none" strokeWidth="10"
                           stroke="url(#challenge-ring)" strokeLinecap="round"
                           strokeDasharray={C}
-                          strokeDashoffset={C * (1 - Math.min(done, target) / target)}
+                          strokeDashoffset={C * (1 - Math.min(done, total) / total)}
                           style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
                       </svg>
                       <div className="absolute inset-0 flex flex-col items-center justify-center">
                         <span className="text-[30px] font-semibold leading-none">{done}</span>
-                        <span className={`mt-1 text-[11px] font-medium ${t.faint}`}>{reachedTarget ? `days · goal ${target}` : `of ${target} days`}</span>
+                        <span className={`mt-1 text-[11px] font-medium ${t.faint}`}>{`of ${total} days`}</span>
                       </div>
                     </div>
 

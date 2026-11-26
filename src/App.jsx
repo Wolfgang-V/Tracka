@@ -1726,7 +1726,8 @@ const challengeStats = (participation) => {
   const day = win.hasWindow
     ? Math.min(Math.max(win.challengeDay, 1), total)
     : Math.min(done + (doneToday ? 0 : 1), total)
-  const pct = Math.min(100, Math.round((done / target) * 100))
+  // Progress shown out of the full length (1 of 30), not the target.
+  const pct = Math.min(100, Math.round((done / total) * 100))
   return { total, target, done, doneToday, day, pct, ...win }
 }
 
@@ -1977,7 +1978,7 @@ const renderTodayChallengeCard = () => {
 
   let status
   if (participation && win.notStarted) status = `You're in · starts ${formatChallengeDate(challenge.starts_on)}`
-  else if (participation) status = `Day ${stats.day} of ${stats.total} · ${stats.done} of ${stats.target} days`
+  else if (participation) status = `Day ${stats.day} of ${stats.total} · ${stats.done} of ${stats.total} days done`
   else if (win.notStarted) status = `${formatChallengeDate(challenge.starts_on)} – ${formatChallengeDate(challenge.ends_on)} · starts in ${1 - win.challengeDay} ${1 - win.challengeDay === 1 ? 'day' : 'days'}`
   else if (win.hasWindow) status = `Open to join · ${win.daysLeft} ${win.daysLeft === 1 ? 'day' : 'days'} left`
   else status = `${challenge.duration_days}-day challenge`
@@ -2049,8 +2050,8 @@ const renderChallengeProgressCard = (participation, returnTo) => {
         <span className="mt-2">{renderChallengeBar(pct)}</span>
         <span className={`mt-1.5 text-[12px] ${t.faint}`}>
           {done >= target
-            ? `Completed · ${done} days`
-            : `${done} of ${target} days completed`}
+            ? `Completed · ${done} of ${total} days`
+            : `${done} of ${total} days completed`}
         </span>
         <span className={`mt-2 text-[13px] font-semibold ${t.mark}`}>Continue challenge →</span>
       </span>
