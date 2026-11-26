@@ -60,6 +60,10 @@ export default function ChallengeDetailScreen({
   // 'am_pm_routines': a day counts when both routines are marked complete
   // (vs 'am_sunscreen': the sunscreen step ticked).
   const bothRoutines = challenge?.rule === 'am_pm_routines'
+  // A points race: one window for everyone and the target is every day, so
+  // winners are simply the most points (e.g. Ebun Derma, top 12). Missing
+  // a day or joining late isn't "too late", it's just fewer points.
+  const pointsRace = win.hasWindow && challengeTarget(challenge) >= (challenge?.duration_days || 0)
   // A live sponsor campaign for this challenge, if any.
   const sponsorAd = challenge ? sponsoredChallengeAds.find((ad) => ad.challenge_id === challenge.id) || null : null
   const sponsorCard = sponsorAd && (
@@ -376,7 +380,7 @@ export default function ChallengeDetailScreen({
                     </div>
                   )}
 
-                  {hasWindow && !reachedTarget && done + tickableLeft < target && (
+                  {hasWindow && !pointsRace && !reachedTarget && done + tickableLeft < target && (
                     <p className={`mt-4 border-t pt-4 text-[13px] leading-relaxed ${t.hair} ${t.muted}`}>
                       Not enough days left to reach {target} this round — every day you tick still counts on the leaderboard.
                     </p>
@@ -616,9 +620,11 @@ export default function ChallengeDetailScreen({
             </div>
           )}
           <div className={`flex items-start justify-between gap-4 border-t px-4 py-3.5 ${t.hair}`}>
-            <span className={`shrink-0 text-[14px] ${t.muted}`}>Target</span>
+            <span className={`shrink-0 text-[14px] ${t.muted}`}>{pointsRace ? 'Goal' : 'Target'}</span>
             <span className="text-right text-[15px] font-semibold">
-              {bothRoutines
+              {pointsRace
+                ? `${bothRoutines ? 'Both routines' : 'Sunscreen'} every day · 10 points a day, most points wins`
+                : bothRoutines
                 ? `Both routines on at least ${challengeTarget(challenge)} days`
                 : `Sunscreen on at least ${challengeTarget(challenge)} days`}
             </span>
@@ -633,7 +639,7 @@ export default function ChallengeDetailScreen({
 
         {canJoin ? (
           <>
-            {win.hasWindow && !win.notStarted && win.daysLeft < challengeTarget(challenge) && (
+            {win.hasWindow && !pointsRace && !win.notStarted && win.daysLeft < challengeTarget(challenge) && (
               <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3.5">
                 <p className="text-[14px] font-semibold text-amber-700">
                   Too late to complete this challenge
